@@ -1,10 +1,15 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { supabase } from '../lib/supabase'
 
 export default function RegisterPage() {
-  const [form, setForm] = useState({ vorname: '', nachname: '', email: '', password: '', password2: '' })
+  const [form, setForm] = useState({ vorname: '', nachname: '', email: '', password: '', password2: '', wehr_id: '' })
+  const [wehren, setWehren] = useState([])
+
+  useEffect(() => {
+    supabase.from('wehren').select('id,name,ort').order('name').then(({ data }) => setWehren(data ?? []))
+  }, [])
   const [error, setError] = useState('')
   const [success, setSuccess] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -17,6 +22,7 @@ export default function RegisterPage() {
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
+    if (!form.wehr_id) return setError('Bitte wähle deine Feuerwehr aus.')
     if (form.password !== form.password2) return setError('Passwörter stimmen nicht überein.')
     if (form.password.length < 6) return setError('Passwort muss mindestens 6 Zeichen haben.')
 
@@ -36,6 +42,7 @@ export default function RegisterPage() {
         await supabase.from('profiles').update({
           vorname: form.vorname,
           nachname: form.nachname,
+          wehr_id: form.wehr_id,
         }).eq('id', user.id)
       }
     }, 1000)
@@ -93,6 +100,16 @@ export default function RegisterPage() {
                 <input value={form.nachname} onChange={set('nachname')} placeholder="Mustermann" required />
               </div>
             </div>
+            <div className="form-group">
+              <label>Feuerwehr / Wache</label>
+              <select value={form.wehr_id} onChange={set('wehr_id')} required>
+                <option value="">— Bitte auswählen</option>
+                {wehren.map(w => (
+                  <option key={w.id} value={w.id}>{w.name}{w.ort ? ` (${w.ort})` : ''}</option>
+                ))}
+              </select>
+            </div>
+
             <div className="form-group">
               <label>E-Mail-Adresse</label>
               <input type="email" value={form.email} onChange={set('email')} placeholder="max@feuerwehr.de" required />

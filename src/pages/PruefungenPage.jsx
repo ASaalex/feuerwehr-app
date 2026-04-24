@@ -6,18 +6,21 @@ import { de } from 'date-fns/locale'
 
 export default function PruefungenPage() {
   const { profile, isAusbilder, isAdmin } = useAuth()
+  const isWehrleiter = profile?.rolle === 'wehrleiter'
   const [pruefungen, setPruefungen] = useState([])
   const [ergebnisse, setErgebnisse] = useState([])
   const [loading, setLoading] = useState(true)
-  const [view, setView] = useState('liste') // liste | erstellen | ablegen | auswertung
+  const [view, setView] = useState('liste')
   const [selected, setSelected] = useState(null)
   const [msg, setMsg] = useState('')
 
   useEffect(() => { fetchData() }, [])
 
   async function fetchData() {
+    let pruefQuery = supabase.from('pruefungen').select('*, erstellt_von:profiles(vorname,nachname)').order('erstellt_am', { ascending: false })
+    if (isWehrleiter) pruefQuery = pruefQuery.eq('wehr_id', profile.wehr_id)
     const [{ data: p }, { data: e }] = await Promise.all([
-      supabase.from('pruefungen').select('*, erstellt_von:profiles(vorname,nachname)').order('erstellt_am', { ascending: false }),
+      pruefQuery,
       supabase.from('pruefungs_ergebnisse').select('*').eq('kamerad_id', profile.id),
     ])
     setPruefungen(p ?? [])
@@ -142,7 +145,7 @@ function PruefungErstellen({ profile, onBack }) {
   async function handleSave() {
     if (!form.titel || fragen.length === 0) return alert('Titel und mindestens eine Frage erforderlich')
     setSaving(true)
-    const { data: pruefung } = await supabase.from('pruefungen').insert({ ...form, erstellt_von: profile.id, aktiv: false }).select().single()
+    const { data: pruefung } = await supabase.from('pruefungen').insert({ ...form, erstellt_von: profile.id, wehr_id: profile.wehr_id, aktiv: false }).select().single()
     if (pruefung) {
       await supabase.from('fragen').insert(fragen.map(({ id, ...f }) => ({ ...f, pruefung_id: pruefung.id })))
     }
@@ -265,7 +268,7 @@ function PruefungAblegen({ pruefung, profile, onBack }) {
         <button className="btn btn-secondary" onClick={onBack}>Zurück zur Übersicht</button>
       </div>
       <div className="card" style={{ textAlign: 'center', padding: 48 }}>
-        <div style={{ fontSize: 64, fontWeight: 700, color: ergebnis.bestanden ? '#1E8449' : 'var(--red)', marginBottom: 12 }}>
+        <div style={{ fontSize: 56, fontWeight: 700, color: ergebnis.bestanden ? '#1E8449' : 'var(--red)', marginBottom: 12 }}>
           {ergebnis.prozent}%
         </div>
         <div style={{ fontSize: 22, fontWeight: 600, marginBottom: 8, color: 'var(--gray-800)' }}>
@@ -289,23 +292,34 @@ function PruefungAblegen({ pruefung, profile, onBack }) {
       </div>
 
       {fragen.map((f, fi) => (
-        <div key={f.id} className="card" style={{ marginBottom: 12 }}>
-          <div style={{ fontWeight: 500, marginBottom: 14, color: 'var(--gray-700)' }}>
-            <span style={{ color: 'var(--gray-400)', marginRight: 8 }}>{fi + 1}.</span>{f.frage_text}
+        <div key={f.id} className="card" style={{ marginBottom: 10, padding: '14px' }}>
+          <div style={{ fontWeight: 500, marginBottom: 14, color: 'var(--gray-700)', fontSize: 15, lineHeight: 1.4 }}>
+            <span style={{ color: 'var(--red)', marginRight: 6, fontSize: 12, fontWeight: 600 }}>{fi + 1}/{fragen.length}</span>{f.frage_text}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {f.antworten.map((a, ai) => (
-              <label key={ai} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 6, border: '1px solid var(--gray-200)', cursor: 'pointer', fontSize: 14 }}
-                onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--red)'}
-                onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--gray-200)'}
-              >
-                <input type="radio" name={`f-${f.id}`} value={a.text}
-                  checked={antworten[f.id] === a.text}
-                  onChange={() => setAntwort(f.id, a.text)}
-                  style={{ width: 'auto' }} />
-                {a.text}
-              </label>
-            ))}
+            {f.antworten.map((a, ai) => {
+              const isSelected = antworten[f.id] === a.text
+              return (
+                <label key={ai} onClick={() => setAntwort(f.id, a.text)} style={{
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  padding: '14px 16px', borderRadius: 10, cursor: 'pointer', fontSize: 14,
+                  border: `2px solid ${isSelected ? 'var(--red)' : 'var(--gray-200)'}`,
+                  background: isSelected ? 'var(--red-pale)' : 'var(--white)',
+                  transition: 'all 150ms', userSelect: 'none',
+                }}>
+                  <div style={{
+                    width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
+                    border: `2px solid ${isSelected ? 'var(--red)' : 'var(--gray-300)'}`,
+                    background: isSelected ? 'var(--red)' : 'transparent',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    {isSelected && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20,6 9,17 4,12"/></svg>}
+                  </div>
+                  <span style={{ color: isSelected ? 'var(--red-dark)' : 'var(--gray-700)', fontWeight: isSelected ? 500 : 400 }}>{a.text}</span>
+                  <input type="radio" name={`f-${f.id}`} value={a.text} checked={isSelected} onChange={() => setAntwort(f.id, a.text)} style={{ display: 'none' }} />
+                </label>
+              )
+            })}
           </div>
         </div>
       ))}
