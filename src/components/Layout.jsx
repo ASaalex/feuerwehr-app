@@ -75,6 +75,10 @@ export default function Layout() {
 
         {/* User */}
         <div style={{ padding: '12px 10px', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+          <NavLink to="/datenschutz" style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '6px 10px', borderRadius: 6, textDecoration: 'none', marginBottom: 2 }}>
+            <svg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.35)' strokeWidth='2'><path d='M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'/></svg>
+            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>Datenschutz</span>
+          </NavLink>
           <NavLink to="/profil" style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 10px', borderRadius: 6, textDecoration: 'none', marginBottom: 4 }}>
             <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--red)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 600, flexShrink: 0 }}>{initials}</div>
             <div style={{ overflow: 'hidden' }}>

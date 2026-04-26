@@ -33,6 +33,7 @@ export default function PruefungenPage() {
   if (loading) return <div className="loading-page"><div className="spinner"></div></div>
 
   if (view === 'erstellen') return <PruefungErstellen profile={profile} onBack={() => { setView('liste'); fetchData() }} />
+  if (view === 'bearbeiten' && selected) return <PruefungBearbeiten pruefung={selected} profile={profile} onBack={() => { setView('liste'); fetchData() }} />
   if (view === 'ablegen' && selected) return <PruefungAblegen pruefung={selected} profile={profile} onBack={() => { setView('liste'); fetchData() }} />
   if (view === 'auswertung' && selected) return <PruefungAuswertung pruefung={selected} onBack={() => setView('liste')} />
 
@@ -60,7 +61,7 @@ export default function PruefungenPage() {
           {pruefungen.map(p => {
             const ergebnis = hatAbgelegt(p.id)
             return (
-              <div key={p.id} className="card" style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+              <div key={p.id} className="card" style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
                     <span style={{ fontWeight: 500, fontSize: 15, color: 'var(--gray-700)' }}>{p.titel}</span>
@@ -71,15 +72,16 @@ export default function PruefungenPage() {
                     Erstellt von {p.erstellt_von?.vorname} {p.erstellt_von?.nachname} · {format(new Date(p.erstellt_am), 'd. MMM yyyy', { locale: de })} · Bestehen: {p.bestehens_prozent}%
                   </p>
                 </div>
-                <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                <div style={{ display: 'flex', gap: 6, flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end', maxWidth: 200 }}>
                   {ergebnis && (
-                    <span className={`badge badge-${ergebnis.bestanden ? 'green' : 'red'}`} style={{ fontSize: 12 }}>
+                    <span className={`badge badge-${ergebnis.bestanden ? 'green' : 'red'}`} style={{ fontSize: 11 }}>
                       {ergebnis.bestanden ? `Bestanden ${Math.round(ergebnis.punkte_erreicht / ergebnis.punkte_gesamt * 100)}%` : 'Nicht bestanden'}
                     </span>
                   )}
                   {isAusbilder && (
                     <>
-                      <button className="btn btn-sm btn-secondary" onClick={() => { setSelected(p); setView('auswertung') }}>Auswertung</button>
+                      <button className="btn btn-sm btn-secondary" style={{ fontSize: 12 }} onClick={() => { setSelected(p); setView('auswertung') }}>Auswertung</button>
+                      <button className="btn btn-sm btn-secondary" style={{ fontSize: 12 }} onClick={() => { setSelected(p); setView('bearbeiten') }}>Bearbeiten</button>
                       <AktivToggle pruefung={p} onToggle={fetchData} />
                     </>
                   )}
@@ -390,6 +392,147 @@ function PruefungAuswertung({ pruefung, onBack }) {
           </tbody>
         </table>
       </div>
+    </div>
+  )
+}
+
+function PruefungBearbeiten({ pruefung, profile, onBack }) {
+  const [form, setForm] = useState({
+    titel: pruefung.titel,
+    beschreibung: pruefung.beschreibung ?? '',
+    bestehens_prozent: pruefung.bestehens_prozent,
+  })
+  const [fragen, setFragen] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    supabase.from('fragen').select('*').eq('pruefung_id', pruefung.id).order('reihenfolge').then(({ data }) => {
+      setFragen((data ?? []).map(f => ({ ...f, antworten: f.antworten ?? [] })))
+      setLoading(false)
+    })
+  }, [])
+
+  function addFrage() {
+    setFragen(f => [...f, {
+      id: 'neu_' + Date.now(), pruefung_id: pruefung.id,
+      frage_text: '', typ: 'multiple_choice',
+      antworten: [{ text: '', richtig: false }, { text: '', richtig: false }, { text: '', richtig: false }, { text: '', richtig: false }],
+      punkte: 1, reihenfolge: f.length, isNeu: true
+    }])
+  }
+
+  function updateFrage(id, field, value) {
+    setFragen(fs => fs.map(f => f.id === id ? { ...f, [field]: value } : f))
+  }
+
+  function updateAntwort(frageId, idx, field, value) {
+    setFragen(fs => fs.map(f => {
+      if (f.id !== frageId) return f
+      const antworten = [...f.antworten]
+      antworten[idx] = { ...antworten[idx], [field]: value }
+      return { ...f, antworten }
+    }))
+  }
+
+  function removeFrage(id) { setFragen(fs => fs.filter(f => f.id !== id)) }
+
+  async function handleSave() {
+    if (!form.titel) return alert('Titel erforderlich')
+    setSaving(true)
+
+    // Pruefung Grunddaten updaten
+    await supabase.from('pruefungen').update({
+      titel: form.titel,
+      beschreibung: form.beschreibung || null,
+      bestehens_prozent: form.bestehens_prozent,
+    }).eq('id', pruefung.id)
+
+    // Alle alten Fragen loeschen und neu anlegen
+    await supabase.from('fragen').delete().eq('pruefung_id', pruefung.id)
+    if (fragen.length > 0) {
+      await supabase.from('fragen').insert(fragen.map(({ id, isNeu, ...f }, i) => ({
+        ...f, pruefung_id: pruefung.id, reihenfolge: i
+      })))
+    }
+
+    setSaving(false)
+    onBack()
+  }
+
+  if (loading) return <div className="loading-page"><div className="spinner"></div></div>
+
+  return (
+    <div>
+      <div className="page-header">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button className="btn btn-ghost btn-sm" onClick={onBack}>Zurueck</button>
+          <h1>Pruefung bearbeiten</h1>
+        </div>
+        <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+          {saving ? 'Speichern...' : 'Speichern'}
+        </button>
+      </div>
+
+      <div className="card" style={{ marginBottom: 20 }}>
+        <h3 style={{ marginBottom: 16 }}>Grunddaten</h3>
+        <div className="form-group">
+          <label>Titel</label>
+          <input value={form.titel} onChange={e => setForm(f => ({ ...f, titel: e.target.value }))} />
+        </div>
+        <div className="form-group">
+          <label>Beschreibung (optional)</label>
+          <textarea value={form.beschreibung} onChange={e => setForm(f => ({ ...f, beschreibung: e.target.value }))} rows={2} />
+        </div>
+        <div className="form-group">
+          <label>Bestehensgrenze (%)</label>
+          <input type="number" min="1" max="100" value={form.bestehens_prozent}
+            onChange={e => setForm(f => ({ ...f, bestehens_prozent: parseInt(e.target.value) }))}
+            style={{ maxWidth: 100 }} />
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <h3>Fragen ({fragen.length})</h3>
+        <button className="btn btn-secondary btn-sm" onClick={addFrage}>+ Frage hinzufuegen</button>
+      </div>
+
+      {fragen.length === 0 && (
+        <div className="card" style={{ textAlign: 'center', color: 'var(--gray-400)', padding: 32 }}>
+          <p>Noch keine Fragen. Klicke auf "Frage hinzufuegen".</p>
+        </div>
+      )}
+
+      {fragen.map((frage, fi) => (
+        <div key={frage.id} className="card" style={{ marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--gray-400)' }}>Frage {fi + 1}</span>
+            <select value={frage.typ} onChange={e => updateFrage(frage.id, 'typ', e.target.value)} style={{ maxWidth: 180 }}>
+              <option value="multiple_choice">Multiple Choice</option>
+              <option value="wahr_falsch">Wahr / Falsch</option>
+            </select>
+            <button className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto', color: 'var(--red)' }} onClick={() => removeFrage(frage.id)}>
+              Entfernen
+            </button>
+          </div>
+          <div className="form-group">
+            <label>Fragetext</label>
+            <input value={frage.frage_text} onChange={e => updateFrage(frage.id, 'frage_text', e.target.value)} placeholder="Fragetext eingeben..." />
+          </div>
+          <label style={{ marginBottom: 8, display: 'block' }}>Antworten (richtige markieren)</label>
+          {frage.antworten.map((a, ai) => (
+            <div key={ai} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <input type="radio" checked={a.richtig ?? false}
+                onChange={e => updateAntwort(frage.id, ai, 'richtig', e.target.checked)}
+                style={{ width: 'auto', flexShrink: 0 }} name={`frage-${frage.id}`} />
+              {frage.typ === 'wahr_falsch'
+                ? <span style={{ fontSize: 14 }}>{ai === 0 ? 'Wahr' : 'Falsch'}</span>
+                : <input value={a.text ?? ''} onChange={e => updateAntwort(frage.id, ai, 'text', e.target.value)} placeholder={`Antwort ${ai + 1}`} />
+              }
+            </div>
+          ))}
+        </div>
+      ))}
     </div>
   )
 }

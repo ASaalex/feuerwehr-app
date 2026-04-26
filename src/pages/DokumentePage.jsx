@@ -6,12 +6,13 @@ import { de } from 'date-fns/locale'
 
 const KATEGORIEN = [
   { value: 'dienstanweisung', label: 'Dienstanweisung' },
+  { value: 'aao', label: 'AAO' },
   { value: 'vorlage', label: 'Vorlage' },
   { value: 'ausbildung', label: 'Ausbildung' },
   { value: 'sonstiges', label: 'Sonstiges' },
 ]
 
-const KAT_COLOR = { dienstanweisung: 'red', vorlage: 'blue', ausbildung: 'green', sonstiges: 'gray' }
+const KAT_COLOR = { dienstanweisung: 'red', aao: 'purple', vorlage: 'blue', ausbildung: 'green', sonstiges: 'gray' }
 
 export default function DokumentePage() {
   const { profile, isAdmin, isAusbilder } = useAuth()
