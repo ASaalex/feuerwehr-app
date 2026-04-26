@@ -42,7 +42,7 @@ export default function DashboardPage() {
         ? supabase.from('wehren').select('name').eq('id', profile.wehr_id).single()
         : Promise.resolve({ data: null }),
       supabase.from('profiles')
-        .select('id,vorname,nachname,geburtsdatum,wehr:wehren(name)')
+        .select('id,vorname,nachname,geburtsdatum,wehr:wehren(name),kamerad_lehrgaenge(lehrgang:lehrgaenge(name,kuerzel))')
         .eq('status', 'aktiv')
         .order('nachname'),
     ])
@@ -229,6 +229,7 @@ export default function DashboardPage() {
                     <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: 500, color: 'var(--gray-400)', fontSize: 11, textTransform: 'uppercase', borderBottom: '1px solid var(--gray-100)' }}>Name</th>
                     <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: 500, color: 'var(--gray-400)', fontSize: 11, textTransform: 'uppercase', borderBottom: '1px solid var(--gray-100)' }}>Wache</th>
                     <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: 500, color: 'var(--gray-400)', fontSize: 11, textTransform: 'uppercase', borderBottom: '1px solid var(--gray-100)' }}>Geburtsdatum</th>
+                    <th style={{ textAlign: 'left', padding: '8px 12px', fontWeight: 500, color: 'var(--gray-400)', fontSize: 11, textTransform: 'uppercase', borderBottom: '1px solid var(--gray-100)' }}>Lehrgaenge</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -242,6 +243,20 @@ export default function DashboardPage() {
                       </td>
                       <td style={{ padding: '9px 12px', borderBottom: '1px solid var(--gray-100)', color: 'var(--gray-500)', fontSize: 12 }}>
                         {k.geburtsdatum ? format(new Date(k.geburtsdatum), 'dd.MM.yyyy', { locale: de }) : '—'}
+                      </td>
+                      <td style={{ padding: '9px 12px', borderBottom: '1px solid var(--gray-100)' }}>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                          {(k.kamerad_lehrgaenge ?? []).map((kl, i) => (
+                            <span key={i} style={{
+                              fontSize: 10, padding: '1px 6px', borderRadius: 10,
+                              background: '#EEEDFE', color: '#3C3489', fontWeight: 500,
+                              whiteSpace: 'nowrap',
+                            }}>
+                              {kl.lehrgang?.kuerzel || kl.lehrgang?.name}
+                            </span>
+                          ))}
+                          {(k.kamerad_lehrgaenge ?? []).length === 0 && <span style={{ color: 'var(--gray-300)', fontSize: 11 }}>—</span>}
+                        </div>
                       </td>
                     </tr>
                   ))}

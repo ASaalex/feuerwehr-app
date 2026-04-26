@@ -46,8 +46,14 @@ export default function KameradenPage() {
 
   const isGemeinde = myProfile?.rolle === 'gemeindebrandmeister'
   const isWehrleiter = myProfile?.rolle === 'wehrleiter'
+  const [alleLehrgaenge, setAlleLehrgaenge] = useState([])
 
-  useEffect(() => { fetchKameraden(); fetchWehren() }, [])
+  useEffect(() => { fetchKameraden(); fetchWehren(); fetchLehrgaenge() }, [])
+
+  async function fetchLehrgaenge() {
+    const { data } = await supabase.from('lehrgaenge').select('id,name,kuerzel').order('name')
+    setAlleLehrgaenge(data ?? [])
+  }
 
   async function fetchWehren() {
     const { data } = await supabase.from('wehren').select('id,name').order('name')
@@ -55,7 +61,7 @@ export default function KameradenPage() {
   }
 
   async function fetchKameraden() {
-    let query = supabase.from('profiles').select('*, wehr:wehren(id,name)').order('nachname')
+    let query = supabase.from('profiles').select('*, wehr:wehren(id,name), kamerad_lehrgaenge(lehrgang_id)').order('nachname')
     if (isWehrleiter) query = query.eq('wehr_id', myProfile.wehr_id)
     const { data } = await query
     setKameraden(data ?? [])
@@ -76,6 +82,14 @@ export default function KameradenPage() {
       status: editModal.status,
       wehr_id: editModal.wehr_id || null,
     }).eq('id', editModal.id)
+
+    // Lehrgaenge aktualisieren
+    await supabase.from('kamerad_lehrgaenge').delete().eq('kamerad_id', editModal.id)
+    if (editModal.lehrgaenge?.length > 0) {
+      await supabase.from('kamerad_lehrgaenge').insert(
+        editModal.lehrgaenge.map(lid => ({ kamerad_id: editModal.id, lehrgang_id: lid }))
+      )
+    }
     if (!error) {
       await fetchKameraden()
       setEditModal(null)
@@ -219,7 +233,7 @@ export default function KameradenPage() {
                           Aktivieren
                         </button>
                       )}
-                      <button className="btn btn-sm btn-secondary" onClick={() => { setEditModal({ ...k, fuehrerschein: k.fuehrerschein ?? [], wehr_id: k.wehr_id ?? '' }); setEditTab('profil') }}>
+                      <button className="btn btn-sm btn-secondary" onClick={() => { setEditModal({ ...k, fuehrerschein: k.fuehrerschein ?? [], wehr_id: k.wehr_id ?? '', lehrgaenge: (k.kamerad_lehrgaenge ?? []).map(x => x.lehrgang_id) }); setEditTab('profil') }}>
                         Bearbeiten
                       </button>
                       <button className="btn btn-sm btn-danger" onClick={() => handleLoeschen(k)}>
@@ -319,6 +333,40 @@ export default function KameradenPage() {
                     <input type="checkbox" checked={editModal.atemschutz} onChange={e => setEditModal(m => ({ ...m, atemschutz: e.target.checked }))} style={{ width: 'auto' }} />
                     Atemschutztraeger
                   </label>
+                </div>
+
+                <div className="form-group">
+                  <label>Lehrgaenge</label>
+                  {alleLehrgaenge.length === 0 ? (
+                    <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 4 }}>
+                      Noch keine Lehrgaenge angelegt. Zuerst unter Administration anlegen.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+                      {alleLehrgaenge.map(l => {
+                        const hat = (editModal.lehrgaenge ?? []).includes(l.id)
+                        return (
+                          <button key={l.id} type="button" onClick={() => {
+                            const list = editModal.lehrgaenge ?? []
+                            setEditModal(m => ({
+                              ...m,
+                              lehrgaenge: hat
+                                ? list.filter(x => x !== l.id)
+                                : [...list, l.id]
+                            }))
+                          }} style={{
+                            padding: '5px 12px', borderRadius: 20, fontSize: 12, fontWeight: 500,
+                            border: '1px solid', cursor: 'pointer', transition: 'all 150ms',
+                            background: hat ? '#3C3489' : 'var(--white)',
+                            color: hat ? 'white' : 'var(--gray-500)',
+                            borderColor: hat ? '#3C3489' : 'var(--gray-200)',
+                          }}>
+                            {l.kuerzel ? `${l.kuerzel}` : ''}{l.kuerzel && ' – '}{l.name}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
                 </div>
               </div>
             )}

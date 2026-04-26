@@ -11,6 +11,7 @@ import AufgabenPage from './pages/AufgabenPage'
 import ProfilPage from './pages/ProfilPage'
 import NutzerAnlegenPage from './pages/NutzerAnlegenPage'
 import WachenPage from './pages/WachenPage'
+import LehrgaengePage from './pages/LehrgaengePage'
 import DatenschutzPage from './pages/DatenschutzPage'
 import './index.css'
 
@@ -56,6 +57,7 @@ function AppRoutes() {
         <Route path="kameraden" element={<ProtectedRoute adminOnly><KameradenPage /></ProtectedRoute>} />
         <Route path="nutzer-anlegen" element={<ProtectedRoute adminOnly><NutzerAnlegenPage /></ProtectedRoute>} />
         <Route path="wachen" element={<ProtectedRoute adminOnly><WachenPage /></ProtectedRoute>} />
+        <Route path="lehrgaenge" element={<ProtectedRoute adminOnly><LehrgaengePage /></ProtectedRoute>} />
         <Route path="datenschutz" element={<ProtectedRoute><DatenschutzPage /></ProtectedRoute>} />
         <Route path="dokumente" element={<DokumentePage />} />
         <Route path="pruefungen" element={<PruefungenPage />} />
