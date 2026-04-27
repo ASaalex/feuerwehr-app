@@ -72,6 +72,25 @@ export default function DokumentePage() {
     if (data?.signedUrl) window.open(data.signedUrl, '_blank')
   }
 
+  async function handlePrint(dok) {
+    const { data } = await supabase.storage.from('dokumente').createSignedUrl(dok.datei_pfad, 60)
+    if (data?.signedUrl) {
+      const ext = dok.datei_name.split('.').pop()?.toLowerCase()
+      if (ext === 'pdf') {
+        // PDF in neuem Tab oeffnen, Browser-Druckdialog startet automatisch
+        const win = window.open(data.signedUrl, '_blank')
+        if (win) {
+          win.onload = () => {
+            try { win.print() } catch(e) {}
+          }
+        }
+      } else {
+        // Andere Dateitypen: erst oeffnen, dann Nutzer manuell drucken lassen
+        window.open(data.signedUrl, '_blank')
+      }
+    }
+  }
+
   async function handleDelete(dok) {
     if (!confirm(`"${dok.titel}" wirklich löschen?`)) return
     await supabase.storage.from('dokumente').remove([dok.datei_pfad])
@@ -153,7 +172,14 @@ export default function DokumentePage() {
                 </span>
                 <div style={{ display: 'flex', gap: 6 }}>
                   <button className="btn btn-sm btn-secondary" onClick={() => handleDownload(dok)}>
-                    Öffnen
+                    Oeffnen
+                  </button>
+                  <button className="btn btn-sm btn-secondary" onClick={() => handlePrint(dok)} title="Drucken" style={{ padding: '6px 10px' }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <polyline points="6,9 6,2 18,2 18,9"/>
+                      <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+                      <rect x="6" y="14" width="12" height="8"/>
+                    </svg>
                   </button>
                   {isAdmin && (
                     <button className="btn btn-sm btn-danger" onClick={() => handleDelete(dok)}>✕</button>
