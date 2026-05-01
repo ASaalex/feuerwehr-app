@@ -47,6 +47,7 @@ export default function RegisterPage() {
       }
     }, 1000)
 
+    await supabase.auth.signOut()
     setSuccess(true)
     setLoading(false)
   }

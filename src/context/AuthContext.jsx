@@ -27,7 +27,7 @@ export function AuthProvider({ children }) {
   async function fetchProfile(userId) {
     const { data } = await supabase
       .from('profiles')
-      .select('*')
+      .select('*, wehr:wehren(id,name,aufgaben_aktiv)')
       .eq('id', userId)
       .single()
     setProfile(data)
@@ -56,12 +56,17 @@ export function AuthProvider({ children }) {
   const isAusbilder = profile?.rolle === 'ausbilder' || isAdmin
   const isGruppenfuehrer = profile?.rolle === 'gruppenfuehrer' || isAdmin
   const isAktiv = profile?.status === 'aktiv'
+  // Aufgaben nur aktiv wenn fuer diese Wache aktiviert ODER Admin
+  // profile.wehr kommt als Join-Objekt von Supabase
+  const wehrData = Array.isArray(profile?.wehr) ? profile?.wehr?.[0] : profile?.wehr
+  // Nur GBM hat immer Zugriff auf Aufgaben, alle anderen brauchen den Wachen-Parameter
+  const aufgabenAktiv = profile?.rolle === 'gemeindebrandmeister' || wehrData?.aufgaben_aktiv === true
 
   return (
     <AuthContext.Provider value={{
       user, profile, loading,
       signIn, signUp, signOut, refreshProfile,
-      isAdmin, isAusbilder, isGruppenfuehrer, isAktiv
+      isAdmin, isAusbilder, isGruppenfuehrer, isAktiv, aufgabenAktiv
     }}>
       {children}
     </AuthContext.Provider>

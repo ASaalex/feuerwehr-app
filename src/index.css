@@ -253,6 +253,17 @@ tr:hover td { background: var(--gray-50); }
 .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
 
 @media (max-width: 768px) {
+  /* Filter-Buttons horizontal scrollbar statt umbrechen */
+  .filter-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px;
+    flex-wrap: nowrap !important;
+    scrollbar-width: none;
+  }
+  .filter-scroll::-webkit-scrollbar { display: none; }
+  .filter-scroll .btn { flex-shrink: 0; }
+
   .form-row { grid-template-columns: 1fr; }
   .grid-2, .grid-3 { grid-template-columns: 1fr; }
   .stat-grid { grid-template-columns: 1fr 1fr; }
@@ -274,6 +285,15 @@ tr:hover td { background: var(--gray-50); }
 .gap-8 { gap: 8px; }
 .gap-12 { gap: 12px; }
 .ml-auto { margin-left: auto; }
+
+/* Filter-Leiste scrollbar auf Handy */
+.filter-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+  align-items: center;
+}
 
 /* ================================================
    MOBILE OPTIMIERUNGEN - 320px aufwaerts

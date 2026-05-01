@@ -61,7 +61,7 @@ export default function KameradenPage() {
   }
 
   async function fetchKameraden() {
-    let query = supabase.from('profiles').select('*, wehr:wehren(id,name), kamerad_lehrgaenge(lehrgang_id)').order('nachname')
+    let query = supabase.from('profiles').select('*, wehr:wehren(id,name), kamerad_lehrgaenge(lehrgang_id), kamerad_wehren(wehr_id,ist_hauptwache,wehr:wehren(id,name))').order('nachname')
     if (isWehrleiter) query = query.eq('wehr_id', myProfile.wehr_id)
     const { data } = await query
     setKameraden(data ?? [])
@@ -88,6 +88,18 @@ export default function KameradenPage() {
     if (editModal.lehrgaenge?.length > 0) {
       await supabase.from('kamerad_lehrgaenge').insert(
         editModal.lehrgaenge.map(lid => ({ kamerad_id: editModal.id, lehrgang_id: lid }))
+      )
+    }
+
+    // Weitere Wachen aktualisieren
+    await supabase.from('kamerad_wehren').delete().eq('kamerad_id', editModal.id)
+    if (editModal.weitereWehren?.length > 0) {
+      await supabase.from('kamerad_wehren').insert(
+        editModal.weitereWehren.map((wid, i) => ({
+          kamerad_id: editModal.id,
+          wehr_id: wid,
+          ist_hauptwache: wid === editModal.wehr_id,
+        }))
       )
     }
     if (!error) {
@@ -233,7 +245,7 @@ export default function KameradenPage() {
                           Aktivieren
                         </button>
                       )}
-                      <button className="btn btn-sm btn-secondary" onClick={() => { setEditModal({ ...k, fuehrerschein: k.fuehrerschein ?? [], wehr_id: k.wehr_id ?? '', lehrgaenge: (k.kamerad_lehrgaenge ?? []).map(x => x.lehrgang_id) }); setEditTab('profil') }}>
+                      <button className="btn btn-sm btn-secondary" onClick={() => { setEditModal({ ...k, fuehrerschein: k.fuehrerschein ?? [], wehr_id: k.wehr_id ?? '', lehrgaenge: (k.kamerad_lehrgaenge ?? []).map(x => x.lehrgang_id), weitereWehren: (k.kamerad_wehren ?? []).map(x => x.wehr_id) }); setEditTab('profil') }}>
                         Bearbeiten
                       </button>
                       <button className="btn btn-sm btn-danger" onClick={() => handleLoeschen(k)}>
@@ -282,11 +294,43 @@ export default function KameradenPage() {
                   </div>
                 </div>
                 <div className="form-group">
-                  <label>Wache</label>
+                  <label>Hauptwache</label>
                   <select value={editModal.wehr_id} onChange={e => setEditModal(m => ({ ...m, wehr_id: e.target.value }))}>
                     <option value="">— Keine Wache</option>
                     {wehren.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
                   </select>
+                </div>
+
+                <div className="form-group">
+                  <label>Weitere Wachen (Mehrfachmitgliedschaft)</label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
+                    {wehren.map(w => {
+                      const istHauptwache = w.id === editModal.wehr_id
+                      const aktiv = (editModal.weitereWehren ?? []).includes(w.id) || istHauptwache
+                      return (
+                        <label key={w.id} style={{
+                          display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
+                          borderRadius: 8, cursor: istHauptwache ? 'default' : 'pointer',
+                          border: `1px solid ${aktiv ? 'var(--red)' : 'var(--gray-200)'}`,
+                          background: aktiv ? 'var(--red-pale)' : 'white',
+                          opacity: istHauptwache ? 0.7 : 1,
+                        }}>
+                          <input type="checkbox"
+                            checked={aktiv}
+                            disabled={istHauptwache}
+                            onChange={() => {
+                              if (istHauptwache) return
+                              const list = editModal.weitereWehren ?? []
+                              const hatSchon = list.includes(w.id)
+                              setEditModal(m => ({ ...m, weitereWehren: hatSchon ? list.filter(x => x !== w.id) : [...list, w.id] }))
+                            }}
+                            style={{ width: 'auto' }} />
+                          <span style={{ fontSize: 14, color: 'var(--gray-700)' }}>{w.name}</span>
+                          {istHauptwache && <span style={{ fontSize: 11, color: 'var(--gray-400)', marginLeft: 'auto' }}>Hauptwache</span>}
+                        </label>
+                      )
+                    })}
+                  </div>
                 </div>
                 <div className="form-row">
                   <div className="form-group">

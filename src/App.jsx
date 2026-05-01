@@ -12,8 +12,16 @@ import ProfilPage from './pages/ProfilPage'
 import NutzerAnlegenPage from './pages/NutzerAnlegenPage'
 import WachenPage from './pages/WachenPage'
 import LehrgaengePage from './pages/LehrgaengePage'
+import AdminPage from './pages/AdminPage'
 import DatenschutzPage from './pages/DatenschutzPage'
 import './index.css'
+
+function AufgabenRoute({ children }) {
+  const { aufgabenAktiv, loading } = useAuth()
+  if (loading) return <div className="loading-page"><div className="spinner"></div></div>
+  if (!aufgabenAktiv) return <Navigate to="/" replace />
+  return children
+}
 
 function ProtectedRoute({ children, adminOnly = false }) {
   const { user, profile, loading } = useAuth()
@@ -58,10 +66,13 @@ function AppRoutes() {
         <Route path="nutzer-anlegen" element={<ProtectedRoute adminOnly><NutzerAnlegenPage /></ProtectedRoute>} />
         <Route path="wachen" element={<ProtectedRoute adminOnly><WachenPage /></ProtectedRoute>} />
         <Route path="lehrgaenge" element={<ProtectedRoute adminOnly><LehrgaengePage /></ProtectedRoute>} />
+        <Route path="admin" element={<ProtectedRoute adminOnly><AdminPage /></ProtectedRoute>} />
         <Route path="datenschutz" element={<ProtectedRoute><DatenschutzPage /></ProtectedRoute>} />
         <Route path="dokumente" element={<DokumentePage />} />
         <Route path="pruefungen" element={<PruefungenPage />} />
-        <Route path="aufgaben" element={<AufgabenPage />} />
+        <Route path="aufgaben" element={
+          <AufgabenRoute><AufgabenPage /></AufgabenRoute>
+        } />
         <Route path="profil" element={<ProfilPage />} />
       </Route>
 

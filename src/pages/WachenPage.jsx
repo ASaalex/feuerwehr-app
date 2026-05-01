@@ -4,8 +4,8 @@ import { supabase } from '../lib/supabase'
 export default function WachenPage() {
   const [wehren, setWehren] = useState([])
   const [loading, setLoading] = useState(true)
-  const [modal, setModal] = useState(null) // null | 'neu' | wehr-objekt
-  const [form, setForm] = useState({ name: '', ort: '', kuerzel: '' })
+  const [modal, setModal] = useState(null)
+  const [form, setForm] = useState({ name: '', ort: '', kuerzel: '', aufgaben_aktiv: false })
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
 
@@ -14,40 +14,62 @@ export default function WachenPage() {
   async function fetchWehren() {
     const { data } = await supabase
       .from('wehren')
-      .select('*, mitglieder:profiles(count)')
+      .select('id, name, ort, kuerzel, aufgaben_aktiv, mitglieder:profiles(count)')
       .order('name')
     setWehren(data ?? [])
     setLoading(false)
   }
 
   function oeffneNeu() {
-    setForm({ name: '', ort: '', kuerzel: '' })
+    setForm({ name: '', ort: '', kuerzel: '', aufgaben_aktiv: false })
     setModal('neu')
   }
 
   function oeffneBearbeiten(w) {
-    setForm({ name: w.name, ort: w.ort ?? '', kuerzel: w.kuerzel ?? '' })
+    console.log('Bearbeiten:', w.name, 'aufgaben_aktiv:', w.aufgaben_aktiv)
+    setForm({
+      name: w.name,
+      ort: w.ort ?? '',
+      kuerzel: w.kuerzel ?? '',
+      aufgaben_aktiv: w.aufgaben_aktiv === true,
+    })
     setModal(w)
   }
 
   async function handleSpeichern(e) {
     e.preventDefault()
     setSaving(true)
-    if (modal === 'neu') {
-      await supabase.from('wehren').insert({
-        name: form.name,
-        ort: form.ort || null,
-        kuerzel: form.kuerzel.toLowerCase() || null,
-      })
-    } else {
-      await supabase.from('wehren').update({
-        name: form.name,
-        ort: form.ort || null,
-        kuerzel: form.kuerzel.toLowerCase() || null,
-      }).eq('id', modal.id)
+
+    const payload = {
+      name: form.name,
+      ort: form.ort || null,
+      kuerzel: form.kuerzel.toLowerCase() || null,
+      aufgaben_aktiv: form.aufgaben_aktiv === true,
     }
+
+    console.log('Speichere Wache:', modal === 'neu' ? 'NEU' : modal.id, payload)
+
+    if (modal === 'neu') {
+      const { error } = await supabase.from('wehren').insert(payload)
+      if (error) {
+        console.error('Fehler beim Anlegen:', error)
+        alert('Fehler: ' + error.message)
+        setSaving(false)
+        return
+      }
+    } else {
+      const { error } = await supabase.from('wehren').update(payload).eq('id', modal.id)
+      if (error) {
+        console.error('Fehler beim Speichern:', error)
+        alert('Fehler: ' + error.message)
+        setSaving(false)
+        return
+      }
+    }
+
     await fetchWehren()
     setModal(null)
+    setForm({ name: '', ort: '', kuerzel: '', aufgaben_aktiv: false })
     setMsg(modal === 'neu' ? 'Wache angelegt!' : 'Wache gespeichert!')
     setTimeout(() => setMsg(''), 3000)
     setSaving(false)
@@ -79,7 +101,7 @@ export default function WachenPage() {
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
               <div style={{ flex: 1 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                  <div style={{ width: 36, height: 36, borderRadius: 8, background: 'var(--red-light)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 8, background: 'var(--red-light)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--red)" strokeWidth="1.8"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9,22 9,12 15,12 15,22"/></svg>
                   </div>
                   <div>
@@ -87,14 +109,17 @@ export default function WachenPage() {
                     {w.ort && <div style={{ fontSize: 12, color: 'var(--gray-400)' }}>{w.ort}</div>}
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
                   {w.kuerzel && (
-                    <span className="badge badge-blue" style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>
-                      Kuerzel: {w.kuerzel}
+                    <span className="badge badge-blue" style={{ fontFamily: 'var(--mono)', fontSize: 11 }}>
+                      {w.kuerzel}
                     </span>
                   )}
                   <span className="badge badge-gray">
                     {w.mitglieder?.[0]?.count ?? 0} Kameraden
+                  </span>
+                  <span className={`badge badge-${w.aufgaben_aktiv ? 'green' : 'gray'}`}>
+                    Aufgaben: {w.aufgaben_aktiv ? 'Aktiv' : 'Inaktiv'}
                   </span>
                 </div>
               </div>
@@ -128,21 +153,47 @@ export default function WachenPage() {
             <form onSubmit={handleSpeichern}>
               <div className="form-group">
                 <label>Name der Wache</label>
-                <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                  placeholder="z.B. FF Nohra" required autoFocus />
+                <input
+                  value={form.name}
+                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                  placeholder="z.B. FF Nohra"
+                  required autoFocus
+                />
               </div>
               <div className="form-group">
                 <label>Ort (optional)</label>
-                <input value={form.ort} onChange={e => setForm(f => ({ ...f, ort: e.target.value }))}
-                  placeholder="z.B. Nohra" />
+                <input
+                  value={form.ort}
+                  onChange={e => setForm(f => ({ ...f, ort: e.target.value }))}
+                  placeholder="z.B. Nohra"
+                />
               </div>
               <div className="form-group">
                 <label>Kuerzel (fuer Nutzernamen)</label>
-                <input value={form.kuerzel} onChange={e => setForm(f => ({ ...f, kuerzel: e.target.value.toLowerCase() }))}
-                  placeholder="z.B. no" maxLength={5} style={{ fontFamily: 'var(--mono)' }} />
+                <input
+                  value={form.kuerzel}
+                  onChange={e => setForm(f => ({ ...f, kuerzel: e.target.value.toLowerCase() }))}
+                  placeholder="z.B. no"
+                  maxLength={5}
+                  style={{ maxWidth: 120, fontFamily: 'var(--mono)' }}
+                />
                 <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 4 }}>
-                  Wird fuer automatische Nutzernamen verwendet: <code style={{ fontFamily: 'var(--mono)' }}>{form.kuerzel || 'xx'}asaalfeld</code>
+                  Nutzername-Vorschau: <code style={{ fontFamily: 'var(--mono)' }}>{form.kuerzel || 'xx'}asaalfeld</code>
                 </div>
+              </div>
+              <div className="form-group">
+                <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontWeight: 'normal' }}>
+                  <input
+                    type="checkbox"
+                    checked={form.aufgaben_aktiv}
+                    onChange={e => setForm(f => ({ ...f, aufgaben_aktiv: e.target.checked }))}
+                    style={{ width: 'auto', height: 18, cursor: 'pointer' }}
+                  />
+                  <div>
+                    <div style={{ fontWeight: 500, color: 'var(--gray-700)' }}>Aufgaben-Modul aktivieren</div>
+                    <div style={{ fontSize: 12, color: 'var(--gray-400)' }}>Kameraden dieser Wache sehen den Bereich "Aufgaben"</div>
+                  </div>
+                </label>
               </div>
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
                 <button type="button" className="btn btn-secondary" onClick={() => setModal(null)}>Abbrechen</button>

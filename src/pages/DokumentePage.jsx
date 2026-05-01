@@ -3,16 +3,17 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { format } from 'date-fns'
 import { de } from 'date-fns/locale'
+import AusbildungsnachweisModal from './AusbildungsnachweisModal'
+import AuslagenerstattungModal from './AuslagenerstattungModal'
 
 const KATEGORIEN = [
   { value: 'dienstanweisung', label: 'Dienstanweisung' },
-  { value: 'aao', label: 'AAO' },
   { value: 'vorlage', label: 'Vorlage' },
   { value: 'ausbildung', label: 'Ausbildung' },
   { value: 'sonstiges', label: 'Sonstiges' },
 ]
 
-const KAT_COLOR = { dienstanweisung: 'red', aao: 'purple', vorlage: 'blue', ausbildung: 'green', sonstiges: 'gray' }
+const KAT_COLOR = { dienstanweisung: 'red', vorlage: 'blue', ausbildung: 'green', sonstiges: 'gray' }
 
 export default function DokumentePage() {
   const { profile, isAdmin, isAusbilder } = useAuth()
@@ -23,6 +24,8 @@ export default function DokumentePage() {
   const [uploading, setUploading] = useState(false)
   const [form, setForm] = useState({ titel: '', beschreibung: '', kategorie: 'dienstanweisung', datei: null })
   const [msg, setMsg] = useState('')
+  const [ausbildungsModal, setAusbildungsModal] = useState(false)
+  const [auslagenModal, setAuslagenModal] = useState(false)
 
   useEffect(() => { fetchDokumente() }, [])
 
@@ -170,9 +173,21 @@ export default function DokumentePage() {
                   {dok.hochgeladen_von?.vorname} {dok.hochgeladen_von?.nachname}<br />
                   {format(new Date(dok.erstellt_am), 'd. MMM yyyy', { locale: de })}
                 </span>
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <button className="btn btn-sm btn-secondary" onClick={() => handleDownload(dok)}>
-                    Oeffnen
+                <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  {(dok.titel?.toLowerCase().includes('ausbildungsnachweis') || dok.datei_name?.toLowerCase().includes('ausbildungsnachweis')) && (
+                    <button className="btn btn-sm" style={{ background: '#E1F5EE', color: '#085041', border: 'none' }}
+                      onClick={() => setAusbildungsModal(true)} title="Ausbildungsnachweis ausfuellen">
+                      ✏️
+                    </button>
+                  )}
+                  {(dok.titel?.toLowerCase().includes('auslagenerstattung') || dok.datei_name?.toLowerCase().includes('auslagenerstattung')) && (
+                    <button className="btn btn-sm" style={{ background: '#E6F1FB', color: '#0C447C', border: 'none' }}
+                      onClick={() => setAuslagenModal(true)} title="Auslagenerstattung ausfuellen">
+                      ✏️
+                    </button>
+                  )}
+                  <button className="btn btn-sm btn-secondary" onClick={() => handleDownload(dok)} title="Oeffnen">
+                    ↓
                   </button>
                   <button className="btn btn-sm btn-secondary" onClick={() => handlePrint(dok)} title="Drucken" style={{ padding: '6px 10px' }}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -182,7 +197,7 @@ export default function DokumentePage() {
                     </svg>
                   </button>
                   {isAdmin && (
-                    <button className="btn btn-sm btn-danger" onClick={() => handleDelete(dok)}>✕</button>
+                    <button className="btn btn-sm btn-danger" onClick={() => handleDelete(dok)} title="Loeschen">✕</button>
                   )}
                 </div>
               </div>
@@ -230,6 +245,8 @@ export default function DokumentePage() {
           </div>
         </div>
       )}
+      {ausbildungsModal && <AusbildungsnachweisModal onClose={() => setAusbildungsModal(false)} />}
+      {auslagenModal && <AuslagenerstattungModal onClose={() => setAuslagenModal(false)} />}
     </div>
   )
 }

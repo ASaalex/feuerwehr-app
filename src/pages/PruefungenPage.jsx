@@ -17,23 +17,71 @@ export default function PruefungenPage() {
   useEffect(() => { fetchData() }, [])
 
   async function fetchData() {
-    let pruefQuery = supabase.from('pruefungen')
-      .select('*, erstellt_von:profiles(vorname,nachname)')
-      .order('erstellt_am', { ascending: false })
-    if (isWehrleiter) pruefQuery = pruefQuery.eq('wehr_id', profile.wehr_id)
-    const [{ data: p }, { data: e }] = await Promise.all([
-      pruefQuery,
-      supabase.from('pruefungs_ergebnisse').select('*').eq('kamerad_id', profile.id).order('abgelegt_am', { ascending: false }),
+    const [{ data: p }, { data: e }, { data: gbmProfile }] = await Promise.all([
+      supabase.from('pruefungen')
+        .select('*, erstellt_von:profiles(id,vorname,nachname,rolle)')
+        .order('erstellt_am', { ascending: false }),
+      supabase.from('pruefungs_ergebnisse')
+        .select('*')
+        .eq('kamerad_id', profile.id)
+        .order('abgelegt_am', { ascending: false }),
+      // GBM-Profile laden um deren IDs zu kennen
+      supabase.from('profiles')
+        .select('id')
+        .eq('rolle', 'gemeindebrandmeister')
+        .eq('status', 'aktiv'),
     ])
-    // Filter: Kameraden sehen nur Pruefungen fuer ihre Wache
-    const gefiltert = (p ?? []).filter(pr => {
-      if (!pr.sichtbar_fuer_wehren) return true // null = alle
-      if (!profile.wehr_id) return false
-      return pr.sichtbar_fuer_wehren.includes(profile.wehr_id)
-    })
-    setPruefungen(isAusbilder ? (p ?? []) : gefiltert)
+
+    const gbmIds = (gbmProfile ?? []).map(x => x.id)
+    const alle = p ?? []
+
+    const jetzt = new Date()
+
+    function istAktivJetzt(pr) {
+      // Zeitbereich-Pruefung
+      if (pr.aktiv_von || pr.aktiv_bis) {
+        const vonOk = !pr.aktiv_von || new Date(pr.aktiv_von) <= jetzt
+        const bisOk = !pr.aktiv_bis || new Date(pr.aktiv_bis) >= jetzt
+        return vonOk && bisOk
+      }
+      // Klassisch aktiv/inaktiv
+      return pr.aktiv
+    }
+
+    let sichtbar = []
+
+    if (profile.rolle === 'gemeindebrandmeister') {
+      sichtbar = alle
+    } else if (isWehrleiter) {
+      sichtbar = alle.filter(pr =>
+        pr.wehr_id === profile.wehr_id ||
+        gbmIds.includes(pr.erstellt_von?.id)
+      )
+    } else if (isAusbilder) {
+      sichtbar = alle.filter(pr =>
+        pr.wehr_id === profile.wehr_id ||
+        gbmIds.includes(pr.erstellt_von?.id)
+      )
+    } else {
+      sichtbar = alle.filter(pr => {
+        if (!istAktivJetzt(pr)) return false
+        if (!pr.sichtbar_fuer_wehren) return true
+        if (!profile.wehr_id) return false
+        return pr.sichtbar_fuer_wehren.includes(profile.wehr_id)
+      })
+    }
+
+    setPruefungen(sichtbar)
     setErgebnisse(e ?? [])
     setLoading(false)
+  }
+
+  async function handleLoeschen(p) {
+    if (!confirm(`Pruefung "${p.titel}" wirklich loeschen? Alle Ergebnisse werden ebenfalls geloescht.`)) return
+    await supabase.from('pruefungs_ergebnisse').delete().eq('pruefung_id', p.id)
+    await supabase.from('fragen').delete().eq('pruefung_id', p.id)
+    await supabase.from('pruefungen').delete().eq('id', p.id)
+    fetchData()
   }
 
   function hatAbgelegt(id) {
@@ -109,13 +157,36 @@ export default function PruefungenPage() {
                 <div style={{ flex: 1, minWidth: 200 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
                     <span style={{ fontWeight: 500, fontSize: 15, color: 'var(--gray-700)' }}>{p.titel}</span>
-                    {p.aktiv ? <span className="badge badge-green">Aktiv</span> : <span className="badge badge-gray">Inaktiv</span>}
+                    {(() => {
+                      const jetzt = new Date()
+                      if (p.aktiv_von || p.aktiv_bis) {
+                        const vonOk = !p.aktiv_von || new Date(p.aktiv_von) <= jetzt
+                        const bisOk = !p.aktiv_bis || new Date(p.aktiv_bis) >= jetzt
+                        const laeuft = vonOk && bisOk
+                        return <span className={`badge badge-${laeuft ? 'green' : 'gray'}`}>{laeuft ? 'Aktiv (Zeitraum)' : 'Ausserhalb Zeitraum'}</span>
+                      }
+                      return p.aktiv ? <span className="badge badge-green">Aktiv</span> : <span className="badge badge-gray">Inaktiv</span>
+                    })()}
                     {p.sichtbar_fuer_wehren && <span className="badge badge-amber" style={{ fontSize: 11 }}>Bestimmte Wachen</span>}
                   </div>
                   {p.beschreibung && <p style={{ fontSize: 13, color: 'var(--gray-400)' }}>{p.beschreibung}</p>}
                   <p style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 4 }}>
                     {p.erstellt_von?.vorname} {p.erstellt_von?.nachname} · {format(new Date(p.erstellt_am), 'd. MMM yyyy', { locale: de })} · Bestehen: {p.bestehens_prozent}%
                   </p>
+                  {(p.aktiv_von || p.aktiv_bis) && (
+                    <div style={{ display: 'flex', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
+                      {p.aktiv_von && (
+                        <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: '#E1F5EE', color: '#085041' }}>
+                          Von: {format(new Date(p.aktiv_von), 'd. MMM yyyy HH:mm', { locale: de })}
+                        </span>
+                      )}
+                      {p.aktiv_bis && (
+                        <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: '#FAEEDA', color: '#633806' }}>
+                          Bis: {format(new Date(p.aktiv_bis), 'd. MMM yyyy HH:mm', { locale: de })}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                   {ergebnis && (
@@ -132,6 +203,7 @@ export default function PruefungenPage() {
                     <>
                       <button className="btn btn-sm btn-secondary" onClick={() => { setSelected(p); setView('auswertung') }}>Auswertung</button>
                       <button className="btn btn-sm btn-secondary" onClick={() => { setSelected(p); setView('bearbeiten') }}>Bearbeiten</button>
+                      <button className="btn btn-sm btn-danger" onClick={() => handleLoeschen(p)}>Loeschen</button>
                       <WachenToggle pruefung={p} onToggle={fetchData} />
                       <AktivToggle pruefung={p} onToggle={fetchData} />
                     </>
@@ -152,14 +224,98 @@ export default function PruefungenPage() {
 }
 
 function AktivToggle({ pruefung, onToggle }) {
-  async function toggle() {
-    await supabase.from('pruefungen').update({ aktiv: !pruefung.aktiv }).eq('id', pruefung.id)
+  const [modal, setModal] = useState(false)
+  const [modus, setModus] = useState(pruefung.aktiv_von || pruefung.aktiv_bis ? 'zeitraum' : 'manuell')
+  const [von, setVon] = useState(pruefung.aktiv_von ? pruefung.aktiv_von.slice(0,16) : '')
+  const [bis, setBis] = useState(pruefung.aktiv_bis ? pruefung.aktiv_bis.slice(0,16) : '')
+  const [saving, setSaving] = useState(false)
+
+  const jetzt = new Date()
+  const laeuft = pruefung.aktiv_von || pruefung.aktiv_bis
+    ? (!pruefung.aktiv_von || new Date(pruefung.aktiv_von) <= jetzt) && (!pruefung.aktiv_bis || new Date(pruefung.aktiv_bis) >= jetzt)
+    : pruefung.aktiv
+
+  async function handleSave() {
+    setSaving(true)
+    if (modus === 'zeitraum') {
+      await supabase.from('pruefungen').update({
+        aktiv: true,
+        aktiv_von: von ? new Date(von).toISOString() : null,
+        aktiv_bis: bis ? new Date(bis).toISOString() : null,
+      }).eq('id', pruefung.id)
+    } else {
+      await supabase.from('pruefungen').update({
+        aktiv: !laeuft,
+        aktiv_von: null,
+        aktiv_bis: null,
+      }).eq('id', pruefung.id)
+    }
+    setSaving(false)
+    setModal(false)
     onToggle()
   }
+
   return (
-    <button className={`btn btn-sm ${pruefung.aktiv ? 'btn-secondary' : 'btn-primary'}`} onClick={toggle}>
-      {pruefung.aktiv ? 'Deaktivieren' : 'Aktivieren'}
-    </button>
+    <>
+      {laeuft ? (
+        // Direkt deaktivieren ohne Modal
+        <button className="btn btn-sm btn-secondary" onClick={async () => {
+          await supabase.from('pruefungen').update({ aktiv: false, aktiv_von: null, aktiv_bis: null }).eq('id', pruefung.id)
+          onToggle()
+        }}>
+          Deaktivieren
+        </button>
+      ) : (
+        // Aktivieren oeffnet Modal fuer Modus-Wahl
+        <button className="btn btn-sm btn-primary" onClick={() => setModal(true)}>
+          Aktivieren
+        </button>
+      )}
+      {modal && (
+        <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && setModal(false)}>
+          <div className="modal" style={{ maxWidth: 440 }}>
+            <div className="modal-header">
+              <h3>Pruefung aktivieren</h3>
+              <button className="btn btn-ghost btn-sm" onClick={() => setModal(false)}>x</button>
+            </div>
+            <div className="form-group">
+              <label>Aktivierungsmodus</label>
+              <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                <button type="button" className={`btn btn-sm ${modus === 'manuell' ? 'btn-primary' : 'btn-secondary'}`}
+                  onClick={() => setModus('manuell')}>Sofort aktiv</button>
+                <button type="button" className={`btn btn-sm ${modus === 'zeitraum' ? 'btn-primary' : 'btn-secondary'}`}
+                  onClick={() => setModus('zeitraum')}>Mit Zeitraum</button>
+              </div>
+            </div>
+            {modus === 'manuell' ? (
+              <div className="alert alert-info" style={{ fontSize: 13 }}>
+                Pruefung wird sofort aktiviert — ohne Zeitbegrenzung.
+              </div>
+            ) : (
+              <>
+                <div className="form-group">
+                  <label>Aktiv von (optional)</label>
+                  <input type="datetime-local" value={von} onChange={e => setVon(e.target.value)} />
+                </div>
+                <div className="form-group">
+                  <label>Aktiv bis (optional)</label>
+                  <input type="datetime-local" value={bis} onChange={e => setBis(e.target.value)} />
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--gray-400)' }}>
+                  Leer lassen = kein Limit in diese Richtung
+                </div>
+              </>
+            )}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+              <button className="btn btn-secondary" onClick={() => setModal(false)}>Abbrechen</button>
+              <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+                {saving ? 'Speichern...' : 'Speichern'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 
@@ -170,11 +326,26 @@ function WachenToggle({ pruefung, onToggle }) {
   const [modus, setModus] = useState(pruefung.sichtbar_fuer_wehren ? 'ausgewaehlte' : 'alle')
   const [saving, setSaving] = useState(false)
 
+  const { profile: myProfile } = useAuth()
+  const nurEigeneWache = myProfile?.rolle === 'wehrleiter'
+
   async function oeffnen() {
-    const { data } = await supabase.from('wehren').select('id,name').order('name')
+    let wehrQuery = supabase.from('wehren').select('id,name').order('name')
+    // Wehrleiter darf nur eigene Wache auswaehlen
+    if (nurEigeneWache && myProfile?.wehr_id) {
+      wehrQuery = wehrQuery.eq('id', myProfile.wehr_id)
+    }
+    const { data } = await wehrQuery
     setWehren(data ?? [])
-    setAuswahl(pruefung.sichtbar_fuer_wehren ?? [])
-    setModus(pruefung.sichtbar_fuer_wehren ? 'ausgewaehlte' : 'alle')
+
+    // Wehrleiter: automatisch nur eigene Wache vorauswaehlen
+    if (nurEigeneWache && myProfile?.wehr_id) {
+      setAuswahl([myProfile.wehr_id])
+      setModus('ausgewaehlte')
+    } else {
+      setAuswahl(pruefung.sichtbar_fuer_wehren ?? [])
+      setModus(pruefung.sichtbar_fuer_wehren ? 'ausgewaehlte' : 'alle')
+    }
     setModal(true)
   }
 
@@ -206,12 +377,18 @@ function WachenToggle({ pruefung, onToggle }) {
             </div>
             <div className="form-group">
               <label>Pruefung sichtbar fuer</label>
-              <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-                <button type="button" className={`btn btn-sm ${modus === 'alle' ? 'btn-primary' : 'btn-secondary'}`}
-                  onClick={() => setModus('alle')}>Alle Wachen</button>
-                <button type="button" className={`btn btn-sm ${modus === 'ausgewaehlte' ? 'btn-primary' : 'btn-secondary'}`}
-                  onClick={() => setModus('ausgewaehlte')}>Nur bestimmte</button>
-              </div>
+              {nurEigeneWache ? (
+                <div className="alert alert-info" style={{ marginTop: 6, fontSize: 13 }}>
+                  Als Wehrleiter koennen Sie Pruefungen nur fuer Ihre eigene Wache freigeben.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                  <button type="button" className={`btn btn-sm ${modus === 'alle' ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => setModus('alle')}>Alle Wachen</button>
+                  <button type="button" className={`btn btn-sm ${modus === 'ausgewaehlte' ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => setModus('ausgewaehlte')}>Nur bestimmte</button>
+                </div>
+              )}
             </div>
             {modus === 'ausgewaehlte' && (
               <div className="form-group">
@@ -263,7 +440,10 @@ function ErgebnisDetail({ pruefung, ergebnis, onBack }) {
       <div className="page-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <button className="btn btn-ghost btn-sm" onClick={onBack}>← Zurueck</button>
-          <h1>Ergebnis: {pruefung.titel}</h1>
+          <div>
+            <h1>Ergebnis: {pruefung.titel}</h1>
+            {kameradName && <p style={{ fontSize: 13, marginTop: 2 }}>Kamerad: {kameradName}</p>}
+          </div>
         </div>
       </div>
 
@@ -322,11 +502,15 @@ function ErgebnisDetail({ pruefung, ergebnis, onBack }) {
                 return (
                   <div key={ai} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 8, border: `1px solid ${border}`, background: bg }}>
                     <span style={{ fontSize: 13, fontWeight: 500, color: textColor, flex: 1 }}>{a.text}</span>
-                    <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-                      {istRichtigeAntwort && <span style={{ fontSize: 11, color: '#1E8449', fontWeight: 600 }}>Richtig</span>}
-                      {istMeineAntwort && <span style={{ fontSize: 11, color: istRichtigeAntwort ? '#1E8449' : 'var(--red)', fontWeight: 600 }}>
-                        {istRichtigeAntwort ? '✓ Deine Antwort' : '✗ Deine Antwort'}
-                      </span>}
+                    <div style={{ display: 'flex', gap: 4, flexShrink: 0, flexDirection: 'column', alignItems: 'flex-end' }}>
+                      {istRichtigeAntwort && !istMeineAntwort && (
+                        <span style={{ fontSize: 11, color: '#1E8449', fontWeight: 600 }}>✓ Richtige Antwort</span>
+                      )}
+                      {istMeineAntwort && (
+                        <span style={{ fontSize: 11, color: istRichtigeAntwort ? '#1E8449' : 'var(--red)', fontWeight: 600 }}>
+                          {istRichtigeAntwort ? '✓ Richtig' : '✗ Falsch gewaehlt'}
+                        </span>
+                      )}
                     </div>
                   </div>
                 )
@@ -556,13 +740,32 @@ function PruefungAblegen({ pruefung, profile, onBack }) {
 function PruefungAuswertung({ pruefung, onBack }) {
   const [ergebnisse, setErgebnisse] = useState([])
   const [loading, setLoading] = useState(true)
+  const [vonFilter, setVonFilter] = useState(pruefung.aktiv_von ? pruefung.aktiv_von.slice(0,10) : '')
+  const [bisFilter, setBisFilter] = useState(pruefung.aktiv_bis ? pruefung.aktiv_bis.slice(0,10) : '')
+  const [detailErgebnis, setDetailErgebnis] = useState(null)
 
   useEffect(() => {
     supabase.from('pruefungs_ergebnisse').select('*, kamerad:profiles(vorname,nachname)').eq('pruefung_id', pruefung.id).order('abgelegt_am', { ascending: false }).then(({ data }) => { setErgebnisse(data ?? []); setLoading(false) })
   }, [])
 
-  const bestanden = ergebnisse.filter(e => e.bestanden).length
-  const durchschnitt = ergebnisse.length ? Math.round(ergebnisse.reduce((s, e) => s + (e.punkte_gesamt > 0 ? e.punkte_erreicht / e.punkte_gesamt * 100 : 0), 0) / ergebnisse.length) : 0
+  if (detailErgebnis) return (
+    <ErgebnisDetail
+      pruefung={pruefung}
+      ergebnis={detailErgebnis}
+      onBack={() => setDetailErgebnis(null)}
+      kameradName={`${detailErgebnis.kamerad?.vorname} ${detailErgebnis.kamerad?.nachname}`}
+    />
+  )
+
+  const gefiltert = ergebnisse.filter(e => {
+    const d = new Date(e.abgelegt_am)
+    if (vonFilter && d < new Date(vonFilter)) return false
+    if (bisFilter && d > new Date(bisFilter + 'T23:59:59')) return false
+    return true
+  })
+
+  const bestanden = gefiltert.filter(e => e.bestanden).length
+  const durchschnitt = gefiltert.length ? Math.round(gefiltert.reduce((s, e) => s + (e.punkte_gesamt > 0 ? e.punkte_erreicht / e.punkte_gesamt * 100 : 0), 0) / gefiltert.length) : 0
 
   if (loading) return <div className="loading-page"><div className="spinner"></div></div>
 
@@ -574,26 +777,55 @@ function PruefungAuswertung({ pruefung, onBack }) {
           <h1>Auswertung: {pruefung.titel}</h1>
         </div>
       </div>
+      {/* Zeitraum-Filter */}
+      <div className="card" style={{ marginBottom: 20, padding: '14px 18px' }}>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div className="form-group" style={{ margin: 0, flex: 1, minWidth: 150 }}>
+            <label style={{ fontSize: 12 }}>Von</label>
+            <input type="date" value={vonFilter} onChange={e => setVonFilter(e.target.value)} />
+          </div>
+          <div className="form-group" style={{ margin: 0, flex: 1, minWidth: 150 }}>
+            <label style={{ fontSize: 12 }}>Bis</label>
+            <input type="date" value={bisFilter} onChange={e => setBisFilter(e.target.value)} />
+          </div>
+          <button className="btn btn-secondary btn-sm" onClick={() => { setVonFilter(''); setBisFilter('') }}>
+            Zuruecksetzen
+          </button>
+        </div>
+        {(vonFilter || bisFilter) && (
+          <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 8 }}>
+            {gefiltert.length} von {ergebnisse.length} Ergebnissen im gewaehlten Zeitraum
+          </div>
+        )}
+      </div>
+
       <div className="stat-grid" style={{ marginBottom: 24 }}>
-        <div className="stat-card"><div className="stat-label">Teilnehmer</div><div className="stat-value">{ergebnisse.length}</div></div>
+        <div className="stat-card"><div className="stat-label">Teilnehmer</div><div className="stat-value">{gefiltert.length}</div></div>
         <div className="stat-card accent"><div className="stat-label">Bestanden</div><div className="stat-value">{bestanden}</div></div>
-        <div className="stat-card"><div className="stat-label">Nicht bestanden</div><div className="stat-value">{ergebnisse.length - bestanden}</div></div>
+        <div className="stat-card"><div className="stat-label">Nicht bestanden</div><div className="stat-value">{gefiltert.length - bestanden}</div></div>
         <div className="stat-card"><div className="stat-label">Ø Ergebnis</div><div className="stat-value">{durchschnitt}%</div></div>
       </div>
       <div className="card" style={{ padding: 0 }}>
         <table>
           <thead><tr><th>Kamerad</th><th>Versuch</th><th>Ergebnis</th><th>Punkte</th><th>Abgelegt am</th><th>Status</th></tr></thead>
           <tbody>
-            {ergebnisse.length === 0
-              ? <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--gray-400)', padding: 24 }}>Noch keine Ergebnisse</td></tr>
-              : ergebnisse.map(e => (
+            {gefiltert.length === 0
+              ? <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--gray-400)', padding: 24 }}>Keine Ergebnisse im gewaehlten Zeitraum</td></tr>
+              : gefiltert.map(e => (
                 <tr key={e.id}>
                   <td style={{ fontWeight: 500 }}>{e.kamerad?.vorname} {e.kamerad?.nachname}</td>
                   <td style={{ fontSize: 13, color: 'var(--gray-400)' }}>{e.versuch ?? 1}. Versuch</td>
                   <td>{e.punkte_gesamt > 0 ? Math.round(e.punkte_erreicht / e.punkte_gesamt * 100) : 0}%</td>
                   <td>{e.punkte_erreicht} / {e.punkte_gesamt}</td>
                   <td style={{ fontSize: 13 }}>{format(new Date(e.abgelegt_am), 'd. MMM yyyy HH:mm', { locale: de })}</td>
-                  <td><span className={`badge badge-${e.bestanden ? 'green' : 'red'}`}>{e.bestanden ? 'Bestanden' : 'Nicht bestanden'}</span></td>
+                  <td>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <span className={`badge badge-${e.bestanden ? 'green' : 'red'}`}>{e.bestanden ? 'Bestanden' : 'Nicht bestanden'}</span>
+                      <button className="btn btn-sm btn-secondary" style={{ fontSize: 11, padding: '4px 8px' }} onClick={() => setDetailErgebnis(e)}>
+                        Ansehen
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))}
           </tbody>

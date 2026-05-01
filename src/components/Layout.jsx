@@ -19,6 +19,7 @@ export default function Layout() {
   const { profile, signOut, isAdmin } = useAuth()
   const navigate = useNavigate()
   const showAdmin = profile?.rolle === 'wehrleiter' || profile?.rolle === 'gemeindebrandmeister'
+  const { aufgabenAktiv } = useAuth()
 
   async function handleSignOut() {
     await signOut()
@@ -29,7 +30,7 @@ export default function Layout() {
     ? `${profile.vorname?.[0] ?? ''}${profile.nachname?.[0] ?? ''}`.toUpperCase() || '?'
     : '?'
 
-  const allNav = [...NAV, ...(showAdmin ? NAV_ADMIN : [])]
+  const allNav = [...NAV.filter(n => n.to !== '/aufgaben' || aufgabenAktiv), ...(showAdmin ? NAV_ADMIN : [])]
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh' }}>
@@ -55,7 +56,7 @@ export default function Layout() {
         {/* Nav */}
         <nav style={{ flex: 1, padding: '12px 10px', overflowY: 'auto' }}>
           <div style={{ fontSize: 10, fontWeight: 500, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.08em', textTransform: 'uppercase', padding: '8px 10px 4px' }}>Menu</div>
-          {NAV.map(item => (
+          {NAV.filter(n => n.to !== '/aufgaben' || aufgabenAktiv).map(item => (
             <NavLink key={item.to} to={item.to} end={item.exact}
               style={({ isActive }) => navStyle(isActive)}>
               <item.icon />{item.label}
@@ -128,28 +129,40 @@ export default function Layout() {
       <nav className="mobile-bottom-nav" style={{
         display: 'none', position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50,
         background: 'var(--gray-800)', borderTop: '1px solid rgba(255,255,255,0.08)',
-        padding: '8px 0 env(safe-area-inset-bottom)',
+        padding: '6px 0 env(safe-area-inset-bottom)',
         flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center',
       }}>
-        {allNav.slice(0, 5).map(item => (
+        {NAV.map(item => (
           <NavLink key={item.to} to={item.to} end={item.exact}
             style={({ isActive }) => ({
-              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
-              padding: '6px 10px', borderRadius: 8, textDecoration: 'none', minWidth: 52,
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
+              padding: '5px 8px', borderRadius: 8, textDecoration: 'none', minWidth: 44, flex: 1,
               color: isActive ? 'white' : 'rgba(255,255,255,0.45)',
               background: isActive ? 'rgba(192,57,43,0.3)' : 'transparent',
             })}>
             <item.icon />
-            <span style={{ fontSize: 10, fontWeight: 500 }}>{item.label}</span>
+            <span style={{ fontSize: 9, fontWeight: 500 }}>{item.label}</span>
           </NavLink>
         ))}
+        {showAdmin && (
+          <NavLink to="/admin"
+            style={({ isActive }) => ({
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
+              padding: '5px 8px', borderRadius: 8, textDecoration: 'none', minWidth: 44, flex: 1,
+              color: isActive ? 'white' : 'rgba(255,255,255,0.45)',
+              background: isActive ? 'rgba(192,57,43,0.3)' : 'transparent',
+            })}>
+            <IconKameraden />
+            <span style={{ fontSize: 9, fontWeight: 500 }}>Admin</span>
+          </NavLink>
+        )}
         <button onClick={handleSignOut} style={{
-          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
-          padding: '6px 10px', background: 'transparent', border: 'none', cursor: 'pointer',
-          color: 'rgba(255,255,255,0.45)', minWidth: 52,
+          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
+          padding: '5px 8px', background: 'transparent', border: 'none', cursor: 'pointer',
+          color: 'rgba(255,255,255,0.45)', minWidth: 44, flex: 1,
         }}>
           <IconAbmelden />
-          <span style={{ fontSize: 10, fontWeight: 500 }}>Abmelden</span>
+          <span style={{ fontSize: 9, fontWeight: 500 }}>Logout</span>
         </button>
       </nav>
 

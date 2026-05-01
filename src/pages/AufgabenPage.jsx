@@ -126,7 +126,7 @@ export default function AufgabenPage() {
       </div>
 
       {/* Filter */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 20, alignItems: 'center', overflowX: 'auto', paddingBottom: 4 }} className="filter-scroll">
         {kannErstellen && (
           <div style={{ display: 'flex', gap: 4, padding: 3, background: 'var(--gray-100)', borderRadius: 8 }}>
             {[{ v: 'meine', l: 'Meine' }, { v: 'alle', l: 'Alle' }].map(({ v, l }) => (

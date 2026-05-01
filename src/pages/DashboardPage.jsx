@@ -6,7 +6,7 @@ import { format } from 'date-fns'
 import { de } from 'date-fns/locale'
 
 export default function DashboardPage() {
-  const { profile, isAdmin } = useAuth()
+  const { profile, isAdmin, aufgabenAktiv } = useAuth()
   const navigate = useNavigate()
   const [stats, setStats] = useState({ kameraden: 0, dokumente: 0, pruefungen: 0, aufgaben: 0 })
   const [wehrName, setWehrName] = useState('')
@@ -28,10 +28,28 @@ export default function DashboardPage() {
       { data: wehr },
       { data: kList },
     ] = await Promise.all([
-      supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('status', 'aktiv'),
+(() => {
+        let q = supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('status', 'aktiv')
+        if (profile?.rolle === 'wehrleiter' && profile?.wehr_id) {
+          q = q.eq('wehr_id', profile.wehr_id)
+        } else if (profile?.rolle !== 'gemeindebrandmeister' && profile?.wehr_id) {
+          q = q.eq('wehr_id', profile.wehr_id)
+        }
+        return q
+      })(),
       supabase.from('dokumente').select('*', { count: 'exact', head: true }),
-      supabase.from('pruefungen').select('*', { count: 'exact', head: true }).eq('aktiv', true),
-      supabase.from('aufgaben').select('*', { count: 'exact', head: true }).eq('status', 'offen'),
+(() => {
+        // Nur aktive Pruefungen die fuer die Wache des Nutzers sichtbar sind
+        let q = supabase.from('pruefungen').select('*', { count: 'exact', head: true }).eq('aktiv', true)
+        // Pruefungen fuer spezifische Wachen filtern
+        if (profile?.wehr_id) {
+          q = q.or(`sichtbar_fuer_wehren.is.null,sichtbar_fuer_wehren.cs.{${profile.wehr_id}}`)
+        }
+        return q
+      })(),
+supabase.from('aufgaben').select('*', { count: 'exact', head: true })
+        .in('status', ['offen', 'in_arbeit'])
+        .or(`zugewiesen_an.eq.${profile?.id},zugewiesen_an_wehr.eq.${profile?.wehr_id || '00000000-0000-0000-0000-000000000000'}`),
       supabase.from('aufgaben')
         .select('*, erstellt_von:profiles!aufgaben_erstellt_von_fkey(vorname,nachname)')
         .eq('zugewiesen_an', profile?.id)
@@ -41,10 +59,17 @@ export default function DashboardPage() {
       profile?.wehr_id
         ? supabase.from('wehren').select('name').eq('id', profile.wehr_id).single()
         : Promise.resolve({ data: null }),
-      supabase.from('profiles')
-        .select('id,vorname,nachname,geburtsdatum,wehr:wehren(name),kamerad_lehrgaenge(lehrgang:lehrgaenge(name,kuerzel))')
-        .eq('status', 'aktiv')
-        .order('nachname'),
+(() => {
+        let q = supabase.from('profiles')
+          .select('id,vorname,nachname,geburtsdatum,wehr:wehren(name),kamerad_lehrgaenge(lehrgang:lehrgaenge(name,kuerzel))')
+          .eq('status', 'aktiv')
+          .order('nachname')
+        // Wehrleiter + alle ausser GBM sehen nur eigene Wache
+        if (profile?.rolle !== 'gemeindebrandmeister' && profile?.wehr_id) {
+          q = q.eq('wehr_id', profile.wehr_id)
+        }
+        return q
+      })(),
     ])
 
     setStats({ kameraden: kameraden ?? 0, dokumente: dokumente ?? 0, pruefungen: pruefungen ?? 0, aufgaben: aufgaben ?? 0 })
@@ -161,16 +186,26 @@ export default function DashboardPage() {
         />
 
         {/* Aufgaben */}
-        <StatKachel
-          label="Offene Aufgaben"
-          wert={stats.aufgaben}
-          farbe="#FAEEDA"
-          textfarbe="#633806"
-          icon={<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#633806" strokeWidth="1.5" opacity="0.5"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>}
-          aktion={{ label: 'Aufgaben anzeigen', to: '/aufgaben' }}
-          navigate={navigate}
-          highlight={stats.aufgaben > 0}
-        />
+        {aufgabenAktiv ? (
+          <StatKachel
+            label="Offene & in Arbeit"
+            wert={stats.aufgaben}
+            farbe="#FAEEDA"
+            textfarbe="#633806"
+            icon={<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#633806" strokeWidth="1.5" opacity="0.5"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>}
+            aktion={{ label: 'Aufgaben anzeigen', to: '/aufgaben' }}
+            navigate={navigate}
+            highlight={stats.aufgaben > 0}
+          />
+        ) : (
+          <div style={{ background: 'var(--gray-100)', borderRadius: 12, padding: '16px 16px 14px', opacity: 0.5, border: '1.5px solid transparent' }}>
+            <div style={{ fontSize: 11, fontWeight: 500, color: 'var(--gray-400)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 2 }}>Aufgaben</div>
+            <div style={{ fontSize: 14, color: 'var(--gray-400)', marginTop: 6 }}>Nicht aktiviert</div>
+            <div style={{ marginTop: 14, padding: '8px 0', borderRadius: 8, background: 'var(--gray-200)', fontSize: 12, textAlign: 'center', color: 'var(--gray-400)' }}>
+              Fuer diese Wache deaktiviert
+            </div>
+          </div>
+        )}
 
         {/* Profil */}
         <StatKachel
