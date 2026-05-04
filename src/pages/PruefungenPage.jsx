@@ -419,7 +419,7 @@ function WachenToggle({ pruefung, onToggle }) {
   )
 }
 
-function ErgebnisDetail({ pruefung, ergebnis, onBack }) {
+function ErgebnisDetail({ pruefung, ergebnis, onBack, istNachAbgabe, kameradName }) {
   const [fragen, setFragen] = useState([])
   const [loading, setLoading] = useState(true)
 
@@ -458,7 +458,7 @@ function ErgebnisDetail({ pruefung, ergebnis, onBack }) {
             {ergebnis.punkte_erreicht} von {ergebnis.punkte_gesamt} Punkten · Bestehensgrenze: {pruefung.bestehens_prozent}%
           </div>
           <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 2 }}>
-            Abgelegt am {format(new Date(ergebnis.abgelegt_am), 'd. MMMM yyyy HH:mm', { locale: de })}
+            {ergebnis.abgelegt_am ? `Abgelegt am ${format(new Date(ergebnis.abgelegt_am), 'd. MMMM yyyy HH:mm', { locale: de })}` : ''}
           </div>
         </div>
       </div>
@@ -537,7 +537,7 @@ function PruefungErstellen({ profile, onBack, importDaten }) {
     importDaten?.fragen
       ? importDaten.fragen.map((f, i) => ({
           id: 'imp_' + i, frage_text: f.frage_text ?? '',
-          typ: f.typ === 'mehrfachauswahl' ? 'multiple_choice' : (f.typ ?? 'multiple_choice'),
+          typ: f.typ ?? 'multiple_choice',
           antworten: f.antworten ?? [], punkte: f.punkte ?? 1, reihenfolge: i,
         }))
       : []
@@ -611,8 +611,9 @@ function PruefungErstellen({ profile, onBack, importDaten }) {
         <div key={frage.id} className="card" style={{ marginBottom: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
             <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--gray-400)' }}>Frage {fi + 1}</span>
-            <select value={frage.typ} onChange={e => updateFrage(frage.id, 'typ', e.target.value)} style={{ maxWidth: 180 }}>
-              <option value="multiple_choice">Multiple Choice</option>
+            <select value={frage.typ} onChange={e => updateFrage(frage.id, 'typ', e.target.value)} style={{ maxWidth: 220 }}>
+              <option value="multiple_choice">Multiple Choice (1 richtig)</option>
+              <option value="mehrfachauswahl">Mehrfachauswahl (mehrere richtig)</option>
               <option value="wahr_falsch">Wahr / Falsch</option>
             </select>
             <button className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto', color: 'var(--red)' }} onClick={() => removeFrage(frage.id)}>Entfernen</button>
@@ -653,9 +654,17 @@ function PruefungAblegen({ pruefung, profile, onBack }) {
     fragen.forEach(f => {
       gesamt += f.punkte
       const auswahl = antworten[f.id]
-      if (!auswahl) return
+      if (!auswahl || (Array.isArray(auswahl) && auswahl.length === 0)) return
       const richtigeAntworten = f.antworten.filter(a => a.richtig).map(a => a.text)
-      if (richtigeAntworten.includes(auswahl)) richtig += f.punkte
+      if (f.typ === 'mehrfachauswahl') {
+        // Alle richtigen muessen ausgewaehlt sein, keine falschen
+        const auswahlArr = Array.isArray(auswahl) ? auswahl : [auswahl]
+        const alleRichtigenGewaehlt = richtigeAntworten.every(r => auswahlArr.includes(r))
+        const keineFalschenGewaehlt = auswahlArr.every(a => richtigeAntworten.includes(a))
+        if (alleRichtigenGewaehlt && keineFalschenGewaehlt) richtig += f.punkte
+      } else {
+        if (richtigeAntworten.includes(auswahl)) richtig += f.punkte
+      }
     })
     const bestanden = gesamt > 0 && (richtig / gesamt * 100) >= pruefung.bestehens_prozent
     const res = { punkte_erreicht: richtig, punkte_gesamt: gesamt, bestanden, prozent: gesamt > 0 ? Math.round(richtig / gesamt * 100) : 0, abgelegt_am: new Date().toISOString(), antworten_detail: antworten }
@@ -712,9 +721,12 @@ function PruefungAblegen({ pruefung, profile, onBack }) {
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {f.antworten.map((a, ai) => {
-              const isSelected = antworten[f.id] === a.text
+              const auswahlArr = Array.isArray(antworten[f.id]) ? antworten[f.id] : (antworten[f.id] ? [antworten[f.id]] : [])
+              const isSelected = f.typ === 'mehrfachauswahl'
+                ? auswahlArr.includes(a.text)
+                : antworten[f.id] === a.text
               return (
-                <label key={ai} onClick={() => setAntworten(x => ({ ...x, [f.id]: a.text }))} style={{
+                <label key={ai} onClick={() => setAntwort(f.id, a.text, f.typ)} style={{
                   display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderRadius: 10, cursor: 'pointer', fontSize: 14,
                   border: `2px solid ${isSelected ? 'var(--red)' : 'var(--gray-200)'}`,
                   background: isSelected ? 'var(--red-pale)' : 'var(--white)', transition: 'all 150ms', userSelect: 'none',
@@ -723,7 +735,7 @@ function PruefungAblegen({ pruefung, profile, onBack }) {
                     {isSelected && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20,6 9,17 4,12"/></svg>}
                   </div>
                   <span style={{ color: isSelected ? 'var(--red-dark)' : 'var(--gray-700)', fontWeight: isSelected ? 500 : 400 }}>{a.text}</span>
-                  <input type="radio" name={`f-${f.id}`} value={a.text} checked={isSelected} onChange={() => {}} style={{ display: 'none' }} />
+                  <input type={f.typ === 'mehrfachauswahl' ? 'checkbox' : 'radio'} name={f.typ !== 'mehrfachauswahl' ? `f-${f.id}` : undefined} value={a.text} checked={isSelected} onChange={() => {}} style={{ display: 'none' }} />
                 </label>
               )
             })}
@@ -886,17 +898,26 @@ function PruefungBearbeiten({ pruefung, profile, onBack }) {
         <div key={frage.id} className="card" style={{ marginBottom: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
             <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--gray-400)' }}>Frage {fi + 1}</span>
-            <select value={frage.typ} onChange={e => updateFrage(frage.id, 'typ', e.target.value)} style={{ maxWidth: 180 }}>
-              <option value="multiple_choice">Multiple Choice</option>
+            <select value={frage.typ} onChange={e => updateFrage(frage.id, 'typ', e.target.value)} style={{ maxWidth: 220 }}>
+              <option value="multiple_choice">Multiple Choice (1 richtig)</option>
+              <option value="mehrfachauswahl">Mehrfachauswahl (mehrere richtig)</option>
               <option value="wahr_falsch">Wahr / Falsch</option>
             </select>
             <button className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto', color: 'var(--red)' }} onClick={() => removeFrage(frage.id)}>Entfernen</button>
           </div>
           <div className="form-group"><label>Fragetext</label><input value={frage.frage_text} onChange={e => updateFrage(frage.id, 'frage_text', e.target.value)} placeholder="Fragetext..." /></div>
-          <label style={{ marginBottom: 8, display: 'block' }}>Antworten</label>
+          <label style={{ marginBottom: 8, display: 'block' }}>
+            Antworten {frage.typ === 'mehrfachauswahl' ? '(mehrere koennen richtig sein)' : '(eine richtige markieren)'}
+          </label>
           {frage.antworten.map((a, ai) => (
             <div key={ai} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <input type="radio" checked={a.richtig ?? false} onChange={e => updateAntwort(frage.id, ai, 'richtig', e.target.checked)} style={{ width: 'auto', flexShrink: 0 }} name={`frage-${frage.id}`} />
+              <input
+                type={frage.typ === 'mehrfachauswahl' ? 'checkbox' : 'radio'}
+                checked={a.richtig ?? false}
+                onChange={e => updateAntwort(frage.id, ai, 'richtig', e.target.checked)}
+                style={{ width: 'auto', flexShrink: 0 }}
+                name={frage.typ !== 'mehrfachauswahl' ? `frage-${frage.id}` : undefined}
+              />
               {frage.typ === 'wahr_falsch' ? <span style={{ fontSize: 14 }}>{ai === 0 ? 'Wahr' : 'Falsch'}</span> : <input value={a.text ?? ''} onChange={e => updateAntwort(frage.id, ai, 'text', e.target.value)} placeholder={`Antwort ${ai + 1}`} />}
             </div>
           ))}

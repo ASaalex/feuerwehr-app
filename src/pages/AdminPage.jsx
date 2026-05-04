@@ -1,16 +1,18 @@
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 
-const ADMIN_ITEMS = [
-  { to: '/kameraden', label: 'Kameraden', desc: 'Kameraden verwalten und freischalten', icon: '👥', color: '#E6F1FB' },
-  { to: '/nutzer-anlegen', label: 'Nutzer anlegen', desc: 'Neue Kameraden direkt anlegen', icon: '➕', color: '#D5F5E3' },
-  { to: '/wachen', label: 'Wachen', desc: 'Ortsfeuerwehren verwalten', icon: '🏠', color: '#FADBD8' },
-  { to: '/lehrgaenge', label: 'Lehrgaenge', desc: 'Lehrgaenge anlegen und verwalten', icon: '🎓', color: '#EEEDFE' },
-  { to: '/datenschutz', label: 'Datenschutz', desc: 'Datenschutzvereinbarung', icon: '🔒', color: '#FAEEDA' },
+const ALLE_ITEMS = [
+  { to: '/kameraden', label: 'Kameraden', desc: 'Kameraden verwalten und freischalten', icon: '👥', color: '#E6F1FB', nurGbm: false },
+  { to: '/nutzer-anlegen', label: 'Nutzer anlegen', desc: 'Neue Kameraden direkt anlegen', icon: '➕', color: '#D5F5E3', nurGbm: false },
+  { to: '/wachen', label: 'Wachen', desc: 'Ortsfeuerwehren verwalten', icon: '🏠', color: '#FADBD8', nurGbm: true },
+  { to: '/lehrgaenge', label: 'Lehrgaenge', desc: 'Lehrgaenge anlegen und verwalten', icon: '🎓', color: '#EEEDFE', nurGbm: true },
+  { to: '/datenschutz', label: 'Datenschutz', desc: 'Datenschutzvereinbarung', icon: '🔒', color: '#FAEEDA', nurGbm: false },
 ]
 
 export default function AdminPage() {
   const { profile } = useAuth()
+  const isGemeinde = profile?.rolle === 'gemeindebrandmeister'
+  const ADMIN_ITEMS = ALLE_ITEMS.filter(i => !i.nurGbm || isGemeinde)
 
   return (
     <div>

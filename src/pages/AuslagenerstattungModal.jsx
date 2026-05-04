@@ -1,12 +1,36 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 
 const LEER_ZEILE = { firma: '', gegenstand: '', preis: '' }
 
 export default function AuslagenerstattungModal({ onClose }) {
   const { profile } = useAuth()
+  const [profileDaten, setProfileDaten] = useState(null)
 
   const heute = new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })
+
+  useEffect(() => {
+    // Profildaten mit Adresse und Bankdaten laden
+    supabase.from('profiles').select('vorname,nachname,strasse,plz,ort,iban,bic')
+      .eq('id', profile?.id).single()
+      .then(({ data }) => {
+        if (data) {
+          setProfileDaten(data)
+          const absenderTeile = [
+            `${data.vorname ?? ''} ${data.nachname ?? ''}`.trim(),
+            data.strasse ?? '',
+            data.plz && data.ort ? `${data.plz} ${data.ort}` : (data.plz ?? data.ort ?? '')
+          ].filter(Boolean)
+          setForm(f => ({
+            ...f,
+            absender: absenderTeile.join('\n'),
+            iban: data.iban ?? '',
+            bic: data.bic ?? '',
+          }))
+        }
+      })
+  }, [])
 
   const [form, setForm] = useState({
     absender: `${profile?.vorname ?? ''} ${profile?.nachname ?? ''}`.trim(),

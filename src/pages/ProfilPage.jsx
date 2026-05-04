@@ -21,6 +21,12 @@ export default function ProfilPage() {
     eintrittsdatum: profile?.eintrittsdatum ?? '',
     fuehrerschein: profile?.fuehrerschein ?? [],
     atemschutz: profile?.atemschutz ?? false,
+    strasse: profile?.strasse ?? '',
+    plz: profile?.plz ?? '',
+    ort: profile?.ort ?? '',
+    iban: profile?.iban ?? '',
+    bic: profile?.bic ?? '',
+    bankname: profile?.bankname ?? '',
   })
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
@@ -54,6 +60,12 @@ export default function ProfilPage() {
       eintrittsdatum: form.eintrittsdatum || null,
       fuehrerschein: form.fuehrerschein,
       atemschutz: form.atemschutz,
+      strasse: form.strasse || null,
+      plz: form.plz || null,
+      ort: form.ort || null,
+      iban: form.iban || null,
+      bic: form.bic || null,
+      bankname: form.bankname || null,
     }
 
     const { error } = await supabase
@@ -182,6 +194,21 @@ export default function ProfilPage() {
           </div>
 
           <div className="form-group">
+            <label>Strasse und Hausnummer (optional)</label>
+            <input value={form.strasse} onChange={set('strasse')} placeholder="z.B. Musterstrasse 1" />
+          </div>
+          <div className="form-row">
+            <div className="form-group">
+              <label>PLZ</label>
+              <input value={form.plz} onChange={set('plz')} placeholder="99428" maxLength={5} />
+            </div>
+            <div className="form-group">
+              <label>Ort</label>
+              <input value={form.ort} onChange={set('ort')} placeholder="Grammetal" />
+            </div>
+          </div>
+
+          <div className="form-group">
             <label>Fuehrerscheinklassen</label>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
               {FS_OPTIONEN.map(fs => (
@@ -223,6 +250,53 @@ export default function ProfilPage() {
             </button>
           </div>
         </form>
+      </div>
+
+      {/* IBAN und BIC - nur fuer den Nutzer selbst */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <h3 style={{ marginBottom: 8 }}>Bankverbindung</h3>
+        <div style={{ background: '#EBF5FB', border: '1px solid #AED6F1', borderRadius: 8, padding: '10px 14px', marginBottom: 16 }}>
+          <div style={{ fontSize: 13, color: '#1A5276', lineHeight: 1.6 }}>
+            <strong>Freiwillige Angabe.</strong> IBAN und BIC werden ausschliesslich zur automatischen
+            Befuellung des Auslagenerstattungsformulars verwendet. Diese Daten sind
+            nur fuer dich sichtbar — kein anderer Nutzer, kein Administrator kann sie einsehen.
+          </div>
+        </div>
+        <div className="form-group">
+          <label>Name und Sitz der Bank</label>
+          <input
+            value={form.bankname}
+            onChange={set('bankname')}
+            placeholder="z.B. Volksbank Weimar eG"
+          />
+        </div>
+        <div className="form-row">
+          <div className="form-group">
+            <label>IBAN</label>
+            <input
+              value={form.iban}
+              onChange={e => setForm(f => ({ ...f, iban: e.target.value.toUpperCase().replace(/\s/g, '') }))}
+              placeholder="DE00000000000000000000"
+              maxLength={22}
+              style={{ fontFamily: 'var(--mono)', letterSpacing: 1 }}
+            />
+          </div>
+          <div className="form-group">
+            <label>BIC</label>
+            <input
+              value={form.bic}
+              onChange={e => setForm(f => ({ ...f, bic: e.target.value.toUpperCase() }))}
+              placeholder="XXXXXXXX"
+              maxLength={11}
+              style={{ fontFamily: 'var(--mono)', letterSpacing: 1 }}
+            />
+          </div>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <button type="button" className="btn btn-secondary" onClick={handleSave} disabled={saving}>
+            {saving ? 'Speichern...' : 'Bankdaten speichern'}
+          </button>
+        </div>
       </div>
 
       {/* Passwort aendern */}

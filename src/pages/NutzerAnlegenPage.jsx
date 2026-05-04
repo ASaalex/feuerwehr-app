@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 
-const ROLLEN = ['wehrleiter', 'gruppenfuehrer', 'ausbilder', 'kamerad']
+const ROLLEN_GBM = ['wehrleiter', 'gruppenfuehrer', 'ausbilder', 'kamerad']
+const ROLLEN_WL = ['wehrleiter', 'ausbilder', 'kamerad']
+const ROLLEN = ROLLEN_GBM // wird unten ueberschrieben
 const ROLLEN_LABEL = {
   gemeindebrandmeister: 'Gemeindebrandmeister',
   wehrleiter: 'Wehrleiter',
@@ -194,7 +196,7 @@ export default function NutzerAnlegenPage() {
             <div className="form-group">
               <label>Rolle</label>
               <select value={form.rolle} onChange={set('rolle')}>
-                {ROLLEN.map(r => <option key={r} value={r}>{ROLLEN_LABEL[r]}</option>)}
+                {(isGemeinde ? ROLLEN_GBM : ROLLEN_WL).map(r => <option key={r} value={r}>{ROLLEN_LABEL[r]}</option>)}
               </select>
             </div>
             <div className="form-group">

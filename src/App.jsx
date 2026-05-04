@@ -16,6 +16,13 @@ import AdminPage from './pages/AdminPage'
 import DatenschutzPage from './pages/DatenschutzPage'
 import './index.css'
 
+function GbmRoute({ children }) {
+  const { profile, loading } = useAuth()
+  if (loading) return <div className="loading-page"><div className="spinner"></div></div>
+  if (profile?.rolle !== 'gemeindebrandmeister') return <Navigate to="/" replace />
+  return children
+}
+
 function AufgabenRoute({ children }) {
   const { aufgabenAktiv, loading } = useAuth()
   if (loading) return <div className="loading-page"><div className="spinner"></div></div>
@@ -64,8 +71,8 @@ function AppRoutes() {
         <Route index element={<DashboardPage />} />
         <Route path="kameraden" element={<ProtectedRoute adminOnly><KameradenPage /></ProtectedRoute>} />
         <Route path="nutzer-anlegen" element={<ProtectedRoute adminOnly><NutzerAnlegenPage /></ProtectedRoute>} />
-        <Route path="wachen" element={<ProtectedRoute adminOnly><WachenPage /></ProtectedRoute>} />
-        <Route path="lehrgaenge" element={<ProtectedRoute adminOnly><LehrgaengePage /></ProtectedRoute>} />
+        <Route path="wachen" element={<GbmRoute><WachenPage /></GbmRoute>} />
+        <Route path="lehrgaenge" element={<GbmRoute><LehrgaengePage /></GbmRoute>} />
         <Route path="admin" element={<ProtectedRoute adminOnly><AdminPage /></ProtectedRoute>} />
         <Route path="datenschutz" element={<ProtectedRoute><DatenschutzPage /></ProtectedRoute>} />
         <Route path="dokumente" element={<DokumentePage />} />

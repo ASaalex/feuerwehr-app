@@ -38,11 +38,15 @@ export default function DatenschutzPage() {
           unterAbschnitte: [
             {
               titel: 'Stammdaten',
-              liste: ['Vor- und Nachname', 'Geburtsdatum', 'Eintrittsdatum', 'Nutzername (internes Login)', 'Telefonnummer (freiwillig)']
+              liste: ['Vor- und Nachname', 'Geburtsdatum', 'Eintrittsdatum', 'Nutzername (internes Login)', 'Telefonnummer (freiwillig)', 'Adresse (freiwillig)']
             },
             {
               titel: 'Qualifikationen',
-              liste: ['Fuehrerscheinklassen', 'Atemschutztraeger-Status']
+              liste: ['Fuehrerscheinklassen', 'Atemschutztraeger-Status', 'Absolvierte Lehrgaenge']
+            },
+            {
+              titel: 'Zahlungsdaten (freiwillig)',
+              liste: ['IBAN und BIC — nur zur automatischen Befuellung des Auslagenerstattungsformulars', 'Nur fuer den Nutzer selbst sichtbar — kein Administrator kann diese Daten einsehen', 'Freiwillige Angabe, jederzeit loeschbar']
             },
             {
               titel: 'Nutzungsdaten',
@@ -69,6 +73,10 @@ export default function DatenschutzPage() {
             'Datenspeicherung auf Servern in der EU (Frankfurt, Deutschland)',
             'Automatische Passwortverschluesselung (bcrypt)',
           ]
+        },
+        {
+          nr: '5b', titel: 'Besondere Hinweise zu Zahlungsdaten',
+          inhalt: 'Die Angabe von IBAN und BIC ist freiwillig und dient ausschliesslich der automatischen Befuellung des Auslagenerstattungsformulars. Diese Daten werden verschluesselt gespeichert und sind technisch so abgesichert, dass ausschliesslich der jeweilige Nutzer selbst Zugriff hat. Kein Administrator, Wehrleiter oder anderer Nutzer kann diese Daten einsehen. Die Angabe kann jederzeit im eigenen Profil geloescht werden.',
         },
         {
           nr: '6', titel: 'Eingesetzte Dienstleister',
@@ -148,6 +156,11 @@ export default function DatenschutzPage() {
           Mit der Nutzung dieses Systems erklaerst du dich mit dieser Datenschutzvereinbarung einverstanden.
           Dein Wehrleiter wird dir eine ausgedruckte Version zur Unterschrift vorlegen.
         </p>
+        <div style={{ marginTop: 10, padding: '10px 14px', background: 'var(--gray-50)', borderRadius: 8, fontSize: 13, color: 'var(--gray-500)' }}>
+          Die Angabe von Zahlungsdaten (IBAN/BIC) erfolgt freiwillig und beruht auf einer gesonderten
+          informierten Einwilligung durch das Ausfullen des entsprechenden Feldes im eigenen Profil.
+          Diese Einwilligung kann jederzeit durch Loeschen der Daten im Profil widerrufen werden.
+        </div>
         <p style={{ fontSize: 13, color: 'var(--gray-400)', marginTop: 8 }}>
           Stand: {new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })}
         </p>

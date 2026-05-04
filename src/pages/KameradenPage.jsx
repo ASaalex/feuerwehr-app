@@ -419,9 +419,16 @@ export default function KameradenPage() {
               <div>
                 <div className="form-group" style={{ marginBottom: 24 }}>
                   <label>Rolle zuweisen</label>
-                  <select value={editModal.rolle} onChange={e => setEditModal(m => ({ ...m, rolle: e.target.value }))} style={{ maxWidth: 280 }}>
-                    {ROLLEN.map(r => <option key={r} value={r}>{ROLLEN_LABEL[r]}</option>)}
-                  </select>
+                  {editModal.id === myProfile?.id ? (
+                    <div style={{ padding: '9px 12px', background: 'var(--gray-50)', border: '1px solid var(--gray-200)', borderRadius: 'var(--radius)', fontSize: 14, color: 'var(--gray-500)', maxWidth: 280 }}>
+                      {ROLLEN_LABEL[editModal.rolle]}
+                      <div style={{ fontSize: 12, marginTop: 4, color: 'var(--gray-400)' }}>Eigene Rolle kann nicht geaendert werden.</div>
+                    </div>
+                  ) : (
+                    <select value={editModal.rolle} onChange={e => setEditModal(m => ({ ...m, rolle: e.target.value }))} style={{ maxWidth: 280 }}>
+                      {(isGemeinde ? ROLLEN : ROLLEN.filter(r => ['wehrleiter','ausbilder','kamerad'].includes(r))).map(r => <option key={r} value={r}>{ROLLEN_LABEL[r]}</option>)}
+                    </select>
+                  )}
                   <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 6 }}>
                     Die Rolle bestimmt automatisch alle Zugriffsrechte des Kameraden.
                   </div>

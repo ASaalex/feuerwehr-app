@@ -5,6 +5,7 @@ import { format } from 'date-fns'
 import { de } from 'date-fns/locale'
 import AusbildungsnachweisModal from './AusbildungsnachweisModal'
 import AuslagenerstattungModal from './AuslagenerstattungModal'
+import VerdienstausfallModal from './VerdienstausfallModal'
 
 const KATEGORIEN = [
   { value: 'dienstanweisung', label: 'Dienstanweisung' },
@@ -26,6 +27,7 @@ export default function DokumentePage() {
   const [msg, setMsg] = useState('')
   const [ausbildungsModal, setAusbildungsModal] = useState(false)
   const [auslagenModal, setAuslagenModal] = useState(false)
+  const [verdienstModal, setVerdienstModal] = useState(false)
 
   useEffect(() => { fetchDokumente() }, [])
 
@@ -186,6 +188,12 @@ export default function DokumentePage() {
                       ✏️
                     </button>
                   )}
+                  {(dok.titel?.toLowerCase().includes('verdienstausfall') || dok.datei_name?.toLowerCase().includes('verdienstausfall')) && (
+                    <button className="btn btn-sm" style={{ background: '#FAEEDA', color: '#633806', border: 'none' }}
+                      onClick={() => setVerdienstModal(true)} title="Verdienstausfall ausfuellen">
+                      ✏️
+                    </button>
+                  )}
                   <button className="btn btn-sm btn-secondary" onClick={() => handleDownload(dok)} title="Oeffnen">
                     ↓
                   </button>
@@ -247,6 +255,7 @@ export default function DokumentePage() {
       )}
       {ausbildungsModal && <AusbildungsnachweisModal onClose={() => setAusbildungsModal(false)} />}
       {auslagenModal && <AuslagenerstattungModal onClose={() => setAuslagenModal(false)} />}
+      {verdienstModal && <VerdienstausfallModal onClose={() => setVerdienstModal(false)} />}
     </div>
   )
 }

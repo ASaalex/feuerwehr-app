@@ -19,6 +19,7 @@ export default function Layout() {
   const { profile, signOut, isAdmin } = useAuth()
   const navigate = useNavigate()
   const showAdmin = profile?.rolle === 'wehrleiter' || profile?.rolle === 'gemeindebrandmeister'
+  const isGemeinde = profile?.rolle === 'gemeindebrandmeister'
   const { aufgabenAktiv } = useAuth()
 
   async function handleSignOut() {
@@ -30,7 +31,8 @@ export default function Layout() {
     ? `${profile.vorname?.[0] ?? ''}${profile.nachname?.[0] ?? ''}`.toUpperCase() || '?'
     : '?'
 
-  const allNav = [...NAV.filter(n => n.to !== '/aufgaben' || aufgabenAktiv), ...(showAdmin ? NAV_ADMIN : [])]
+  const adminNavFiltered = showAdmin ? NAV_ADMIN.filter(item => isGemeinde || !['/wachen', '/lehrgaenge'].includes(item.to)) : []
+  const allNav = [...NAV.filter(n => n.to !== '/aufgaben' || aufgabenAktiv), ...adminNavFiltered]
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh' }}>
@@ -66,7 +68,7 @@ export default function Layout() {
           {showAdmin && (
             <>
               <div style={{ fontSize: 10, fontWeight: 500, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.08em', textTransform: 'uppercase', padding: '16px 10px 4px' }}>Administration</div>
-              {NAV_ADMIN.map(item => (
+              {NAV_ADMIN.filter(item => isGemeinde || !['/wachen', '/lehrgaenge'].includes(item.to)).map(item => (
                 <NavLink key={item.to} to={item.to} style={({ isActive }) => navStyle(isActive)}>
                   <item.icon />{item.label}
                 </NavLink>
@@ -130,40 +132,45 @@ export default function Layout() {
         display: 'none', position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50,
         background: 'var(--gray-800)', borderTop: '1px solid rgba(255,255,255,0.08)',
         padding: '6px 0 env(safe-area-inset-bottom)',
-        flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center',
+        flexDirection: 'row', alignItems: 'center',
+        overflowX: 'auto', WebkitOverflowScrolling: 'touch',
       }}>
-        {NAV.map(item => (
-          <NavLink key={item.to} to={item.to} end={item.exact}
-            style={({ isActive }) => ({
-              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
-              padding: '5px 8px', borderRadius: 8, textDecoration: 'none', minWidth: 44, flex: 1,
-              color: isActive ? 'white' : 'rgba(255,255,255,0.45)',
-              background: isActive ? 'rgba(192,57,43,0.3)' : 'transparent',
-            })}>
-            <item.icon />
-            <span style={{ fontSize: 9, fontWeight: 500 }}>{item.label}</span>
-          </NavLink>
-        ))}
-        {showAdmin && (
-          <NavLink to="/admin"
-            style={({ isActive }) => ({
-              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
-              padding: '5px 8px', borderRadius: 8, textDecoration: 'none', minWidth: 44, flex: 1,
-              color: isActive ? 'white' : 'rgba(255,255,255,0.45)',
-              background: isActive ? 'rgba(192,57,43,0.3)' : 'transparent',
-            })}>
-            <IconKameraden />
-            <span style={{ fontSize: 9, fontWeight: 500 }}>Admin</span>
-          </NavLink>
-        )}
-        <button onClick={handleSignOut} style={{
-          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
-          padding: '5px 8px', background: 'transparent', border: 'none', cursor: 'pointer',
-          color: 'rgba(255,255,255,0.45)', minWidth: 44, flex: 1,
-        }}>
-          <IconAbmelden />
-          <span style={{ fontSize: 9, fontWeight: 500 }}>Logout</span>
-        </button>
+        <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', minWidth: 'max-content', padding: '0 4px' }}>
+          {NAV.filter(n => n.to !== '/aufgaben' || aufgabenAktiv).map(item => (
+            <NavLink key={item.to} to={item.to} end={item.exact}
+              style={({ isActive }) => ({
+                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
+                padding: '5px 10px', borderRadius: 8, textDecoration: 'none', minWidth: 56,
+                color: isActive ? 'white' : 'rgba(255,255,255,0.45)',
+                background: isActive ? 'rgba(192,57,43,0.3)' : 'transparent',
+                flexShrink: 0,
+              })}>
+              <item.icon />
+              <span style={{ fontSize: 9, fontWeight: 500, whiteSpace: 'nowrap' }}>{item.label}</span>
+            </NavLink>
+          ))}
+          {showAdmin && (
+            <NavLink to="/admin"
+              style={({ isActive }) => ({
+                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
+                padding: '5px 10px', borderRadius: 8, textDecoration: 'none', minWidth: 56,
+                color: isActive ? 'white' : 'rgba(255,255,255,0.45)',
+                background: isActive ? 'rgba(192,57,43,0.3)' : 'transparent',
+                flexShrink: 0,
+              })}>
+              <IconKameraden />
+              <span style={{ fontSize: 9, fontWeight: 500, whiteSpace: 'nowrap' }}>Admin</span>
+            </NavLink>
+          )}
+          <button onClick={handleSignOut} style={{
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
+            padding: '5px 10px', background: 'transparent', border: 'none', cursor: 'pointer',
+            color: 'rgba(255,255,255,0.45)', minWidth: 56, flexShrink: 0,
+          }}>
+            <IconAbmelden />
+            <span style={{ fontSize: 9, fontWeight: 500, whiteSpace: 'nowrap' }}>Logout</span>
+          </button>
+        </div>
       </nav>
 
       <style>{`
