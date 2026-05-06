@@ -60,13 +60,13 @@ supabase.from('aufgaben').select('*', { count: 'exact', head: true })
         ? supabase.from('wehren').select('name').eq('id', profile.wehr_id).single()
         : Promise.resolve({ data: null }),
 (() => {
+        // Alle aktiven Kameraden laden - Filterung nach Haupt- und Nebenwache im Code
         let q = supabase.from('profiles')
-          .select('id,vorname,nachname,geburtsdatum,wehr:wehren(name),kamerad_lehrgaenge(lehrgang:lehrgaenge(name,kuerzel))')
+          .select('id,vorname,nachname,geburtsdatum,wehr_id,wehr:wehren(name),kamerad_lehrgaenge(lehrgang:lehrgaenge(name,kuerzel)),kamerad_wehren(wehr_id)')
           .eq('status', 'aktiv')
           .order('nachname')
-        // Wehrleiter + alle ausser GBM sehen nur eigene Wache
-        if (profile?.rolle !== 'gemeindebrandmeister' && profile?.wehr_id) {
-          q = q.eq('wehr_id', profile.wehr_id)
+        if (profile?.rolle === 'gemeindebrandmeister') {
+          // GBM sieht alle
         }
         return q
       })(),
@@ -75,7 +75,15 @@ supabase.from('aufgaben').select('*', { count: 'exact', head: true })
     setStats({ kameraden: kameraden ?? 0, dokumente: dokumente ?? 0, pruefungen: pruefungen ?? 0, aufgaben: aufgaben ?? 0 })
     setWehrName(wehr?.name ?? '')
     setMeineAufgaben(aufgabenData ?? [])
-    setKameradenListe(kList ?? [])
+    // Filtern: Kameraden der eigenen Wache (Haupt- oder Nebenwache)
+    let gefilterteKameraden = kList ?? []
+    if (profile?.rolle !== 'gemeindebrandmeister' && profile?.wehr_id) {
+      gefilterteKameraden = gefilterteKameraden.filter(k =>
+        k.wehr_id === profile.wehr_id ||
+        (k.kamerad_wehren ?? []).some(w => w.wehr_id === profile.wehr_id)
+      )
+    }
+    setKameradenListe(gefilterteKameraden)
 
     if (isAdmin) {
       const { data } = await supabase.from('profiles').select('id,vorname,nachname,email,erstellt_am').eq('status', 'ausstehend').order('erstellt_am', { ascending: false })

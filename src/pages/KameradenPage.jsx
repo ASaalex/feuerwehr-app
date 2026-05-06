@@ -183,11 +183,12 @@ export default function KameradenPage() {
               <tr>
                 <th>Name</th>
                 {isGemeinde && <th>Wache</th>}
+
                 <th>Rolle</th>
                 <th>Kontakt</th>
                 <th>Atemschutz</th>
                 <th>Status</th>
-                <th>Rechte (Rolle)</th>
+
                 <th></th>
               </tr>
             </thead>
@@ -208,6 +209,7 @@ export default function KameradenPage() {
                     </div>
                   </td>
                   {isGemeinde && <td style={{ fontSize: 13, color: 'var(--gray-500)' }}>{k.wehr?.name ?? '—'}</td>}
+
                   <td><span className="badge badge-blue" style={{ fontSize: 11 }}>{ROLLEN_LABEL[k.rolle] ?? k.rolle}</span></td>
                   <td>
                     <div style={{ fontSize: 13 }}>{k.email}</div>
@@ -215,18 +217,7 @@ export default function KameradenPage() {
                   </td>
                   <td>{k.atemschutz ? <span className="badge badge-green">Ja</span> : <span className="badge badge-gray">Nein</span>}</td>
                   <td><span className={`badge badge-${statusColor(k.status)}`}>{statusLabel(k.status)}</span></td>
-                  <td>
-                    <div style={{ fontSize: 11, display: 'flex', flexDirection: 'column', gap: 3 }}>
-                      {RECHTE_MATRIX.filter(r => r[k.rolle] === true || r[k.rolle] === 'eigene Wache').map((r, i) => (
-                        <span key={i} style={{ color: 'var(--gray-500)' }}>
-                          {r[k.rolle] === 'eigene Wache'
-                            ? <span style={{ color: '#185FA5' }}>~ {r.label}</span>
-                            : <span>+ {r.label}</span>
-                          }
-                        </span>
-                      ))}
-                    </div>
-                  </td>
+
                   <td>
                     <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                       {k.status === 'ausstehend' && (

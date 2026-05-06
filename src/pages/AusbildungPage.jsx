@@ -8,19 +8,17 @@ import AuslagenerstattungModal from './AuslagenerstattungModal'
 import VerdienstausfallModal from './VerdienstausfallModal'
 
 const KATEGORIEN = [
-  { value: 'dienstanweisung', label: 'Dienstanweisung/Satzung' },
-  { value: 'vorlage', label: 'Vorlage' },
-  { value: 'sonstiges', label: 'Sonstiges' },
+  { value: 'ausbildung', label: 'Ausbildung' },
 ]
 
 const KAT_COLOR = { dienstanweisung: 'red', vorlage: 'blue', ausbildung: 'green', sonstiges: 'gray' } // ausbildung behalten fuer alte Dokumente
 
-export default function DokumentePage() {
+export default function AusbildungPage() {
   const { profile, isAdmin, isAusbilder } = useAuth()
   const [dokumente, setDokumente] = useState([])
   const [loading, setLoading] = useState(true)
   const [uploadModal, setUploadModal] = useState(false)
-  const [filter, setFilter] = useState({ kategorie: 'vorlage', suche: '' })
+  const [filter, setFilter] = useState({ kategorie: 'ausbildung', suche: '' })
   const [uploading, setUploading] = useState(false)
   const [form, setForm] = useState({ titel: '', beschreibung: '', kategorie: 'dienstanweisung', datei: null })
   const [msg, setMsg] = useState('')
@@ -116,7 +114,7 @@ export default function DokumentePage() {
     <div>
       <div className="page-header">
         <div>
-          <h1>Dokumente</h1>
+          <h1>Ausbildung</h1>
           <p style={{ marginTop: 4 }}>{dokumente.length} Dokument{dokumente.length !== 1 ? 'e' : ''}</p>
         </div>
         {kannHochladen && (

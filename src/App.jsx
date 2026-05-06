@@ -12,6 +12,7 @@ import ProfilPage from './pages/ProfilPage'
 import NutzerAnlegenPage from './pages/NutzerAnlegenPage'
 import WachenPage from './pages/WachenPage'
 import LehrgaengePage from './pages/LehrgaengePage'
+import AusbildungPage from './pages/AusbildungPage'
 import AdminPage from './pages/AdminPage'
 import DatenschutzPage from './pages/DatenschutzPage'
 import './index.css'
@@ -76,6 +77,7 @@ function AppRoutes() {
         <Route path="admin" element={<ProtectedRoute adminOnly><AdminPage /></ProtectedRoute>} />
         <Route path="datenschutz" element={<ProtectedRoute><DatenschutzPage /></ProtectedRoute>} />
         <Route path="dokumente" element={<DokumentePage />} />
+        <Route path="ausbildung" element={<ProtectedRoute><AusbildungPage /></ProtectedRoute>} />
         <Route path="pruefungen" element={<PruefungenPage />} />
         <Route path="aufgaben" element={
           <AufgabenRoute><AufgabenPage /></AufgabenRoute>
