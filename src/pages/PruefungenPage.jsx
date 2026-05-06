@@ -562,16 +562,43 @@ function PruefungErstellen({ profile, onBack, importDaten }) {
       return { ...f, antworten }
     }))
   }
+
+  function toggleRichtig(frageId, idx) {
+    setFragen(fs => fs.map(f => {
+      if (f.id !== frageId) return f
+      const antworten = f.antworten.map((a, i) => {
+        if (f.typ === 'mehrfachauswahl') {
+          // Checkbox: nur diesen togglen
+          return i === idx ? { ...a, richtig: !a.richtig } : a
+        } else {
+          // Radio: nur diesen auf true, alle anderen auf false
+          return { ...a, richtig: i === idx }
+        }
+      })
+      return { ...f, antworten }
+    }))
+  }
   function removeFrage(id) { setFragen(fs => fs.filter(f => f.id !== id)) }
 
   async function handleSave() {
     if (!form.titel || fragen.length === 0) return alert('Titel und mindestens eine Frage erforderlich')
     setSaving(true)
-    const { data: pruefung } = await supabase.from('pruefungen').insert({
+    const { data: pruefung, error: pruefungError } = await supabase.from('pruefungen').insert({
       ...form, erstellt_von: profile.id, wehr_id: profile.wehr_id, aktiv: false
     }).select().single()
+    if (pruefungError) { alert('Fehler beim Anlegen der Pruefung: ' + pruefungError.message); setSaving(false); return }
     if (pruefung) {
-      await supabase.from('fragen').insert(fragen.map(({ id, ...f }, i) => ({ ...f, pruefung_id: pruefung.id, reihenfolge: i })))
+      // Nur erlaubte Felder senden - keine temporaeren IDs oder unbekannte Felder
+      const fragenPayload = fragen.map((f, i) => ({
+        pruefung_id: pruefung.id,
+        frage_text: f.frage_text,
+        typ: f.typ,
+        antworten: f.antworten,
+        punkte: f.punkte ?? 1,
+        reihenfolge: i,
+      }))
+      const { error: fragenError } = await supabase.from('fragen').insert(fragenPayload)
+      if (fragenError) { alert('Fehler beim Speichern der Fragen: ' + fragenError.message); setSaving(false); return }
     }
     setSaving(false)
     onBack()
@@ -622,13 +649,21 @@ function PruefungErstellen({ profile, onBack, importDaten }) {
             <label>Fragetext</label>
             <input value={frage.frage_text} onChange={e => updateFrage(frage.id, 'frage_text', e.target.value)} placeholder="Fragetext eingeben..." />
           </div>
-          <label style={{ marginBottom: 8, display: 'block' }}>Antworten</label>
+          <label style={{ marginBottom: 8, display: 'block' }}>
+            Antworten {frage.typ === 'mehrfachauswahl' ? '(Checkboxen: mehrere richtig moeglich)' : '(Radio: eine richtige Antwort)'}
+          </label>
           {(frage.typ === 'wahr_falsch'
             ? [{ text: 'Wahr', richtig: frage.antworten[0]?.richtig ?? false }, { text: 'Falsch', richtig: frage.antworten[1]?.richtig ?? false }]
             : frage.antworten
           ).map((a, ai) => (
             <div key={ai} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <input type="radio" checked={a.richtig ?? false} onChange={e => updateAntwort(frage.id, ai, 'richtig', e.target.checked)} style={{ width: 'auto', flexShrink: 0 }} name={`frage-${frage.id}`} />
+              <input
+                type={frage.typ === 'mehrfachauswahl' ? 'checkbox' : 'radio'}
+                checked={a.richtig ?? false}
+                onChange={() => toggleRichtig(frage.id, ai)}
+                style={{ width: 'auto', flexShrink: 0 }}
+                name={frage.typ !== 'mehrfachauswahl' ? `frage-${frage.id}` : undefined}
+              />
               {frage.typ === 'wahr_falsch' ? <span style={{ fontSize: 14 }}>{a.text}</span> : <input value={a.text ?? ''} onChange={e => updateAntwort(frage.id, ai, 'text', e.target.value)} placeholder={`Antwort ${ai + 1}`} />}
             </div>
           ))}
@@ -645,8 +680,29 @@ function PruefungAblegen({ pruefung, profile, onBack }) {
   const [submitted, setSubmitted] = useState(false)
   const [ergebnis, setErgebnis] = useState(null)
 
+  function setAntwort(frageId, value, typ) {
+    if (typ === 'mehrfachauswahl') {
+      setAntworten(a => {
+        const aktuelle = Array.isArray(a[frageId]) ? a[frageId] : []
+        const neu = aktuelle.includes(value)
+          ? aktuelle.filter(x => x !== value)
+          : [...aktuelle, value]
+        return { ...a, [frageId]: neu }
+      })
+    } else {
+      setAntworten(a => ({ ...a, [frageId]: value }))
+    }
+  }
+
   useEffect(() => {
-    supabase.from('fragen').select('*').eq('pruefung_id', pruefung.id).order('reihenfolge').then(({ data }) => { setFragen(data ?? []); setLoading(false) })
+    supabase.from('fragen').select('*').eq('pruefung_id', pruefung.id).order('reihenfolge').then(({ data }) => {
+      const fragen = (data ?? []).map(f => ({
+        ...f,
+        antworten: typeof f.antworten === 'string' ? JSON.parse(f.antworten) : (f.antworten ?? [])
+      }))
+      setFragen(fragen)
+      setLoading(false)
+    })
   }, [])
 
   async function handleAbgabe() {
@@ -714,34 +770,51 @@ function PruefungAblegen({ pruefung, profile, onBack }) {
         </div>
         <button className="btn btn-primary" onClick={handleAbgabe}>Abgeben</button>
       </div>
-      {fragen.map((f, fi) => (
-        <div key={f.id} className="card" style={{ marginBottom: 10, padding: '14px' }}>
-          <div style={{ fontWeight: 500, marginBottom: 14, fontSize: 15, lineHeight: 1.4, color: 'var(--gray-700)' }}>
-            <span style={{ color: 'var(--red)', marginRight: 6, fontSize: 12, fontWeight: 600 }}>{fi + 1}/{fragen.length}</span>{f.frage_text}
+      {fragen.map((f, fi) => {
+        // Antworten sicher parsen
+        let antwortListe = []
+        try {
+          if (Array.isArray(f.antworten)) antwortListe = f.antworten
+          else if (typeof f.antworten === 'string') antwortListe = JSON.parse(f.antworten)
+          else antwortListe = []
+        } catch(e) { antwortListe = [] }
+
+        const istMehrfach = f.typ === 'mehrfachauswahl'
+        const auswahlArr = Array.isArray(antworten[f.id]) ? antworten[f.id] : (antworten[f.id] ? [antworten[f.id]] : [])
+
+        return (
+          <div key={f.id} className="card" style={{ marginBottom: 10, padding: '14px' }}>
+            <div style={{ fontWeight: 500, marginBottom: 14, fontSize: 15, lineHeight: 1.4, color: 'var(--gray-700)' }}>
+              <span style={{ color: 'var(--red)', marginRight: 6, fontSize: 12, fontWeight: 600 }}>{fi + 1}/{fragen.length}</span>
+              {f.frage_text}
+              {istMehrfach && <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--gray-400)', fontWeight: 400 }}>(Mehrere Antworten moeglich)</span>}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {antwortListe.map((a, ai) => {
+                const isSelected = istMehrfach ? auswahlArr.includes(a.text) : antworten[f.id] === a.text
+                return (
+                  <label key={ai} onClick={() => setAntwort(f.id, a.text, f.typ)} style={{
+                    display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderRadius: 10, cursor: 'pointer', fontSize: 14,
+                    border: `2px solid ${isSelected ? 'var(--red)' : 'var(--gray-200)'}`,
+                    background: isSelected ? 'var(--red-pale)' : 'var(--white)', transition: 'all 150ms', userSelect: 'none',
+                  }}>
+                    <div style={{
+                      width: 22, height: 22, flexShrink: 0,
+                      borderRadius: istMehrfach ? '4px' : '50%',
+                      border: `2px solid ${isSelected ? 'var(--red)' : 'var(--gray-300)'}`,
+                      background: isSelected ? 'var(--red)' : 'transparent',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      {isSelected && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20,6 9,17 4,12"/></svg>}
+                    </div>
+                    <span style={{ color: isSelected ? 'var(--red-dark)' : 'var(--gray-700)', fontWeight: isSelected ? 500 : 400 }}>{a.text}</span>
+                  </label>
+                )
+              })}
+            </div>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {f.antworten.map((a, ai) => {
-              const auswahlArr = Array.isArray(antworten[f.id]) ? antworten[f.id] : (antworten[f.id] ? [antworten[f.id]] : [])
-              const isSelected = f.typ === 'mehrfachauswahl'
-                ? auswahlArr.includes(a.text)
-                : antworten[f.id] === a.text
-              return (
-                <label key={ai} onClick={() => setAntwort(f.id, a.text, f.typ)} style={{
-                  display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderRadius: 10, cursor: 'pointer', fontSize: 14,
-                  border: `2px solid ${isSelected ? 'var(--red)' : 'var(--gray-200)'}`,
-                  background: isSelected ? 'var(--red-pale)' : 'var(--white)', transition: 'all 150ms', userSelect: 'none',
-                }}>
-                  <div style={{ width: 22, height: 22, borderRadius: '50%', flexShrink: 0, border: `2px solid ${isSelected ? 'var(--red)' : 'var(--gray-300)'}`, background: isSelected ? 'var(--red)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {isSelected && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20,6 9,17 4,12"/></svg>}
-                  </div>
-                  <span style={{ color: isSelected ? 'var(--red-dark)' : 'var(--gray-700)', fontWeight: isSelected ? 500 : 400 }}>{a.text}</span>
-                  <input type={f.typ === 'mehrfachauswahl' ? 'checkbox' : 'radio'} name={f.typ !== 'mehrfachauswahl' ? `f-${f.id}` : undefined} value={a.text} checked={isSelected} onChange={() => {}} style={{ display: 'none' }} />
-                </label>
-              )
-            })}
-          </div>
-        </div>
-      ))}
+        )
+      })}
       <div style={{ marginTop: 16 }}>
         <button className="btn btn-primary btn-lg" style={{ width: '100%', justifyContent: 'center' }} onClick={handleAbgabe}>Pruefung abgeben</button>
       </div>
@@ -860,6 +933,16 @@ function PruefungBearbeiten({ pruefung, profile, onBack }) {
   function addFrage() { setFragen(f => [...f, { id: 'neu_' + Date.now(), pruefung_id: pruefung.id, frage_text: '', typ: 'multiple_choice', antworten: [{ text: '', richtig: false }, { text: '', richtig: false }, { text: '', richtig: false }, { text: '', richtig: false }], punkte: 1, reihenfolge: f.length }]) }
   function updateFrage(id, field, value) { setFragen(fs => fs.map(f => f.id === id ? { ...f, [field]: value } : f)) }
   function updateAntwort(frageId, idx, field, value) { setFragen(fs => fs.map(f => { if (f.id !== frageId) return f; const antworten = [...f.antworten]; antworten[idx] = { ...antworten[idx], [field]: value }; return { ...f, antworten } })) }
+  function toggleRichtig(frageId, idx) {
+    setFragen(fs => fs.map(f => {
+      if (f.id !== frageId) return f
+      const antworten = f.antworten.map((a, i) => {
+        if (f.typ === 'mehrfachauswahl') return i === idx ? { ...a, richtig: !a.richtig } : a
+        return { ...a, richtig: i === idx }
+      })
+      return { ...f, antworten }
+    }))
+  }
   function removeFrage(id) { setFragen(fs => fs.filter(f => f.id !== id)) }
 
   async function handleSave() {
@@ -907,14 +990,14 @@ function PruefungBearbeiten({ pruefung, profile, onBack }) {
           </div>
           <div className="form-group"><label>Fragetext</label><input value={frage.frage_text} onChange={e => updateFrage(frage.id, 'frage_text', e.target.value)} placeholder="Fragetext..." /></div>
           <label style={{ marginBottom: 8, display: 'block' }}>
-            Antworten {frage.typ === 'mehrfachauswahl' ? '(mehrere koennen richtig sein)' : '(eine richtige markieren)'}
+            Antworten {frage.typ === 'mehrfachauswahl' ? '(Checkboxen: mehrere richtig moeglich)' : '(Radio: eine richtige Antwort)'}
           </label>
           {frage.antworten.map((a, ai) => (
             <div key={ai} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
               <input
                 type={frage.typ === 'mehrfachauswahl' ? 'checkbox' : 'radio'}
                 checked={a.richtig ?? false}
-                onChange={e => updateAntwort(frage.id, ai, 'richtig', e.target.checked)}
+                onChange={() => toggleRichtig(frage.id, ai)}
                 style={{ width: 'auto', flexShrink: 0 }}
                 name={frage.typ !== 'mehrfachauswahl' ? `frage-${frage.id}` : undefined}
               />
