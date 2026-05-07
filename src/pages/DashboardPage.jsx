@@ -158,7 +158,7 @@ supabase.from('aufgaben').select('*', { count: 'exact', head: true })
             <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', marginBottom: 2 }}>
               Aktive Kameraden {wehrName ? `· ${wehrName}` : ''}
             </div>
-            <div style={{ fontSize: 36, fontWeight: 700, color: 'white', lineHeight: 1 }}>{stats.kameraden}</div>
+            <div style={{ fontSize: 36, fontWeight: 700, color: 'white', lineHeight: 1 }}>{kameradenListe.length}</div>
             <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', marginTop: 6 }}>Tippen fuer Detailansicht</div>
           </div>
           <div style={{ opacity: 0.4 }}>

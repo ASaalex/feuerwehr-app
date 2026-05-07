@@ -62,7 +62,7 @@ export default function LoginPage() {
               <input
                 value={nutzername}
                 onChange={e => setNutzername(e.target.value)}
-                placeholder="z.B. noasaalfeld"
+                placeholder="Nutzername"
                 required autoFocus autoComplete="username"
                 style={{ fontSize: 16 }}
               />
