@@ -21,7 +21,7 @@ export async function htmlToPdfBase64(htmlStr) {
         )
 
         const canvas = await html2canvas(doc.body, {
-          scale: 2,
+          scale: 1.5,
           useCORS: true,
           backgroundColor: '#ffffff',
           width: 794,
@@ -39,7 +39,7 @@ export async function htmlToPdfBase64(htmlStr) {
         const pageH = 297
         const imgW = pageW
         const imgH = (canvas.height * imgW) / canvas.width
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.95)
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.75)
 
         let y = 0
         while (y < imgH) {
