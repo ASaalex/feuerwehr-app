@@ -271,7 +271,7 @@ export default function EinsatzberichtFormular() {
     try {
       const base64 = einsatzberichtPdf({ ...form, fotoDataUrls: fotoVorschau.map(f => f.dataUrl) }, wehrData?.name || '')
       const datumStr = form.datum ? form.datum.replaceAll('-', '') : 'unbekannt'
-      const { data, error } = await supabase.functions.invoke('send-document-email', {
+      const { data, error } = await supabase.functions.invoke('resend-email', {
         body: {
           wehr_id: profile.wehr_id,
           email_feld: 'einsatzbericht_email',
