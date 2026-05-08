@@ -37,7 +37,7 @@ export default function DashboardPage() {
         }
         return q
       })(),
-      supabase.from('dokumente').select('*', { count: 'exact', head: true }),
+      supabase.from('dokumente').select('*', { count: 'exact', head: true }).neq('kategorie', 'ausbildung'),
 (() => {
         // Nur aktive Pruefungen die fuer die Wache des Nutzers sichtbar sind
         let q = supabase.from('pruefungen').select('*', { count: 'exact', head: true }).eq('aktiv', true)

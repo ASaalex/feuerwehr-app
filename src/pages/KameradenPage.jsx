@@ -184,9 +184,9 @@ export default function KameradenPage() {
                 <th>Name</th>
                 {isGemeinde && <th>Wache</th>}
 
-                <th>Rolle</th>
-                <th>Kontakt</th>
-                <th>Atemschutz</th>
+                <th className="col-hide-mobile">Rolle</th>
+                <th className="col-hide-mobile">Kontakt</th>
+                <th className="col-hide-mobile">Atemschutz</th>
                 <th>Status</th>
 
                 <th></th>
@@ -210,36 +210,36 @@ export default function KameradenPage() {
                   </td>
                   {isGemeinde && <td style={{ fontSize: 13, color: 'var(--gray-500)' }}>{k.wehr?.name ?? '—'}</td>}
 
-                  <td><span className="badge badge-blue" style={{ fontSize: 11 }}>{ROLLEN_LABEL[k.rolle] ?? k.rolle}</span></td>
-                  <td>
+                  <td className="col-hide-mobile"><span className="badge badge-blue" style={{ fontSize: 11 }}>{ROLLEN_LABEL[k.rolle] ?? k.rolle}</span></td>
+                  <td className="col-hide-mobile">
                     <div style={{ fontSize: 13 }}>{k.email}</div>
                     {k.telefon && <div style={{ fontSize: 12, color: 'var(--gray-400)' }}>{k.telefon}</div>}
                   </td>
-                  <td>{k.atemschutz ? <span className="badge badge-green">Ja</span> : <span className="badge badge-gray">Nein</span>}</td>
+                  <td className="col-hide-mobile">{k.atemschutz ? <span className="badge badge-green">Ja</span> : <span className="badge badge-gray">Nein</span>}</td>
                   <td><span className={`badge badge-${statusColor(k.status)}`}>{statusLabel(k.status)}</span></td>
 
                   <td>
                     <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                       {k.status === 'ausstehend' && (
-                        <button className="btn btn-sm" style={{ background: '#D5F5E3', color: '#1E8449', border: 'none' }} onClick={() => statusAendern(k.id, 'aktiv')}>
+                        <button className="btn btn-sm col-hide-mobile" style={{ background: '#D5F5E3', color: '#1E8449', border: 'none' }} onClick={() => statusAendern(k.id, 'aktiv')}>
                           Freischalten
                         </button>
                       )}
                       {k.status === 'aktiv' && (
-                        <button className="btn btn-sm btn-secondary" onClick={() => statusAendern(k.id, 'inaktiv')}
+                        <button className="btn btn-sm btn-secondary col-hide-mobile" onClick={() => statusAendern(k.id, 'inaktiv')}
                           title="Zugang deaktivieren">
                           Deaktivieren
                         </button>
                       )}
                       {k.status === 'inaktiv' && (
-                        <button className="btn btn-sm" style={{ background: '#D5F5E3', color: '#1E8449', border: 'none' }} onClick={() => statusAendern(k.id, 'aktiv')}>
+                        <button className="btn btn-sm col-hide-mobile" style={{ background: '#D5F5E3', color: '#1E8449', border: 'none' }} onClick={() => statusAendern(k.id, 'aktiv')}>
                           Aktivieren
                         </button>
                       )}
                       <button className="btn btn-sm btn-secondary" onClick={() => { setEditModal({ ...k, fuehrerschein: k.fuehrerschein ?? [], wehr_id: k.wehr_id ?? '', lehrgaenge: (k.kamerad_lehrgaenge ?? []).map(x => x.lehrgang_id), weitereWehren: (k.kamerad_wehren ?? []).map(x => x.wehr_id) }); setEditTab('profil') }}>
                         Bearbeiten
                       </button>
-                      <button className="btn btn-sm btn-danger" onClick={() => handleLoeschen(k)}>
+                      <button className="btn btn-sm btn-danger col-hide-mobile" onClick={() => handleLoeschen(k)}>
                         Loeschen
                       </button>
                     </div>

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
+import { htmlToPdfBase64 } from '../lib/htmlToPdf'
 
 const STUNDENSATZ = 32
 
@@ -8,6 +9,7 @@ export default function VerdienstausfallModal({ onClose }) {
   const { profile } = useAuth()
   const [profileDaten, setProfileDaten] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [mailStatus, setMailStatus] = useState(null)
 
   const heute = new Date().toISOString().slice(0, 10)
 
@@ -138,9 +140,8 @@ export default function VerdienstausfallModal({ onClose }) {
     return `${formatDatum(form.datum_von)} bis ${formatDatum(form.datum_bis)}`
   }
 
-  function drucken() {
-
-    const html = `<!DOCTYPE html>
+  function generiereHtml() {
+    return `<!DOCTYPE html>
 <html lang="de">
 <head>
 <meta charset="UTF-8">
@@ -382,11 +383,42 @@ export default function VerdienstausfallModal({ onClose }) {
 <script>window.onload = function() { window.print(); }</script>
 </body>
 </html>`
+  }
 
+  function drucken() {
+    const html = generiereHtml()
     const win = window.open('', '_blank')
     win.document.write(html)
     win.document.close()
     onClose()
+  }
+
+  async function perMailDrucken() {
+    if (!profile?.wehr_id) return alert('Du bist keiner Wache zugeordnet.')
+    setMailStatus('sending')
+    try {
+      const html = generiereHtml()
+      const datumStr = form.datum_von ? form.datum_von.replaceAll('-', '') : 'unbekannt'
+      const base64 = await htmlToPdfBase64(html)
+      const { data, error } = await supabase.functions.invoke('resend-email', {
+        body: {
+          wehr_id: profile.wehr_id,
+          datei_inhalt: base64,
+          datei_name: `Verdienstausfall_${datumStr}.pdf`,
+          titel: `Verdienstausfall ${form.datum_von || ''}`,
+        },
+      })
+      if (error || !data?.success) {
+        setMailStatus(data?.error || error?.message || 'Unbekannter Fehler')
+        setTimeout(() => setMailStatus(null), 6000)
+      } else {
+        setMailStatus('ok')
+        setTimeout(() => { setMailStatus(null); onClose() }, 2000)
+      }
+    } catch (err) {
+      setMailStatus(err.message || 'Fehler beim Erstellen')
+      setTimeout(() => setMailStatus(null), 6000)
+    }
   }
 
   return (
@@ -495,9 +527,31 @@ export default function VerdienstausfallModal({ onClose }) {
               </div>
             )}
 
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', paddingTop: 16, borderTop: '1px solid var(--gray-100)' }}>
+            {mailStatus && mailStatus !== 'sending' && mailStatus !== 'ok' && (
+              <div className="alert alert-error" style={{ marginTop: 8 }}>{mailStatus}</div>
+            )}
+            {mailStatus === 'ok' && (
+              <div className="alert alert-success" style={{ marginTop: 8 }}>✓ An Wachen-Drucker gesendet!</div>
+            )}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', paddingTop: 16, borderTop: '1px solid var(--gray-100)', flexWrap: 'wrap' }}>
               <button className="btn btn-secondary" onClick={onClose}>Abbrechen</button>
-              <button className="btn btn-primary" onClick={drucken}>🖨️ Drucken / Als PDF speichern</button>
+              <button
+                className="btn btn-secondary"
+                onClick={perMailDrucken}
+                disabled={mailStatus === 'sending' || mailStatus === 'ok'}
+              >
+                {mailStatus === 'sending' ? (
+                  <><span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} />&nbsp;Senden...</>
+                ) : mailStatus === 'ok' ? '✓ Gesendet' : (
+                  <>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6 }}>
+                      <rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="22,7 12,13 2,7"/>
+                    </svg>
+                    Per Mail drucken
+                  </>
+                )}
+              </button>
+              <button className="btn btn-primary" onClick={drucken}>🖨️ Lokal drucken / PDF</button>
             </div>
           </>
         )}

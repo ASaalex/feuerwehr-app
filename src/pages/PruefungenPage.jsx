@@ -13,6 +13,8 @@ export default function PruefungenPage() {
   const [view, setView] = useState('liste')
   const [selected, setSelected] = useState(null)
   const [importFehler, setImportFehler] = useState('')
+  const [promptModal, setPromptModal] = useState(false)
+  const [promptKopiert, setPromptKopiert] = useState(false)
 
   useEffect(() => { fetchData() }, [])
 
@@ -132,6 +134,7 @@ export default function PruefungenPage() {
         </div>
         {isAusbilder && (
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button className="btn btn-secondary" onClick={() => setPromptModal(true)}>✦ KI-Prompt</button>
             <label className="btn btn-secondary" style={{ cursor: 'pointer', marginBottom: 0 }}>
               ↑ JSON importieren
               <input type="file" accept=".json" onChange={handleImport} style={{ display: 'none' }} />
@@ -217,6 +220,54 @@ export default function PruefungenPage() {
               </div>
             )
           })}
+        </div>
+      )}
+
+      {promptModal && (
+        <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && setPromptModal(false)}>
+          <div className="modal" style={{ maxWidth: 560 }}>
+            <div className="modal-header">
+              <h3>KI-Prompt Vorlage</h3>
+              <button className="btn btn-ghost btn-sm" onClick={() => setPromptModal(false)}>✕</button>
+            </div>
+            <p style={{ fontSize: 13, color: 'var(--gray-400)', marginBottom: 16 }}>
+              Kopiere diesen Prompt und füge ihn in ChatGPT, Claude oder ein anderes KI-Tool ein. Passe Thema und Anzahl der Fragen an. Die erzeugte JSON-Datei kannst du direkt über „JSON importieren" einlesen.
+            </p>
+            <div style={{ background: 'var(--gray-50)', border: '1px solid var(--gray-200)', borderRadius: 10, padding: '14px 16px', fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--gray-700)', whiteSpace: 'pre-wrap', lineHeight: 1.6, userSelect: 'all' }}>
+{`Erstelle eine Lernkontrolle zum Thema [THEMA] für die Feuerwehr.
+Die Prüfung soll [ANZAHL] Multiple-Choice-Fragen enthalten.
+Je Frage gibt es genau 4 Antwortmöglichkeiten, davon ist genau eine richtig.
+Gib ausschließlich den JSON-Code zurück, ohne Erklärungen oder Markdown.
+
+{
+  "titel": "[Titel]",
+  "beschreibung": "[Kurze Beschreibung]",
+  "bestehens_prozent": 70,
+  "fragen": [
+    {
+      "frage_text": "[Fragetext]",
+      "typ": "multiple_choice",
+      "punkte": 1,
+      "antworten": [
+        { "text": "[Antwort A]", "richtig": false },
+        { "text": "[Antwort B]", "richtig": true },
+        { "text": "[Antwort C]", "richtig": false },
+        { "text": "[Antwort D]", "richtig": false }
+      ]
+    }
+  ]
+}`}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+              <button className="btn btn-primary" onClick={() => {
+                navigator.clipboard.writeText(`Erstelle eine Lernkontrolle zum Thema [THEMA] für die Feuerwehr.\nDie Prüfung soll [ANZAHL] Multiple-Choice-Fragen enthalten.\nJe Frage gibt es genau 4 Antwortmöglichkeiten, davon ist genau eine richtig.\nGib ausschließlich den JSON-Code zurück, ohne Erklärungen oder Markdown.\n\n{\n  "titel": "[Titel]",\n  "beschreibung": "[Kurze Beschreibung]",\n  "bestehens_prozent": 70,\n  "fragen": [\n    {\n      "frage_text": "[Fragetext]",\n      "typ": "multiple_choice",\n      "punkte": 1,\n      "antworten": [\n        { "text": "[Antwort A]", "richtig": false },\n        { "text": "[Antwort B]", "richtig": true },\n        { "text": "[Antwort C]", "richtig": false },\n        { "text": "[Antwort D]", "richtig": false }\n      ]\n    }\n  ]\n}`)
+                setPromptKopiert(true)
+                setTimeout(() => setPromptKopiert(false), 2000)
+              }}>
+                {promptKopiert ? '✓ Kopiert!' : 'Prompt kopieren'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

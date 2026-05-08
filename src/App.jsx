@@ -15,6 +15,7 @@ import LehrgaengePage from './pages/LehrgaengePage'
 import AusbildungPage from './pages/AusbildungPage'
 import AdminPage from './pages/AdminPage'
 import DatenschutzPage from './pages/DatenschutzPage'
+import EinstellungenPage from './pages/EinstellungenPage'
 import './index.css'
 
 function GbmRoute({ children }) {
@@ -74,6 +75,7 @@ function AppRoutes() {
         <Route path="nutzer-anlegen" element={<ProtectedRoute adminOnly><NutzerAnlegenPage /></ProtectedRoute>} />
         <Route path="wachen" element={<GbmRoute><WachenPage /></GbmRoute>} />
         <Route path="lehrgaenge" element={<GbmRoute><LehrgaengePage /></GbmRoute>} />
+        <Route path="einstellungen" element={<GbmRoute><EinstellungenPage /></GbmRoute>} />
         <Route path="admin" element={<ProtectedRoute adminOnly><AdminPage /></ProtectedRoute>} />
         <Route path="datenschutz" element={<ProtectedRoute><DatenschutzPage /></ProtectedRoute>} />
         <Route path="dokumente" element={<DokumentePage />} />

@@ -27,6 +27,7 @@ export default function DokumentePage() {
   const [ausbildungsModal, setAusbildungsModal] = useState(false)
   const [auslagenModal, setAuslagenModal] = useState(false)
   const [verdienstModal, setVerdienstModal] = useState(false)
+  const [mailDruck, setMailDruck] = useState({}) // { [dok.id]: 'sending' | 'ok' | 'err' | msg }
 
   useEffect(() => { fetchDokumente() }, [])
 
@@ -92,6 +93,22 @@ export default function DokumentePage() {
         // Andere Dateitypen: erst oeffnen, dann Nutzer manuell drucken lassen
         window.open(data.signedUrl, '_blank')
       }
+    }
+  }
+
+  async function handleMailDruck(dok) {
+    if (!profile?.wehr_id) return alert('Du bist keiner Wache zugeordnet.')
+    setMailDruck(s => ({ ...s, [dok.id]: 'sending' }))
+    const { data, error } = await supabase.functions.invoke('resend-email', {
+      body: { dokument_id: dok.id, wehr_id: profile.wehr_id },
+    })
+    if (error || !data?.success) {
+      const msg = data?.error || error?.message || 'Unbekannter Fehler'
+      setMailDruck(s => ({ ...s, [dok.id]: 'err:' + msg }))
+      setTimeout(() => setMailDruck(s => ({ ...s, [dok.id]: null })), 6000)
+    } else {
+      setMailDruck(s => ({ ...s, [dok.id]: 'ok' }))
+      setTimeout(() => setMailDruck(s => ({ ...s, [dok.id]: null })), 3000)
     }
   }
 
@@ -196,7 +213,31 @@ export default function DokumentePage() {
                   <button className="btn btn-sm btn-secondary" onClick={() => handleDownload(dok)} title="Oeffnen">
                     ↓
                   </button>
-                  <button className="btn btn-sm btn-secondary" onClick={() => handlePrint(dok)} title="Drucken" style={{ padding: '6px 10px' }}>
+                  <button
+                    className="btn btn-sm btn-secondary"
+                    onClick={() => handleMailDruck(dok)}
+                    title="Per Mail an Wachen-Drucker senden"
+                    disabled={mailDruck[dok.id] === 'sending'}
+                    style={{
+                      padding: '6px 10px',
+                      background: mailDruck[dok.id] === 'ok' ? '#D5F5E3' : mailDruck[dok.id]?.startsWith?.('err:') ? '#FADBD8' : undefined,
+                      color: mailDruck[dok.id] === 'ok' ? '#1E8449' : mailDruck[dok.id]?.startsWith?.('err:') ? '#922B21' : undefined,
+                    }}
+                  >
+                    {mailDruck[dok.id] === 'sending' ? (
+                      <span className="spinner" style={{ width: 12, height: 12, borderWidth: 2 }} />
+                    ) : mailDruck[dok.id] === 'ok' ? (
+                      '✓'
+                    ) : mailDruck[dok.id]?.startsWith?.('err:') ? (
+                      '✕'
+                    ) : (
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <rect x="2" y="4" width="20" height="16" rx="2"/>
+                        <polyline points="22,7 12,13 2,7"/>
+                      </svg>
+                    )}
+                  </button>
+                  <button className="btn btn-sm btn-secondary" onClick={() => handlePrint(dok)} title="Drucken (lokal)" style={{ padding: '6px 10px' }}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <polyline points="6,9 6,2 18,2 18,9"/>
                       <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
