@@ -7,6 +7,7 @@ const NAV = [
   { to: '/pruefungen', label: 'Pruefungen', icon: IconPruefungen },
   { to: '/ausbildung', label: 'Ausbildung', icon: IconAusbildung },
   { to: '/aufgaben', label: 'Aufgaben', icon: IconAufgaben },
+  { to: '/einsatzbericht', label: 'Einsatzberichte', icon: IconEinsatz },
 ]
 
 const NAV_ADMIN = [
@@ -230,3 +231,4 @@ function IconWachen() {
 }
 function IconNutzerAnlegen() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg> }
 function IconAbmelden() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16,17 21,12 16,7"/><line x1="21" y1="12" x2="9" y2="12"/></svg> }
+function IconEinsatz() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg> }

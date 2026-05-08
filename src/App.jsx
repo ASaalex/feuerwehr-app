@@ -16,6 +16,8 @@ import AusbildungPage from './pages/AusbildungPage'
 import AdminPage from './pages/AdminPage'
 import DatenschutzPage from './pages/DatenschutzPage'
 import EinstellungenPage from './pages/EinstellungenPage'
+import EinsatzberichtPage from './pages/EinsatzberichtPage'
+import EinsatzberichtFormular from './pages/EinsatzberichtFormular'
 import './index.css'
 
 function GbmRoute({ children }) {
@@ -85,6 +87,8 @@ function AppRoutes() {
           <AufgabenRoute><AufgabenPage /></AufgabenRoute>
         } />
         <Route path="profil" element={<ProfilPage />} />
+        <Route path="einsatzbericht" element={<ProtectedRoute><EinsatzberichtPage /></ProtectedRoute>} />
+        <Route path="einsatzbericht/:id" element={<ProtectedRoute><EinsatzberichtFormular /></ProtectedRoute>} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

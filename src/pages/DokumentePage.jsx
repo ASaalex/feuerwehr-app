@@ -134,7 +134,7 @@ export default function DokumentePage() {
       <div className="page-header">
         <div>
           <h1>Dokumente</h1>
-          <p style={{ marginTop: 4 }}>{dokumente.length} Dokument{dokumente.length !== 1 ? 'e' : ''}</p>
+          <p style={{ marginTop: 4 }}>{gefiltert.length} Dokument{gefiltert.length !== 1 ? 'e' : ''}</p>
         </div>
         {kannHochladen && (
           <button className="btn btn-primary" onClick={() => setUploadModal(true)}>

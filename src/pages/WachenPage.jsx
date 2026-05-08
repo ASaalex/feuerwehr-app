@@ -5,7 +5,7 @@ export default function WachenPage() {
   const [wehren, setWehren] = useState([])
   const [loading, setLoading] = useState(true)
   const [modal, setModal] = useState(null)
-  const [form, setForm] = useState({ name: '', ort: '', kuerzel: '', aufgaben_aktiv: false, drucker_email: '' })
+  const [form, setForm] = useState({ name: '', ort: '', kuerzel: '', aufgaben_aktiv: false, drucker_email: '', einsatzbericht_email: '' })
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
 
@@ -14,7 +14,7 @@ export default function WachenPage() {
   async function fetchWehren() {
     const { data } = await supabase
       .from('wehren')
-      .select('id, name, ort, kuerzel, aufgaben_aktiv, drucker_email, mitglieder:profiles(count)')
+      .select('id, name, ort, kuerzel, aufgaben_aktiv, drucker_email, einsatzbericht_email, mitglieder:profiles(count)')
       .order('name')
     setWehren(data ?? [])
     setLoading(false)
@@ -33,6 +33,7 @@ export default function WachenPage() {
       kuerzel: w.kuerzel ?? '',
       aufgaben_aktiv: w.aufgaben_aktiv === true,
       drucker_email: w.drucker_email ?? '',
+      einsatzbericht_email: w.einsatzbericht_email ?? '',
     })
     setModal(w)
   }
@@ -47,6 +48,7 @@ export default function WachenPage() {
       kuerzel: form.kuerzel.toLowerCase() || null,
       aufgaben_aktiv: form.aufgaben_aktiv === true,
       drucker_email: form.drucker_email || null,
+      einsatzbericht_email: form.einsatzbericht_email || null,
     }
 
     console.log('Speichere Wache:', modal === 'neu' ? 'NEU' : modal.id, payload)
@@ -71,7 +73,7 @@ export default function WachenPage() {
 
     await fetchWehren()
     setModal(null)
-    setForm({ name: '', ort: '', kuerzel: '', aufgaben_aktiv: false, drucker_email: '' })
+    setForm({ name: '', ort: '', kuerzel: '', aufgaben_aktiv: false, drucker_email: '', einsatzbericht_email: '' })
     setMsg(modal === 'neu' ? 'Wache angelegt!' : 'Wache gespeichert!')
     setTimeout(() => setMsg(''), 3000)
     setSaving(false)
@@ -125,6 +127,9 @@ export default function WachenPage() {
                   </span>
                   <span className={`badge badge-${w.drucker_email ? 'green' : 'gray'}`}>
                     🖨 {w.drucker_email ? 'Drucker: Aktiv' : 'Kein Drucker'}
+                  </span>
+                  <span className={`badge badge-${w.einsatzbericht_email ? 'green' : 'gray'}`}>
+                    🚒 {w.einsatzbericht_email ? 'Einsatz-Mail: Aktiv' : 'Kein Einsatz-Mail'}
                   </span>
                 </div>
               </div>
@@ -210,6 +215,18 @@ export default function WachenPage() {
                 />
                 <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 4 }}>
                   Dokumente werden per Mail an diese Adresse gesendet und dort automatisch gedruckt.
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Einsatzbericht-E-Mail (optional)</label>
+                <input
+                  type="email"
+                  value={form.einsatzbericht_email}
+                  onChange={e => setForm(f => ({ ...f, einsatzbericht_email: e.target.value }))}
+                  placeholder="einsatz@feuerwehr.de"
+                />
+                <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 4 }}>
+                  Ausgefuellte Einsatzberichte werden an diese Adresse gesendet.
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>

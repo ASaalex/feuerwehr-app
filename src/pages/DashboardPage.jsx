@@ -22,7 +22,7 @@ export default function DashboardPage() {
     const [
       { count: kameraden },
       { count: dokumente },
-      { count: pruefungen },
+      { data: pruefungenData },
       { count: aufgaben },
       { data: aufgabenData },
       { data: wehr },
@@ -38,15 +38,7 @@ export default function DashboardPage() {
         return q
       })(),
       supabase.from('dokumente').select('*', { count: 'exact', head: true }).neq('kategorie', 'ausbildung'),
-(() => {
-        // Nur aktive Pruefungen die fuer die Wache des Nutzers sichtbar sind
-        let q = supabase.from('pruefungen').select('*', { count: 'exact', head: true }).eq('aktiv', true)
-        // Pruefungen fuer spezifische Wachen filtern
-        if (profile?.wehr_id) {
-          q = q.or(`sichtbar_fuer_wehren.is.null,sichtbar_fuer_wehren.cs.{${profile.wehr_id}}`)
-        }
-        return q
-      })(),
+supabase.from('pruefungen').select('id,aktiv,aktiv_von,aktiv_bis,sichtbar_fuer_wehren,wehr_id'),
 supabase.from('aufgaben').select('*', { count: 'exact', head: true })
         .in('status', ['offen', 'in_arbeit'])
         .or(`zugewiesen_an.eq.${profile?.id},zugewiesen_an_wehr.eq.${profile?.wehr_id || '00000000-0000-0000-0000-000000000000'}`),
@@ -72,7 +64,24 @@ supabase.from('aufgaben').select('*', { count: 'exact', head: true })
       })(),
     ])
 
-    setStats({ kameraden: kameraden ?? 0, dokumente: dokumente ?? 0, pruefungen: pruefungen ?? 0, aufgaben: aufgaben ?? 0 })
+    // Pruefungen filtern: gleiche Logik wie PruefungenPage
+    const jetzt = new Date()
+    const istAktivJetzt = (pr) => {
+      if (pr.aktiv_von || pr.aktiv_bis) {
+        const vonOk = !pr.aktiv_von || new Date(pr.aktiv_von) <= jetzt
+        const bisOk = !pr.aktiv_bis || new Date(pr.aktiv_bis) >= jetzt
+        return vonOk && bisOk
+      }
+      return pr.aktiv
+    }
+    const pruefungenAnzahl = (pruefungenData ?? []).filter(pr => {
+      if (!istAktivJetzt(pr)) return false
+      if (!pr.sichtbar_fuer_wehren) return true
+      if (!profile?.wehr_id) return false
+      return pr.sichtbar_fuer_wehren.includes(profile.wehr_id)
+    }).length
+
+    setStats({ kameraden: kameraden ?? 0, dokumente: dokumente ?? 0, pruefungen: pruefungenAnzahl, aufgaben: aufgaben ?? 0 })
     setWehrName(wehr?.name ?? '')
     setMeineAufgaben(aufgabenData ?? [])
     // Filtern: Kameraden der eigenen Wache (Haupt- oder Nebenwache)

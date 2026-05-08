@@ -38,7 +38,9 @@ serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { wehr_id, dokument_id, datei_inhalt, datei_name, titel } = body;
+    const { wehr_id, dokument_id, datei_inhalt, datei_name, titel, email_feld } = body;
+    // email_feld: 'drucker_email' (Standard) | 'einsatzbericht_email'
+    const zielFeld = email_feld === 'einsatzbericht_email' ? 'einsatzbericht_email' : 'drucker_email';
 
     if (!wehr_id) throw new Error("wehr_id ist erforderlich");
     if (!dokument_id && !datei_inhalt) throw new Error("dokument_id oder datei_inhalt ist erforderlich");
@@ -64,12 +66,14 @@ serve(async (req) => {
     // Wache & Drucker-E-Mail
     const { data: wehr, error: wErr } = await supabase
       .from("wehren")
-      .select("name, drucker_email")
+      .select("name, drucker_email, einsatzbericht_email")
       .eq("id", wehr_id)
       .single();
 
     if (wErr || !wehr) throw new Error("Wache nicht gefunden");
-    if (!wehr.drucker_email) throw new Error(`Keine Drucker-E-Mail fuer Wache "${wehr.name}". Bitte in Wachen-Verwaltung eintragen.`);
+    const zielEmail = wehr[zielFeld as keyof typeof wehr] as string | null;
+    const feldLabel = zielFeld === 'einsatzbericht_email' ? 'Einsatzbericht-E-Mail' : 'Drucker-E-Mail';
+    if (!zielEmail) throw new Error(`Keine ${feldLabel} fuer Wache "${wehr.name}". Bitte in Wachen-Verwaltung eintragen.`);
 
     // Anhang ermitteln
     let anhangBuffer: Buffer;
@@ -124,7 +128,7 @@ serve(async (req) => {
 
     await transporter.sendMail({
       from: `Feuerwehr App <${cfg.smtp_user}>`,
-      to: wehr.drucker_email,
+      to: zielEmail,
       subject: betreff,
       text: `Dokument zum Drucken: ${betreff}\n\nGesendet von der Feuerwehr-App.`,
       attachments: [
@@ -136,7 +140,7 @@ serve(async (req) => {
       ],
     });
 
-    return json({ success: true, message: `Gesendet an ${wehr.drucker_email}` });
+    return json({ success: true, message: `Gesendet an ${zielEmail}` });
   } catch (err) {
     console.error("mail-drucker error:", err);
     return json({ success: false, error: err instanceof Error ? err.message : String(err) }, 400);
