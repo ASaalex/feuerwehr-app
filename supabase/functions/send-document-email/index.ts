@@ -1,7 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
 import { Buffer } from "node:buffer";
+import nodemailer from "https://esm.sh/nodemailer@6.9.9";
+import { PDFDocument, Duplex } from "https://esm.sh/pdf-lib@1.17.1";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -13,6 +14,21 @@ function json(data: unknown, status = 200) {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
+}
+
+/** Bettet Duplex-Druckpräferenz in ein PDF ein (DuplexFlipLongEdge = Hochformat beidseitig) */
+async function addDuplexPreference(pdfBytes: Buffer): Promise<Buffer> {
+  try {
+    const pdfDoc = await PDFDocument.load(pdfBytes);
+    const viewerPrefs = pdfDoc.getOrCreateViewerPreferences();
+    viewerPrefs.setDuplex(Duplex.DuplexFlipLongEdge);
+    const modified = await pdfDoc.save();
+    return Buffer.from(modified);
+  } catch (e) {
+    // Im Fehlerfall Original-PDF verwenden
+    console.warn("Duplex-Präferenz konnte nicht gesetzt werden:", e);
+    return pdfBytes;
+  }
 }
 
 serve(async (req) => {
@@ -42,12 +58,8 @@ serve(async (req) => {
     const cfg: Record<string, string> = {};
     for (const e of (einstellungen ?? [])) cfg[e.schluessel] = e.wert;
 
-    if (!cfg.smtp_user) {
-      throw new Error("Gmail-Adresse nicht konfiguriert. Bitte in Administration → Einstellungen hinterlegen.");
-    }
-    if (!cfg.smtp_pass) {
-      throw new Error("App-Passwort nicht konfiguriert. Bitte in Administration → Einstellungen hinterlegen.");
-    }
+    if (!cfg.smtp_user) throw new Error("Gmail-Adresse nicht konfiguriert. Bitte in Administration → Einstellungen hinterlegen.");
+    if (!cfg.smtp_pass) throw new Error("App-Passwort nicht konfiguriert. Bitte in Administration → Einstellungen hinterlegen.");
 
     // Wache & Drucker-E-Mail
     const { data: wehr, error: wErr } = await supabase
@@ -57,12 +69,10 @@ serve(async (req) => {
       .single();
 
     if (wErr || !wehr) throw new Error("Wache nicht gefunden");
-    if (!wehr.drucker_email) {
-      throw new Error(`Keine Drucker-E-Mail fuer Wache "${wehr.name}". Bitte in Wachen-Verwaltung eintragen.`);
-    }
+    if (!wehr.drucker_email) throw new Error(`Keine Drucker-E-Mail fuer Wache "${wehr.name}". Bitte in Wachen-Verwaltung eintragen.`);
 
     // Anhang ermitteln
-    let anhangBase64: string;
+    let anhangBuffer: Buffer;
     let anhangName: string;
     let betreff: string;
     let mimeType: string;
@@ -82,49 +92,49 @@ serve(async (req) => {
 
       if (fErr || !fileBlob) throw new Error("Datei nicht ladbar: " + fErr?.message);
 
-      const buffer = Buffer.from(await fileBlob.arrayBuffer());
-      anhangBase64 = buffer.toString("base64");
+      anhangBuffer = Buffer.from(await fileBlob.arrayBuffer());
       anhangName = dok.datei_name;
       betreff = `Druck: ${dok.titel}`;
       const ext = dok.datei_name.split(".").pop()?.toLowerCase();
       mimeType = ext === "pdf" ? "application/pdf" : "application/octet-stream";
     } else {
-      anhangBase64 = datei_inhalt; // bereits base64
+      // base64 → echte Bytes (kein Re-Encoding)
+      anhangBuffer = Buffer.from(datei_inhalt, "base64");
       anhangName = datei_name ?? "Dokument.pdf";
       betreff = `Druck: ${titel ?? anhangName}`;
       const ext = anhangName.split(".").pop()?.toLowerCase();
-      mimeType = ext === "pdf" ? "application/pdf" : ext === "html" ? "text/html" : "application/octet-stream";
+      mimeType = ext === "pdf" ? "application/pdf" : "text/html";
     }
 
-    // Gmail SMTP (Port 465, direktes SSL)
-    const client = new SMTPClient({
-      connection: {
-        hostname: "smtp.gmail.com",
-        port: 465,
-        tls: true,
-        auth: {
-          username: cfg.smtp_user,
-          password: cfg.smtp_pass,
-        },
+    // Duplex-Präferenz in PDF einbetten (nur bei PDF-Dateien)
+    if (mimeType === "application/pdf") {
+      anhangBuffer = await addDuplexPreference(anhangBuffer);
+    }
+
+    // Gmail SMTP via nodemailer (Port 465, SSL)
+    const transporter = nodemailer.createTransport({
+      host: "smtp.gmail.com",
+      port: 465,
+      secure: true,
+      auth: {
+        user: cfg.smtp_user,
+        pass: cfg.smtp_pass,
       },
     });
 
-    await client.send({
+    await transporter.sendMail({
       from: `Feuerwehr App <${cfg.smtp_user}>`,
       to: wehr.drucker_email,
       subject: betreff,
-      content: `Dokument zum Drucken: ${betreff}\n\nGesendet von der Feuerwehr-App.`,
+      text: `Dokument zum Drucken: ${betreff}\n\nGesendet von der Feuerwehr-App.`,
       attachments: [
         {
-          encoding: "base64",
-          mimeType,
           filename: anhangName,
-          content: anhangBase64,
+          content: anhangBuffer,
+          contentType: mimeType,
         },
       ],
     });
-
-    await client.close();
 
     return json({ success: true, message: `Gesendet an ${wehr.drucker_email}` });
   } catch (err) {

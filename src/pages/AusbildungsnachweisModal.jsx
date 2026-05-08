@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
-import { htmlToPdfBase64 } from '../lib/htmlToPdf'
+import { ausbildungsnachweisPdf } from '../lib/formPdf'
 
 export default function AusbildungsnachweisModal({ onClose }) {
   const { profile } = useAuth()
@@ -202,12 +202,11 @@ export default function AusbildungsnachweisModal({ onClose }) {
     if (!profile?.wehr_id) return alert('Du bist keiner Wache zugeordnet.')
     setMailStatus('sending')
     try {
-      const html = generiereHtml()
       const datumStr = form.datum ? form.datum.replaceAll('-', '') : 'unbekannt'
       const dateiName = `Ausbildungsnachweis_${datumStr}.pdf`
 
-      // HTML zu PDF konvertieren (identisch zum lokalen Druck)
-      const base64 = await htmlToPdfBase64(html)
+      // Vektor-PDF direkt generieren (kein html2canvas)
+      const base64 = ausbildungsnachweisPdf(form, kameraden)
 
       const { data, error } = await supabase.functions.invoke('resend-email', {
         body: {

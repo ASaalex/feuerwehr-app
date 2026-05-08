@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
-import { htmlToPdfBase64 } from '../lib/htmlToPdf'
+import { verdienstausfallPdf } from '../lib/formPdf'
 
 const STUNDENSATZ = 32
 
@@ -397,9 +397,8 @@ export default function VerdienstausfallModal({ onClose }) {
     if (!profile?.wehr_id) return alert('Du bist keiner Wache zugeordnet.')
     setMailStatus('sending')
     try {
-      const html = generiereHtml()
       const datumStr = form.datum_von ? form.datum_von.replaceAll('-', '') : 'unbekannt'
-      const base64 = await htmlToPdfBase64(html)
+      const base64 = verdienstausfallPdf(form, STUNDENSATZ)
       const { data, error } = await supabase.functions.invoke('resend-email', {
         body: {
           wehr_id: profile.wehr_id,

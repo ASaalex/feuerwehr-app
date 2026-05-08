@@ -519,8 +519,11 @@ function ErgebnisDetail({ pruefung, ergebnis, onBack, istNachAbgabe, kameradName
       {fragen.map((f, fi) => {
         const meineAntwort = antworten[f.id]
         const richtigeAntworten = (f.antworten ?? []).filter(a => a.richtig).map(a => a.text)
-        const istRichtig = meineAntwort && richtigeAntworten.includes(meineAntwort)
-        const nichtBeantwortet = !meineAntwort
+        const meineAntwortArr = Array.isArray(meineAntwort) ? meineAntwort : meineAntwort ? [meineAntwort] : []
+        const istRichtig = meineAntwortArr.length > 0 &&
+          richtigeAntworten.every(r => meineAntwortArr.includes(r)) &&
+          meineAntwortArr.every(m => richtigeAntworten.includes(m))
+        const nichtBeantwortet = meineAntwortArr.length === 0
 
         return (
           <div key={f.id} className="card" style={{
@@ -543,26 +546,36 @@ function ErgebnisDetail({ pruefung, ergebnis, onBack, istNachAbgabe, kameradName
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {(f.antworten ?? []).map((a, ai) => {
-                const istMeineAntwort = meineAntwort === a.text
+                const istMeineAntwort = Array.isArray(meineAntwort) ? meineAntwort.includes(a.text) : meineAntwort === a.text
                 const istRichtigeAntwort = a.richtig
-                let bg = 'var(--gray-50)', border = 'var(--gray-200)', textColor = 'var(--gray-600)'
 
-                if (istRichtigeAntwort) { bg = '#EAFAF1'; border = '#A9DFBF'; textColor = '#1E8449' }
-                if (istMeineAntwort && !istRichtigeAntwort) { bg = 'var(--red-pale)'; border = 'var(--red-light)'; textColor = 'var(--red-dark)' }
+                // 4 Zustände klar unterscheiden
+                let bg, border, textColor, label, labelColor
+
+                if (istRichtigeAntwort && istMeineAntwort) {
+                  // ✅ Richtig angekreuzt
+                  bg = '#EAFAF1'; border = '#A9DFBF'; textColor = '#1E8449'
+                  label = '✓ Angekreuzt'; labelColor = '#1E8449'
+                } else if (istRichtigeAntwort && !istMeineAntwort) {
+                  // ⚠️ Richtig aber NICHT angekreuzt
+                  bg = '#FFFBEB'; border = '#FCD34D'; textColor = '#92400E'
+                  label = '⚠ Nicht angekreuzt'; labelColor = '#B45309'
+                } else if (!istRichtigeAntwort && istMeineAntwort) {
+                  // ✗ Falsch angekreuzt
+                  bg = 'var(--red-pale)'; border = 'var(--red-light)'; textColor = 'var(--red-dark)'
+                  label = '✗ Falsch angekreuzt'; labelColor = 'var(--red)'
+                } else {
+                  // Neutral
+                  bg = 'var(--gray-50)'; border = 'var(--gray-200)'; textColor = 'var(--gray-600)'
+                  label = null; labelColor = null
+                }
 
                 return (
                   <div key={ai} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 8, border: `1px solid ${border}`, background: bg }}>
                     <span style={{ fontSize: 13, fontWeight: 500, color: textColor, flex: 1 }}>{a.text}</span>
-                    <div style={{ display: 'flex', gap: 4, flexShrink: 0, flexDirection: 'column', alignItems: 'flex-end' }}>
-                      {istRichtigeAntwort && !istMeineAntwort && (
-                        <span style={{ fontSize: 11, color: '#1E8449', fontWeight: 600 }}>✓ Richtige Antwort</span>
-                      )}
-                      {istMeineAntwort && (
-                        <span style={{ fontSize: 11, color: istRichtigeAntwort ? '#1E8449' : 'var(--red)', fontWeight: 600 }}>
-                          {istRichtigeAntwort ? '✓ Richtig' : '✗ Falsch gewaehlt'}
-                        </span>
-                      )}
-                    </div>
+                    {label && (
+                      <span style={{ fontSize: 11, color: labelColor, fontWeight: 600, flexShrink: 0 }}>{label}</span>
+                    )}
                   </div>
                 )
               })}
@@ -943,19 +956,19 @@ function PruefungAuswertung({ pruefung, onBack }) {
       </div>
       <div className="card" style={{ padding: 0 }}>
         <table>
-          <thead><tr><th>Kamerad</th><th>Versuch</th><th>Ergebnis</th><th>Punkte</th><th>Abgelegt am</th><th>Status</th></tr></thead>
+          <thead><tr><th>Kamerad</th><th className="col-hide-mobile">Versuch</th><th>Ergebnis</th><th className="col-hide-mobile">Punkte</th><th className="col-hide-mobile">Abgelegt am</th><th>Status</th></tr></thead>
           <tbody>
             {gefiltert.length === 0
               ? <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--gray-400)', padding: 24 }}>Keine Ergebnisse im gewaehlten Zeitraum</td></tr>
               : gefiltert.map(e => (
                 <tr key={e.id}>
                   <td style={{ fontWeight: 500 }}>{e.kamerad?.vorname} {e.kamerad?.nachname}</td>
-                  <td style={{ fontSize: 13, color: 'var(--gray-400)' }}>{e.versuch ?? 1}. Versuch</td>
+                  <td className="col-hide-mobile" style={{ fontSize: 13, color: 'var(--gray-400)' }}>{e.versuch ?? 1}. Versuch</td>
                   <td>{e.punkte_gesamt > 0 ? Math.round(e.punkte_erreicht / e.punkte_gesamt * 100) : 0}%</td>
-                  <td>{e.punkte_erreicht} / {e.punkte_gesamt}</td>
-                  <td style={{ fontSize: 13 }}>{format(new Date(e.abgelegt_am), 'd. MMM yyyy HH:mm', { locale: de })}</td>
+                  <td className="col-hide-mobile">{e.punkte_erreicht} / {e.punkte_gesamt}</td>
+                  <td className="col-hide-mobile" style={{ fontSize: 13 }}>{format(new Date(e.abgelegt_am), 'd. MMM yyyy HH:mm', { locale: de })}</td>
                   <td>
-                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                       <span className={`badge badge-${e.bestanden ? 'green' : 'red'}`}>{e.bestanden ? 'Bestanden' : 'Nicht bestanden'}</span>
                       <button className="btn btn-sm btn-secondary" style={{ fontSize: 11, padding: '4px 8px' }} onClick={() => setDetailErgebnis(e)}>
                         Ansehen
