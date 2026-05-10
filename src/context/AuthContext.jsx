@@ -27,7 +27,7 @@ export function AuthProvider({ children }) {
   async function fetchProfile(userId) {
     const { data } = await supabase
       .from('profiles')
-      .select('*, wehr:wehren(id,name,aufgaben_aktiv,einsatzbericht_email)')
+      .select('*, wehr:wehren(id,name,aufgaben_aktiv,einsatzbericht_email,fahrzeuge)')
       .eq('id', userId)
       .single()
     setProfile(data)

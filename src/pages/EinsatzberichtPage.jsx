@@ -13,7 +13,7 @@ export default function EinsatzberichtPage() {
   const [suche, setSuche] = useState('')
   const [msg, setMsg] = useState('')
 
-  const kannErstellen = profile?.rolle && ['wehrleiter', 'gemeindebrandmeister', 'gruppenfuehrer', 'ausbilder'].includes(profile.rolle)
+  const kannErstellen = profile?.rolle && ['wehrleiter', 'gemeindebrandmeister', 'gruppenfuehrer', 'ausbilder', 'tablet'].includes(profile.rolle)
 
   useEffect(() => { fetchBerichte() }, [])
 

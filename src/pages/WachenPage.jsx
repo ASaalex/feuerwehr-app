@@ -5,7 +5,8 @@ export default function WachenPage() {
   const [wehren, setWehren] = useState([])
   const [loading, setLoading] = useState(true)
   const [modal, setModal] = useState(null)
-  const [form, setForm] = useState({ name: '', ort: '', kuerzel: '', aufgaben_aktiv: false, drucker_email: '', einsatzbericht_email: '' })
+  const [form, setForm] = useState({ name: '', ort: '', kuerzel: '', aufgaben_aktiv: false, drucker_email: '', einsatzbericht_email: '', fahrzeuge: ['HLF 10', 'MTW'] })
+  const [neuesFahrzeug, setNeuesFahrzeug] = useState('')
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
 
@@ -14,19 +15,19 @@ export default function WachenPage() {
   async function fetchWehren() {
     const { data } = await supabase
       .from('wehren')
-      .select('id, name, ort, kuerzel, aufgaben_aktiv, drucker_email, einsatzbericht_email, mitglieder:profiles(count)')
+      .select('id, name, ort, kuerzel, aufgaben_aktiv, drucker_email, einsatzbericht_email, fahrzeuge, mitglieder:profiles(count)')
       .order('name')
     setWehren(data ?? [])
     setLoading(false)
   }
 
   function oeffneNeu() {
-    setForm({ name: '', ort: '', kuerzel: '', aufgaben_aktiv: false })
+    setForm({ name: '', ort: '', kuerzel: '', aufgaben_aktiv: false, drucker_email: '', einsatzbericht_email: '', fahrzeuge: ['HLF 10', 'MTW'] })
+    setNeuesFahrzeug('')
     setModal('neu')
   }
 
   function oeffneBearbeiten(w) {
-    console.log('Bearbeiten:', w.name, 'aufgaben_aktiv:', w.aufgaben_aktiv)
     setForm({
       name: w.name,
       ort: w.ort ?? '',
@@ -34,7 +35,9 @@ export default function WachenPage() {
       aufgaben_aktiv: w.aufgaben_aktiv === true,
       drucker_email: w.drucker_email ?? '',
       einsatzbericht_email: w.einsatzbericht_email ?? '',
+      fahrzeuge: w.fahrzeuge?.length ? w.fahrzeuge : ['HLF 10', 'MTW'],
     })
+    setNeuesFahrzeug('')
     setModal(w)
   }
 
@@ -49,6 +52,7 @@ export default function WachenPage() {
       aufgaben_aktiv: form.aufgaben_aktiv === true,
       drucker_email: form.drucker_email || null,
       einsatzbericht_email: form.einsatzbericht_email || null,
+      fahrzeuge: form.fahrzeuge.filter(Boolean),
     }
 
     console.log('Speichere Wache:', modal === 'neu' ? 'NEU' : modal.id, payload)
@@ -73,7 +77,8 @@ export default function WachenPage() {
 
     await fetchWehren()
     setModal(null)
-    setForm({ name: '', ort: '', kuerzel: '', aufgaben_aktiv: false, drucker_email: '', einsatzbericht_email: '' })
+    setNeuesFahrzeug('')
+    setForm({ name: '', ort: '', kuerzel: '', aufgaben_aktiv: false, drucker_email: '', einsatzbericht_email: '', fahrzeuge: ['HLF 10', 'MTW'] })
     setMsg(modal === 'neu' ? 'Wache angelegt!' : 'Wache gespeichert!')
     setTimeout(() => setMsg(''), 3000)
     setSaving(false)
@@ -229,6 +234,59 @@ export default function WachenPage() {
                   Ausgefuellte Einsatzberichte werden an diese Adresse gesendet.
                 </div>
               </div>
+              <div className="form-group">
+                <label>Einsatzfahrzeuge</label>
+                <div style={{ fontSize: 12, color: 'var(--gray-400)', marginBottom: 8 }}>
+                  Diese Fahrzeuge stehen im Einsatzbericht zur Auswahl.
+                </div>
+                {form.fahrzeuge.map((fz, i) => (
+                  <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+                    <input
+                      value={fz}
+                      onChange={e => {
+                        const arr = [...form.fahrzeuge]
+                        arr[i] = e.target.value
+                        setForm(f => ({ ...f, fahrzeuge: arr }))
+                      }}
+                      placeholder="z.B. HLF 10"
+                      style={{ flex: 1 }}
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-danger"
+                      onClick={() => setForm(f => ({ ...f, fahrzeuge: f.fahrzeuge.filter((_, idx) => idx !== i) }))}
+                    >✕</button>
+                  </div>
+                ))}
+                <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                  <input
+                    value={neuesFahrzeug}
+                    onChange={e => setNeuesFahrzeug(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        if (neuesFahrzeug.trim()) {
+                          setForm(f => ({ ...f, fahrzeuge: [...f.fahrzeuge, neuesFahrzeug.trim()] }))
+                          setNeuesFahrzeug('')
+                        }
+                      }
+                    }}
+                    placeholder="Neues Fahrzeug..."
+                    style={{ flex: 1 }}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => {
+                      if (neuesFahrzeug.trim()) {
+                        setForm(f => ({ ...f, fahrzeuge: [...f.fahrzeuge, neuesFahrzeug.trim()] }))
+                        setNeuesFahrzeug('')
+                      }
+                    }}
+                  >+ Hinzufügen</button>
+                </div>
+              </div>
+
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
                 <button type="button" className="btn btn-secondary" onClick={() => setModal(null)}>Abbrechen</button>
                 <button type="submit" className="btn btn-primary" disabled={saving}>

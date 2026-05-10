@@ -5,10 +5,13 @@ import { useAuth } from '../context/AuthContext'
 import { einsatzberichtPdf } from '../lib/einsatzberichtPdf'
 
 const FUNKTIONEN = ['EL', 'GF', 'MA', 'BS']
-const FAHRZEUGE_DEFAULT = [
-  { fahrzeug: 'HLF 10', ab: '', raus: '', an: '', zurueck: '', bereit: '', km: '' },
-  { fahrzeug: 'MTW', ab: '', raus: '', an: '', zurueck: '', bereit: '', km: '' },
-]
+const FAHRZEUGE_FALLBACK = ['HLF 10', 'MTW']
+
+function fahrzeugeAusNamen(namen) {
+  return (namen?.length ? namen : FAHRZEUGE_FALLBACK).map(name => (
+    { fahrzeug: name, ab: '', raus: '', an: '', zurueck: '', bereit: '', km: '' }
+  ))
+}
 const EINSATZARTEN = [
   'Brandeinsatz', 'Technische Hilfeleistung', 'ABC-Einsatz', 'Unwettereinsatz',
   'Hilfeleistung', 'Fehlalarm', 'Sicherheitswache', 'Übung', 'Sonstiges',
@@ -29,7 +32,8 @@ export default function EinsatzberichtFormular() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [mailStatus, setMailStatus] = useState(null)
-  const [fotoVorschau, setFotoVorschau] = useState([]) // [{file, dataUrl}]
+  const [fotoVorschau, setFotoVorschau] = useState([]) // [{file?, pfad?, dataUrl}]
+  const [fotosLaden, setFotosLaden] = useState(false)
   const fotoInputRef = useRef(null)
 
   const heute = new Date().toISOString().slice(0, 10)
@@ -40,7 +44,7 @@ export default function EinsatzberichtFormular() {
     einsatzart: '',
     einsatzort: '',
     km_gesamt: '',
-    fahrzeuge: FAHRZEUGE_DEFAULT.map(f => ({ ...f })),
+    fahrzeuge: fahrzeugeAusNamen(wehrData?.fahrzeuge),
     einsatzkraefte: [],
     bioversal_l: '',
     absodan_kg: '',
@@ -71,15 +75,41 @@ export default function EinsatzberichtFormular() {
     async function laden() {
       // Kameraden laden (Haupt + Neben)
       if (profile?.wehr_id) {
-        const [{ data: haupt }, { data: neben }] = await Promise.all([
-          supabase.from('profiles').select('id,vorname,nachname').eq('status', 'aktiv').eq('wehr_id', profile.wehr_id).order('nachname'),
-          supabase.from('kamerad_wehren').select('kamerad_id, kamerad:profiles(id,vorname,nachname)').eq('wehr_id', profile.wehr_id),
-        ])
+        // Schritt 1: Hauptwache-Mitglieder
+        const { data: haupt } = await supabase
+          .from('profiles')
+          .select('id,vorname,nachname')
+          .eq('status', 'aktiv')
+          .eq('wehr_id', profile.wehr_id)
+          .neq('rolle', 'tablet')
+          .order('nachname')
+
         const alle = [...(haupt ?? [])]
         const ids = new Set(alle.map(k => k.id))
-        for (const n of (neben ?? [])) {
-          if (n.kamerad && !ids.has(n.kamerad.id)) { alle.push(n.kamerad); ids.add(n.kamerad.id) }
+
+        // Schritt 2: Nebenwache-IDs holen
+        const { data: nebenIds } = await supabase
+          .from('kamerad_wehren')
+          .select('kamerad_id')
+          .eq('wehr_id', profile.wehr_id)
+
+        // Schritt 3: Profile der Nebenwachen-Kameraden laden (aktiv, kein Tablet)
+        if (nebenIds?.length) {
+          const fremdIds = nebenIds.map(n => n.kamerad_id).filter(id => !ids.has(id))
+          if (fremdIds.length > 0) {
+            const { data: nebenProfile } = await supabase
+              .from('profiles')
+              .select('id,vorname,nachname')
+              .eq('status', 'aktiv')
+              .neq('rolle', 'tablet')
+              .in('id', fremdIds)
+              .order('nachname')
+            for (const k of (nebenProfile ?? [])) {
+              if (!ids.has(k.id)) { alle.push(k); ids.add(k.id) }
+            }
+          }
         }
+
         alle.sort((a, b) => a.nachname.localeCompare(b.nachname))
         setKameraden(alle)
 
@@ -114,7 +144,7 @@ export default function EinsatzberichtFormular() {
             einsatzart: b.einsatzart ?? '',
             einsatzort: b.einsatzort ?? '',
             km_gesamt: b.km_gesamt ?? '',
-            fahrzeuge: b.fahrzeuge?.length ? b.fahrzeuge : FAHRZEUGE_DEFAULT.map(f => ({ ...f })),
+            fahrzeuge: b.fahrzeuge?.length ? b.fahrzeuge : fahrzeugeAusNamen(wehrData?.fahrzeuge),
             einsatzkraefte: b.einsatzkraefte ?? [],
             bioversal_l: b.bioversal_l ?? '',
             absodan_kg: b.absodan_kg ?? '',
@@ -131,6 +161,36 @@ export default function EinsatzberichtFormular() {
             abschluss_name: b.abschluss_name ?? `${profile?.vorname ?? ''} ${profile?.nachname ?? ''}`.trim(),
             abgeschlossen: b.abgeschlossen ?? false,
           })
+
+          // Gespeicherte Fotos laden und als Vorschau anzeigen
+          if (b.foto_pfade?.length) {
+            setFotosLaden(true)
+            ;(async () => {
+              const previews = []
+              for (const pfad of b.foto_pfade) {
+                try {
+                  const { data: blob, error: dlErr } = await supabase.storage
+                    .from('einsatz-fotos')
+                    .download(pfad)
+                  if (dlErr || !blob) {
+                    console.warn('Foto download Fehler:', pfad, dlErr?.message)
+                    continue
+                  }
+                  const dataUrl = await new Promise((resolve, reject) => {
+                    const reader = new FileReader()
+                    reader.onload = e => resolve(e.target.result)
+                    reader.onerror = reject
+                    reader.readAsDataURL(blob)
+                  })
+                  previews.push({ pfad, dataUrl })
+                } catch (e) {
+                  console.warn('Foto konnte nicht geladen werden:', pfad, e)
+                }
+              }
+              setFotoVorschau(previews)
+              setFotosLaden(false)
+            })()
+          }
         }
       }
       setLoading(false)
@@ -215,13 +275,22 @@ export default function EinsatzberichtFormular() {
     if (!profile?.wehr_id) return alert('Du bist keiner Wache zugeordnet.')
     setSaving(true)
 
-    // Fotos hochladen
-    const fotoPfade = []
-    for (const { file } of fotoVorschau) {
-      const pfad = `${profile.wehr_id}/${Date.now()}_${file.name}`
-      const { error } = await supabase.storage.from('einsatz-fotos').upload(pfad, file)
-      if (!error) fotoPfade.push(pfad)
+    // Fotos: bestehende Pfade behalten + neue hochladen
+    const vorhandenePfade = fotoVorschau.filter(f => f.pfad).map(f => f.pfad)
+    const neueFotos = fotoVorschau.filter(f => f.file)
+    const neuePfade = []
+    for (const { file } of neueFotos) {
+      const ext = file.name.split('.').pop() || 'jpg'
+      const pfad = `${profile.wehr_id}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
+      const { error: upErr } = await supabase.storage.from('einsatz-fotos').upload(pfad, file, { contentType: file.type })
+      if (upErr) {
+        setSaving(false)
+        alert(`Foto-Upload fehlgeschlagen: ${upErr.message}\n\nBitte prüfe ob der Bucket "einsatz-fotos" in Supabase angelegt ist und die Storage-Policies gesetzt sind (SQL-Skript erneut ausführen).`)
+        return
+      }
+      neuePfade.push(pfad)
     }
+    const alleFotoPfade = [...vorhandenePfade, ...neuePfade]
 
     const payload = {
       wehr_id: profile.wehr_id,
@@ -244,7 +313,7 @@ export default function EinsatzberichtFormular() {
       erlaeuterung: form.erlaeuterung || null,
       abschluss_name: form.abschluss_name || null,
       abgeschlossen: abschliessen || form.abgeschlossen,
-      ...(fotoPfade.length > 0 ? { foto_pfade: fotoPfade } : {}),
+      foto_pfade: alleFotoPfade.length > 0 ? alleFotoPfade : null,
     }
 
     let error
@@ -708,7 +777,10 @@ export default function EinsatzberichtFormular() {
             {/* Fotos */}
             <div className="form-group">
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                <label style={{ margin: 0 }}>Fotos ({fotoVorschau.length})</label>
+                <label style={{ margin: 0 }}>
+                Fotos ({fotoVorschau.length})
+                {fotosLaden && <span style={{ fontSize: 11, color: 'var(--gray-400)', marginLeft: 8 }}>⏳ Laden...</span>}
+              </label>
                 <button type="button" className="btn btn-sm btn-secondary" onClick={() => fotoInputRef.current?.click()}>
                   📷 Foto hinzufügen
                 </button>

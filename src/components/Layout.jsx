@@ -4,10 +4,10 @@ import { useAuth } from '../context/AuthContext'
 const NAV = [
   { to: '/', label: 'Dashboard', exact: true, icon: IconDashboard },
   { to: '/dokumente', label: 'Dokumente', icon: IconDokumente },
-  { to: '/pruefungen', label: 'Pruefungen', icon: IconPruefungen },
-  { to: '/ausbildung', label: 'Ausbildung', icon: IconAusbildung },
-  { to: '/aufgaben', label: 'Aufgaben', icon: IconAufgaben },
-  { to: '/einsatzbericht', label: 'Einsatzberichte', icon: IconEinsatz },
+  { to: '/pruefungen', label: 'Pruefungen', icon: IconPruefungen, hideFor: ['tablet'] },
+  { to: '/ausbildung', label: 'Ausbildung', icon: IconAusbildung, hideFor: ['tablet'] },
+  { to: '/aufgaben', label: 'Aufgaben', icon: IconAufgaben, hideFor: ['tablet'] },
+  { to: '/einsatzbericht', label: 'Einsatzberichte', icon: IconEinsatz, showFor: ['wehrleiter', 'gemeindebrandmeister', 'tablet'] },
 ]
 
 const NAV_ADMIN = [
@@ -33,8 +33,18 @@ export default function Layout() {
     ? `${profile.vorname?.[0] ?? ''}${profile.nachname?.[0] ?? ''}`.toUpperCase() || '?'
     : '?'
 
-  const adminNavFiltered = showAdmin ? NAV_ADMIN.filter(item => isGemeinde || !['/wachen', '/lehrgaenge'].includes(item.to)) : []
-  const allNav = [...NAV.filter(n => n.to !== '/aufgaben' || aufgabenAktiv), ...adminNavFiltered]
+  const rolle = profile?.rolle
+  const isTablet = rolle === 'tablet'
+
+  function navFilter(items) {
+    return items
+      .filter(n => n.to !== '/aufgaben' || aufgabenAktiv)
+      .filter(n => !n.hideFor || !n.hideFor.includes(rolle))
+      .filter(n => !n.showFor || n.showFor.includes(rolle))
+  }
+
+  const adminNavFiltered = (!isTablet && showAdmin) ? NAV_ADMIN.filter(item => isGemeinde || !['/wachen', '/lehrgaenge'].includes(item.to)) : []
+  const allNav = [...navFilter(NAV), ...adminNavFiltered]
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh' }}>
@@ -60,7 +70,7 @@ export default function Layout() {
         {/* Nav */}
         <nav style={{ flex: 1, padding: '12px 10px', overflowY: 'auto' }}>
           <div style={{ fontSize: 10, fontWeight: 500, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.08em', textTransform: 'uppercase', padding: '8px 10px 4px' }}>Menu</div>
-          {NAV.filter(n => n.to !== '/aufgaben' || aufgabenAktiv).map(item => (
+          {navFilter(NAV).map(item => (
             <NavLink key={item.to} to={item.to} end={item.exact}
               style={({ isActive }) => navStyle(isActive)}>
               <item.icon />{item.label}
@@ -138,7 +148,7 @@ export default function Layout() {
         overflowX: 'auto', WebkitOverflowScrolling: 'touch',
       }}>
         <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', minWidth: 'max-content', padding: '0 4px' }}>
-          {NAV.filter(n => n.to !== '/aufgaben' || aufgabenAktiv).map(item => (
+          {navFilter(NAV).map(item => (
             <NavLink key={item.to} to={item.to} end={item.exact}
               style={({ isActive }) => ({
                 display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
@@ -208,7 +218,7 @@ function navStyle(isActive) {
 }
 
 function rolleLabel(rolle) {
-  const map = { gemeindebrandmeister: 'Gemeindebrandmeister', wehrleiter: 'Wehrleiter', gruppenfuehrer: 'Gruppenfuehrer', ausbilder: 'Ausbilder', kamerad: 'Kamerad' }
+  const map = { gemeindebrandmeister: 'Gemeindebrandmeister', wehrleiter: 'Wehrleiter', gruppenfuehrer: 'Gruppenfuehrer', ausbilder: 'Ausbilder', kamerad: 'Kamerad', tablet: 'Fahrzeug-Tablet' }
   return map[rolle] ?? rolle
 }
 

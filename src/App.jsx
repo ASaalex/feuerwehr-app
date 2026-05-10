@@ -34,8 +34,16 @@ function AufgabenRoute({ children }) {
   return children
 }
 
+function EinsatzberichtRoute({ children }) {
+  const { profile, loading } = useAuth()
+  if (loading) return <div className="loading-page"><div className="spinner"></div></div>
+  const erlaubt = ['wehrleiter', 'gemeindebrandmeister', 'tablet']
+  if (!erlaubt.includes(profile?.rolle)) return <Navigate to="/" replace />
+  return children
+}
+
 function ProtectedRoute({ children, adminOnly = false }) {
-  const { user, profile, loading } = useAuth()
+  const { user, profile, loading, signOut } = useAuth()
 
   if (loading) return (
     <div className="loading-page">
@@ -52,6 +60,12 @@ function ProtectedRoute({ children, adminOnly = false }) {
         <h2 style={{ marginBottom: 12 }}>Zugang ausstehend</h2>
         <p>Dein Account wurde angelegt. Der Wehrleiter muss deinen Zugang noch freischalten.</p>
         <p style={{ marginTop: 16, fontSize: 13 }}>Du wirst per E-Mail benachrichtigt.</p>
+        <button
+          onClick={() => signOut()}
+          style={{ marginTop: 24, padding: '10px 24px', borderRadius: 8, border: '1px solid #ccc', background: 'white', cursor: 'pointer', fontSize: 14, color: '#555' }}
+        >
+          Abmelden
+        </button>
       </div>
     </div>
   )
@@ -87,8 +101,8 @@ function AppRoutes() {
           <AufgabenRoute><AufgabenPage /></AufgabenRoute>
         } />
         <Route path="profil" element={<ProfilPage />} />
-        <Route path="einsatzbericht" element={<ProtectedRoute><EinsatzberichtPage /></ProtectedRoute>} />
-        <Route path="einsatzbericht/:id" element={<ProtectedRoute><EinsatzberichtFormular /></ProtectedRoute>} />
+        <Route path="einsatzbericht" element={<EinsatzberichtRoute><EinsatzberichtPage /></EinsatzberichtRoute>} />
+        <Route path="einsatzbericht/:id" element={<EinsatzberichtRoute><EinsatzberichtFormular /></EinsatzberichtRoute>} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

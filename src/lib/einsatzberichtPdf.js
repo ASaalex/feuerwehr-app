@@ -109,14 +109,14 @@ export function einsatzberichtPdf(form, wehrName) {
       3: { cellWidth: 28 },
       4: { cellWidth: 14, halign: 'center' },
     },
-    head: [['Nr.', 'Name', 'Funktion', 'Fahrzeug', 'AS']],
+    head: [['Nr.', 'Name', 'Funktion', 'Fahrzeug', 'Atem-\nschutz']],
     body: kraefte.length > 0
       ? kraefte.map((k, i) => [
           String(i + 1),
           k.name || '',
           k.funktion || '',
           k.fahrzeug || '',
-          k.atemschutz ? '☑' : '☐',
+          k.atemschutz ? 'Ja' : '',
         ])
       : [['', '', '', '', '']],
     theme: 'grid',

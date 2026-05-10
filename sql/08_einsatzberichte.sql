@@ -111,6 +111,32 @@ CREATE POLICY "Ersteller und Admin loeschen Berichte"
     )
   );
 
--- 4. Storage-Bucket fuer Fotos (manuell im Dashboard anlegen falls nicht vorhanden)
--- INSERT INTO storage.buckets (id, name, public) VALUES ('einsatz-fotos', 'einsatz-fotos', false)
--- ON CONFLICT DO NOTHING;
+-- 4. Storage-Bucket fuer Fotos anlegen
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+  'einsatz-fotos',
+  'einsatz-fotos',
+  false,
+  10485760,
+  ARRAY['image/jpeg','image/png','image/webp','image/heic','image/heif']
+)
+ON CONFLICT (id) DO NOTHING;
+
+-- 5. Storage-Policies fuer einsatz-fotos
+-- Hochladen: alle eingeloggten Nutzer
+CREATE POLICY "Authentifizierte Nutzer laden Fotos hoch"
+  ON storage.objects FOR INSERT
+  TO authenticated
+  WITH CHECK (bucket_id = 'einsatz-fotos');
+
+-- Anzeigen / Download: alle eingeloggten Nutzer
+CREATE POLICY "Authentifizierte Nutzer sehen Fotos"
+  ON storage.objects FOR SELECT
+  TO authenticated
+  USING (bucket_id = 'einsatz-fotos');
+
+-- Loeschen: nur der Uploader (Ordner = wehr_id)
+CREATE POLICY "Authentifizierte Nutzer loeschen eigene Fotos"
+  ON storage.objects FOR DELETE
+  TO authenticated
+  USING (bucket_id = 'einsatz-fotos');

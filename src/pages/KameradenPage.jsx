@@ -4,13 +4,14 @@ import { useAuth } from '../context/AuthContext'
 import { format } from 'date-fns'
 import { de } from 'date-fns/locale'
 
-const ROLLEN = ['gemeindebrandmeister', 'wehrleiter', 'gruppenfuehrer', 'ausbilder', 'kamerad']
+const ROLLEN = ['gemeindebrandmeister', 'wehrleiter', 'gruppenfuehrer', 'ausbilder', 'kamerad', 'tablet']
 const ROLLEN_LABEL = {
   gemeindebrandmeister: 'Gemeindebrandmeister',
   wehrleiter: 'Wehrleiter',
   gruppenfuehrer: 'Gruppenfuehrer',
   ausbilder: 'Ausbilder',
-  kamerad: 'Kamerad'
+  kamerad: 'Kamerad',
+  tablet: 'Fahrzeug-Tablet',
 }
 const FS_OPTIONEN = ['B', 'BE', 'C1', 'C', 'C1E', 'CE', 'D1', 'D', 'D1E', 'DE', 'T', 'L']
 
@@ -60,11 +61,20 @@ export default function KameradenPage() {
     setWehren(data ?? [])
   }
 
+  const [tablets, setTablets] = useState([])
+
   async function fetchKameraden() {
-    let query = supabase.from('profiles').select('*, wehr:wehren(id,name), kamerad_lehrgaenge(lehrgang_id), kamerad_wehren(wehr_id,ist_hauptwache,wehr:wehren(id,name))').order('nachname')
+    let query = supabase.from('profiles').select('*, wehr:wehren(id,name), kamerad_lehrgaenge(lehrgang_id), kamerad_wehren(wehr_id,ist_hauptwache,wehr:wehren(id,name))').neq('rolle', 'tablet').order('nachname')
     if (isWehrleiter) query = query.eq('wehr_id', myProfile.wehr_id)
     const { data } = await query
     setKameraden(data ?? [])
+
+    // Tablet-Nutzer separat laden
+    let tQuery = supabase.from('profiles').select('id, vorname, nachname, nutzername, status, wehr:wehren(id,name)').eq('rolle', 'tablet').order('nachname')
+    if (isWehrleiter) tQuery = tQuery.eq('wehr_id', myProfile.wehr_id)
+    const { data: tData } = await tQuery
+    setTablets(tData ?? [])
+
     setLoading(false)
   }
 
@@ -250,6 +260,46 @@ export default function KameradenPage() {
           </table>
         </div>
       </div>
+
+      {/* Fahrzeug-Tablets */}
+      {tablets.length > 0 && (
+        <div className="card" style={{ marginTop: 24 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+            <h3 style={{ margin: 0, fontSize: 15 }}>Fahrzeug-Tablets</h3>
+            <span style={{ fontSize: 12, color: 'var(--gray-400)' }}>– nicht in Kameradenzählung</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {tablets.map(t => (
+              <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', background: 'var(--gray-50)', borderRadius: 8, flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: 160 }}>
+                  <div style={{ fontWeight: 500, fontSize: 14 }}>{t.nutzername}</div>
+                  {t.wehr && <div style={{ fontSize: 12, color: 'var(--gray-400)' }}>{t.wehr.name}</div>}
+                </div>
+                <span className={`badge badge-${statusColor(t.status)}`}>{statusLabel(t.status)}</span>
+                {t.status === 'ausstehend' && (
+                  <button className="btn btn-sm" style={{ background: '#D5F5E3', color: '#1E8449', border: 'none' }}
+                    onClick={() => statusAendern(t.id, 'aktiv')}>
+                    Freischalten
+                  </button>
+                )}
+                {t.status === 'aktiv' && (
+                  <button className="btn btn-sm btn-secondary"
+                    onClick={() => statusAendern(t.id, 'inaktiv')}>
+                    Deaktivieren
+                  </button>
+                )}
+                {t.status === 'inaktiv' && (
+                  <button className="btn btn-sm" style={{ background: '#D5F5E3', color: '#1E8449', border: 'none' }}
+                    onClick={() => statusAendern(t.id, 'aktiv')}>
+                    Aktivieren
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {editModal && (
         <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && setEditModal(null)}>

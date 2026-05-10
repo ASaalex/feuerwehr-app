@@ -2,15 +2,16 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 
-const ROLLEN_GBM = ['wehrleiter', 'gruppenfuehrer', 'ausbilder', 'kamerad']
-const ROLLEN_WL = ['wehrleiter', 'ausbilder', 'kamerad']
+const ROLLEN_GBM = ['wehrleiter', 'gruppenfuehrer', 'ausbilder', 'kamerad', 'tablet']
+const ROLLEN_WL = ['wehrleiter', 'ausbilder', 'kamerad', 'tablet']
 const ROLLEN = ROLLEN_GBM // wird unten ueberschrieben
 const ROLLEN_LABEL = {
   gemeindebrandmeister: 'Gemeindebrandmeister',
   wehrleiter: 'Wehrleiter',
   gruppenfuehrer: 'Gruppenfuehrer',
   ausbilder: 'Ausbilder',
-  kamerad: 'Kamerad'
+  kamerad: 'Kamerad',
+  tablet: 'Fahrzeug-Tablet',
 }
 const STARTPASSWORT = 'Feuerwehr123'
 
@@ -51,13 +52,18 @@ export default function NutzerAnlegenPage() {
     })
   }, [])
 
+  const isTablet = form.rolle === 'tablet'
+
   useEffect(() => {
-    if (form.vorname || form.nachname) {
-      const wehr = wehren.find(w => w.id === form.wehr_id)
+    const wehr = wehren.find(w => w.id === form.wehr_id)
+    if (form.rolle === 'tablet') {
+      const vorschlag = ((wehr?.kuerzel || 'fw') + '-tablet').toLowerCase()
+      setForm(f => ({ ...f, vorname: 'Fahrzeug', nachname: 'Tablet', nutzername: vorschlag }))
+    } else if (form.vorname || form.nachname) {
       const vorschlag = genNutzername(wehr?.kuerzel || 'fw', form.vorname, form.nachname)
       setForm(f => ({ ...f, nutzername: vorschlag }))
     }
-  }, [form.vorname, form.nachname, form.wehr_id, wehren])
+  }, [form.rolle, form.vorname, form.nachname, form.wehr_id, wehren])
 
   function set(field) { return e => setForm(f => ({ ...f, [field]: e.target.value })) }
 
@@ -73,58 +79,43 @@ export default function NutzerAnlegenPage() {
 
     const email = form.nutzername.toLowerCase().trim() + '@feuerwehr.intern'
 
-    // Nutzer in Supabase Auth anlegen via Admin API
+    // Nutzer in Supabase Auth anlegen via Admin-Edge-Function
     const { data, error: authError } = await supabase.functions.invoke('create-user', {
-      body: { email, password: STARTPASSWORT }
-    }).catch(() => ({ data: null, error: { message: 'Funktion nicht verfuegbar' } }))
-
-    // Fallback: direkt via REST mit service role (nur wenn Edge Function nicht verfuegbar)
-    // Stattdessen: normaler signUp + sofort bestaetigen via SQL
-    if (authError) {
-      // Versuche normalen Signup
-      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+      body: {
         email,
         password: STARTPASSWORT,
-        options: { emailRedirectTo: undefined }
-      })
-
-      if (signUpError) {
-        setError('Fehler: ' + signUpError.message)
-        setLoading(false)
-        return
+        vorname: form.vorname,
+        nachname: form.nachname,
+        nutzername: form.nutzername.toLowerCase(),
+        wehr_id: form.wehr_id,
+        rolle: form.rolle,
+        status: 'aktiv',
+        telefon: form.telefon || null,
+        geburtsdatum: form.geburtsdatum || null,
+        eintrittsdatum: form.eintrittsdatum || null,
       }
+    }).catch(() => ({ data: null, error: { message: 'Edge Function nicht erreichbar' } }))
 
-      const userId = signUpData.user?.id
-      if (userId) {
-        // Profil aktualisieren
-        await supabase.from('profiles').update({
-          vorname: form.vorname,
-          nachname: form.nachname,
-          nutzername: form.nutzername.toLowerCase(),
-          wehr_id: form.wehr_id,
-          rolle: form.rolle,
-          status: 'aktiv',
-          telefon: form.telefon || null,
-          geburtsdatum: form.geburtsdatum || null,
-          eintrittsdatum: form.eintrittsdatum || null,
-        }).eq('id', userId)
-
-        setAngelegte(a => [...a, {
-          nutzername: form.nutzername.toLowerCase(),
-          name: form.vorname + ' ' + form.nachname,
-          passwort: STARTPASSWORT,
-          rolle: form.rolle,
-        }])
-
-        setMsg('Nutzer ' + form.nutzername + ' wurde angelegt!')
-        setForm(f => ({
-          vorname: '', nachname: '', nutzername: '',
-          wehr_id: f.wehr_id, rolle: f.rolle,
-          telefon: '', geburtsdatum: '',
-          eintrittsdatum: new Date().toISOString().slice(0, 10),
-        }))
-      }
+    if (authError || !data?.user_id) {
+      setError('Fehler beim Anlegen: ' + (authError?.message || data?.error || 'Unbekannter Fehler'))
+      setLoading(false)
+      return
     }
+
+    setAngelegte(a => [...a, {
+      nutzername: form.nutzername.toLowerCase(),
+      name: form.vorname + ' ' + form.nachname,
+      passwort: STARTPASSWORT,
+      rolle: form.rolle,
+    }])
+
+    setMsg('Nutzer ' + form.nutzername + ' wurde angelegt!')
+    setForm(f => ({
+      vorname: '', nachname: '', nutzername: '',
+      wehr_id: f.wehr_id, rolle: f.rolle,
+      telefon: '', geburtsdatum: '',
+      eintrittsdatum: new Date().toISOString().slice(0, 10),
+    }))
 
     setLoading(false)
   }
@@ -150,14 +141,32 @@ export default function NutzerAnlegenPage() {
         <form onSubmit={handleSubmit}>
           <div className="form-row">
             <div className="form-group">
-              <label>Vorname</label>
-              <input value={form.vorname} onChange={set('vorname')} placeholder="Max" required />
-            </div>
-            <div className="form-group">
-              <label>Nachname</label>
-              <input value={form.nachname} onChange={set('nachname')} placeholder="Mustermann" required />
+              <label>Rolle</label>
+              <select value={form.rolle} onChange={set('rolle')}>
+                {(isGemeinde ? ROLLEN_GBM : ROLLEN_WL).map(r => <option key={r} value={r}>{ROLLEN_LABEL[r]}</option>)}
+              </select>
             </div>
           </div>
+
+          {isTablet && (
+            <div className="alert alert-info" style={{ marginBottom: 16 }}>
+              🖥️ <strong>Fahrzeug-Tablet:</strong> Ein Zugang pro Wache für das Tablet im Fahrzeug.
+              Nicht als Kamerad gezählt. Zugriff nur auf Dashboard, Dokumente und Einsatzberichte.
+            </div>
+          )}
+
+          {!isTablet && (
+            <div className="form-row">
+              <div className="form-group">
+                <label>Vorname</label>
+                <input value={form.vorname} onChange={set('vorname')} placeholder="Max" required />
+              </div>
+              <div className="form-group">
+                <label>Nachname</label>
+                <input value={form.nachname} onChange={set('nachname')} placeholder="Mustermann" required />
+              </div>
+            </div>
+          )}
 
           {isGemeinde && (
             <div className="form-group">
@@ -192,29 +201,26 @@ export default function NutzerAnlegenPage() {
             </div>
           </div>
 
-          <div className="form-row">
-            <div className="form-group">
-              <label>Rolle</label>
-              <select value={form.rolle} onChange={set('rolle')}>
-                {(isGemeinde ? ROLLEN_GBM : ROLLEN_WL).map(r => <option key={r} value={r}>{ROLLEN_LABEL[r]}</option>)}
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Telefon (optional)</label>
-              <input value={form.telefon} onChange={set('telefon')} placeholder="0151 12345678" />
-            </div>
-          </div>
-
-          <div className="form-row">
-            <div className="form-group">
-              <label>Geburtsdatum (optional)</label>
-              <input type="date" value={form.geburtsdatum} onChange={set('geburtsdatum')} />
-            </div>
-            <div className="form-group">
-              <label>Eintrittsdatum</label>
-              <input type="date" value={form.eintrittsdatum} onChange={set('eintrittsdatum')} />
-            </div>
-          </div>
+          {!isTablet && (
+            <>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Telefon (optional)</label>
+                  <input value={form.telefon} onChange={set('telefon')} placeholder="0151 12345678" />
+                </div>
+              </div>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Geburtsdatum (optional)</label>
+                  <input type="date" value={form.geburtsdatum} onChange={set('geburtsdatum')} />
+                </div>
+                <div className="form-group">
+                  <label>Eintrittsdatum</label>
+                  <input type="date" value={form.eintrittsdatum} onChange={set('eintrittsdatum')} />
+                </div>
+              </div>
+            </>
+          )}
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
             <button type="submit" className="btn btn-primary btn-lg" disabled={loading}>
