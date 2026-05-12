@@ -9,8 +9,39 @@ const FAHRZEUGE_FALLBACK = ['HLF 10', 'MTW']
 
 function fahrzeugeAusNamen(namen) {
   return (namen?.length ? namen : FAHRZEUGE_FALLBACK).map(name => (
-    { fahrzeug: name, ab: '', raus: '', an: '', zurueck: '', bereit: '', km: '' }
+    { fahrzeug: name, mitgefahren: false, ab: '', raus: '', an: '', zurueck: '', bereit: '', km: '' }
   ))
+}
+
+/** Bild per Canvas auf maxWidth komprimieren und als DataURL zurückgeben */
+function komprimiereBild(file, maxWidth = 1200, qualitaet = 0.75) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = reject
+    reader.onload = ev => {
+      const img = new Image()
+      img.onerror = reject
+      img.onload = () => {
+        let w = img.width, h = img.height
+        if (w > maxWidth) { h = Math.round(h * maxWidth / w); w = maxWidth }
+        const canvas = document.createElement('canvas')
+        canvas.width = w; canvas.height = h
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h)
+        resolve(canvas.toDataURL('image/jpeg', qualitaet))
+      }
+      img.src = ev.target.result
+    }
+    reader.readAsDataURL(file)
+  })
+}
+
+function dataUrlToBlob(dataUrl) {
+  const [header, data] = dataUrl.split(',')
+  const mime = header.match(/:(.*?);/)[1]
+  const binary = atob(data)
+  const arr = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) arr[i] = binary.charCodeAt(i)
+  return new Blob([arr], { type: mime })
 }
 const EINSATZARTEN = [
   'Brandeinsatz', 'Technische Hilfeleistung', 'ABC-Einsatz', 'Unwettereinsatz',
@@ -144,7 +175,9 @@ export default function EinsatzberichtFormular() {
             einsatzart: b.einsatzart ?? '',
             einsatzort: b.einsatzort ?? '',
             km_gesamt: b.km_gesamt ?? '',
-            fahrzeuge: b.fahrzeuge?.length ? b.fahrzeuge : fahrzeugeAusNamen(wehrData?.fahrzeuge),
+            fahrzeuge: b.fahrzeuge?.length
+              ? b.fahrzeuge.map(f => ({ ...f, mitgefahren: f.mitgefahren ?? !!(f.ab || f.raus || f.an) }))
+              : fahrzeugeAusNamen(wehrData?.fahrzeuge),
             einsatzkraefte: b.einsatzkraefte ?? [],
             bioversal_l: b.bioversal_l ?? '',
             absodan_kg: b.absodan_kg ?? '',
@@ -256,12 +289,19 @@ export default function EinsatzberichtFormular() {
   // ── Fotos ────────────────────────────────────────────────────
   function handleFotoAuswahl(e) {
     const files = Array.from(e.target.files || [])
-    files.forEach(file => {
-      const reader = new FileReader()
-      reader.onload = ev => {
-        setFotoVorschau(prev => [...prev, { file, dataUrl: ev.target.result }])
+    files.forEach(async file => {
+      try {
+        const dataUrl = await komprimiereBild(file)
+        const blob = dataUrlToBlob(dataUrl)
+        // Blob als komprimiertes File-Objekt für den Upload
+        const komprimiertesFile = new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' })
+        setFotoVorschau(prev => [...prev, { file: komprimiertesFile, dataUrl }])
+      } catch {
+        // Fallback: unkomprimiert
+        const reader = new FileReader()
+        reader.onload = ev => setFotoVorschau(prev => [...prev, { file, dataUrl: ev.target.result }])
+        reader.readAsDataURL(file)
       }
-      reader.readAsDataURL(file)
     })
     e.target.value = ''
   }
@@ -402,9 +442,23 @@ export default function EinsatzberichtFormular() {
     )
   }
 
-  const fzAktiv = form.fahrzeuge.some(f => f.ab || f.raus || f.an)
+  const fzAktiv = form.fahrzeuge.some(f => f.mitgefahren)
   const kraefteAktiv = form.einsatzkraefte.some(k => k.aktiv)
   const berichtAktiv = form.lage_eintreffen || form.taetigkeiten
+
+  const org = form.organisationen
+  const orgAktiv = !!(
+    (org.feuerwehren?.some(f => f.name)) ||
+    org.polizei?.name || org.polizei?.aktenzeichen ||
+    org.rettungsdienste?.length ||
+    org.einsatzleitung?.name ||
+    org.uebergabe?.name ||
+    org.betroffene?.length
+  )
+
+  // Nur Fahrzeuge die mitgefahren sind für Einsatzkräfte-Dropdown
+  const aktiveFahrzeuge = form.fahrzeuge.filter(f => f.mitgefahren)
+  const fahrzeugOptionen = aktiveFahrzeuge.length > 0 ? aktiveFahrzeuge : form.fahrzeuge
 
   return (
     <div style={{ maxWidth: 860, margin: '0 auto' }}>
@@ -466,27 +520,34 @@ export default function EinsatzberichtFormular() {
         <SektionHeader nr={2} titel="Fahrzeuge & Zeiten" fertig={fzAktiv} />
         {offen[2] && (
           <div style={{ padding: 16, overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 560 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 580 }}>
               <thead>
                 <tr style={{ background: 'var(--gray-50)' }}>
-                  {['Fahrzeug', 'Ab (1)', 'Raus (3)', 'An (4)', 'Zurück', 'Bereit (2)', 'km'].map(h => (
+                  {['Mit', 'Fahrzeug', 'Ab (1)', 'Raus (3)', 'An (4)', 'Zurück', 'Bereit (2)', 'km'].map(h => (
                     <th key={h} style={{ padding: '8px 6px', textAlign: 'left', fontWeight: 600, fontSize: 11, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.04em', borderBottom: '1px solid var(--gray-200)', whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {form.fahrzeuge.map((fz, i) => (
-                  <tr key={i} style={{ borderBottom: '1px solid var(--gray-100)' }}>
-                    <td style={{ padding: '8px 6px', fontWeight: 500 }}>{fz.fahrzeug}</td>
+                  <tr key={i} style={{ borderBottom: '1px solid var(--gray-100)', background: fz.mitgefahren ? 'var(--red-pale)' : 'white' }}>
+                    <td style={{ padding: '4px 6px', textAlign: 'center' }}>
+                      <input type="checkbox" checked={fz.mitgefahren || false}
+                        onChange={e => setFahrzeug(i, 'mitgefahren', e.target.checked)}
+                        style={{ width: 'auto', cursor: 'pointer' }} />
+                    </td>
+                    <td style={{ padding: '8px 6px', fontWeight: 500, color: fz.mitgefahren ? 'var(--red-dark)' : 'var(--gray-700)' }}>{fz.fahrzeug}</td>
                     {['ab', 'raus', 'an', 'zurueck', 'bereit'].map(field => (
                       <td key={field} style={{ padding: '4px 6px' }}>
                         <input type="time" value={fz[field]} onChange={e => setFahrzeug(i, field, e.target.value)}
-                          style={{ width: 90, fontSize: 13, padding: '6px 8px' }} />
+                          disabled={!fz.mitgefahren}
+                          style={{ width: 90, fontSize: 13, padding: '6px 8px', opacity: fz.mitgefahren ? 1 : 0.4 }} />
                       </td>
                     ))}
                     <td style={{ padding: '4px 6px' }}>
                       <input type="number" value={fz.km} onChange={e => setFahrzeug(i, 'km', e.target.value)}
-                        placeholder="0" style={{ width: 60, fontSize: 13, padding: '6px 8px' }} />
+                        disabled={!fz.mitgefahren}
+                        placeholder="0" style={{ width: 60, fontSize: 13, padding: '6px 8px', opacity: fz.mitgefahren ? 1 : 0.4 }} />
                     </td>
                   </tr>
                 ))}
@@ -528,7 +589,7 @@ export default function EinsatzberichtFormular() {
                   </select>
                   <select value={k.fahrzeug} onChange={e => setKraft(i, 'fahrzeug', e.target.value)}
                     disabled={!k.aktiv} style={{ fontSize: 12, padding: '4px 6px' }}>
-                    {form.fahrzeuge.map(fz => <option key={fz.fahrzeug} value={fz.fahrzeug}>{fz.fahrzeug}</option>)}
+                    {fahrzeugOptionen.map(fz => <option key={fz.fahrzeug} value={fz.fahrzeug}>{fz.fahrzeug}</option>)}
                   </select>
                   <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, cursor: k.aktiv ? 'pointer' : 'default', color: 'var(--gray-500)' }}>
                     <input type="checkbox" checked={k.atemschutz} onChange={e => setKraft(i, 'atemschutz', e.target.checked)}
@@ -580,7 +641,7 @@ export default function EinsatzberichtFormular() {
 
       {/* 5. Beteiligte Organisationen */}
       <div className="card" style={{ padding: 0, marginBottom: 12, overflow: 'hidden' }}>
-        <SektionHeader nr={5} titel="Beteiligte Organisationen" fertig={false} />
+        <SektionHeader nr={5} titel="Beteiligte Organisationen" fertig={orgAktiv} />
         {offen[5] && (
           <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
 

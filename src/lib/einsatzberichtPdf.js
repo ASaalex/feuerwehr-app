@@ -87,7 +87,7 @@ export function einsatzberichtPdf(form, wehrName) {
     },
     head: [['Fahrzeug', 'Ab (1)', 'Raus (3)', 'An (4)', 'Zurueck', 'Bereit (2)', 'km']],
     body: fahrzeuge.length > 0
-      ? fahrzeuge.map(f => [f.fahrzeug || '', f.ab || '', f.raus || '', f.an || '', f.zurueck || '', f.bereit || '', f.km || ''])
+      ? fahrzeuge.filter(f => f.mitgefahren ?? true).map(f => [f.fahrzeug || '', f.ab || '', f.raus || '', f.an || '', f.zurueck || '', f.bereit || '', f.km || ''])
       : [['HLF 10', '', '', '', '', '', ''], ['MTW', '', '', '', '', '', '']],
     theme: 'grid',
   })
