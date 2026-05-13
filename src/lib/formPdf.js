@@ -144,6 +144,8 @@ export function verdienstausfallPdf(form, STUNDENSATZ) {
 
   const LBL = [240, 240, 240]  // Hintergrundfarbe Beschriftungszellen
   const VAL = [255, 255, 255]  // Hintergrundfarbe Wertzellen
+  const VML = 22.5             // linker Rand (Tabelle 165mm zentriert auf A4: (210-165)/2 = 22.5)
+  const VTW = 165              // Tabellenbreite laut Originalvorlage
 
   function fmt(iso) {
     if (!iso) return ''
@@ -155,7 +157,7 @@ export function verdienstausfallPdf(form, STUNDENSATZ) {
       ? fmt(form.datum_von)
       : `${fmt(form.datum_von)} bis ${fmt(form.datum_bis)}`
 
-  let y = 14
+  let y = 25
 
   // ── Titel ──────────────────────────────────────────────────────────────────
   doc.setFontSize(12)
@@ -168,47 +170,45 @@ export function verdienstausfallPdf(form, STUNDENSATZ) {
   // ── Kopfzeile: Ortsteil ────────────────────────────────────────────────────
   doc.setFontSize(9)
   const kopfText = 'bei Einsaetzen der FFw Grammetal Ortsteilfeuerwehr'
-  doc.text(kopfText, ML, y)
-  const lineStart = ML + doc.getTextWidth(kopfText) + 2
+  doc.text(kopfText, VML, y)
+  const lineStart = VML + doc.getTextWidth(kopfText) + 2
   doc.setLineWidth(0.3)
-  doc.line(lineStart, y, PW - MR, y)
+  doc.line(lineStart, y, VML + VTW, y)
   if (form.ortsteil) doc.text(form.ortsteil, lineStart + 2, y - 0.8)
   y += 10  // mehr Abstand vor der Adresse
 
   // ── Adresse ────────────────────────────────────────────────────────────────
   doc.setFontSize(9)
   doc.setFont('helvetica', 'normal')
-  doc.text('Gemeinde Grammetal', ML, y); y += 4.5
-  doc.text('Schlossgasse 19', ML, y); y += 4.5
-  doc.text('99428 Grammetal', ML, y); y += 12  // mehr Abstand nach der Adresse
+  doc.text('Gemeinde Grammetal', VML, y); y += 4.5
+  doc.text('Schlossgasse 19', VML, y); y += 4.5
+  doc.text('99428 Grammetal', VML, y); y += 12  // mehr Abstand nach der Adresse
 
   // ── Abschnitt 1 ────────────────────────────────────────────────────────────
   doc.setFontSize(10)
   doc.setFont('helvetica', 'bold')
-  doc.text('1. Angaben zum Antragsteller (durch den Antragsteller auszufuellen)', ML, y); y += 7  // Leerzeile danach
+  doc.text('1. Angaben zum Antragsteller (durch den Antragsteller auszufuellen)', VML, y); y += 7
   doc.setFontSize(9)
-  doc.text('1.1  Angaben zum Antragsteller:', ML, y); y += 4
+  doc.text('1.1  Angaben zum Antragsteller:', VML, y); y += 4
 
-  // ── Antragsteller-Tabelle mit korrekter Bankverbindung-Struktur ────────────
-  // Spalten: 0=Hauptlabel(52mm=28%), 1=Sublabel(47mm), 2=Wert(91mm=auto)
-  // "Name/Anschrift"-Zeilen: col0=Label, col1+2=Wert (colspan:2)
-  // "Bankverbindung"-Zeilen: col0=rowspan:4, col1=Sublabel, col2=Wert
-  // col0-Breite entspricht exakt der "Bankverbindung"-Zelle → einheitliche linke Spalte
+  // ── Antragsteller-Tabelle ──────────────────────────────────────────────────
+  // col0=16mm (Bankverbindung-Label), col1=44mm (Sublabels), col2=auto=105mm (Werte)
+  // Summe: 16+44+105=165mm ✓
+  // Name/Anschrift: colSpan:2 → 16+44=60mm Label | 105mm Wert
+  // Bankverbindung: col0 rowSpan:4 (16mm) | col1 Sublabel (44mm) | col2 Wert (105mm)
+  // → rechte Kante Name/Vorname-Label = rechte Kante Bankverbindung+Sublabel = 60mm ✓
+  // Höhe: 6 Zeilen × ~6.7mm ≈ 40mm
   const nameStr = `${form.name || ''}${form.name && form.vorname ? ', ' : ''}${form.vorname || ''}`
   autoTable(doc, {
     startY: y,
-    margin: { left: ML, right: MR },
-    tableWidth: TW,
-    styles: { fontSize: 9, cellPadding: 2, lineColor: [0, 0, 0], lineWidth: 0.25, fillColor: VAL },
+    margin: { left: VML, right: VML },
+    tableWidth: VTW,
+    styles: { fontSize: 9, cellPadding: 1.5, minCellHeight: 6.7, lineColor: [0, 0, 0], lineWidth: 0.25, fillColor: VAL },
     columnStyles: {
-      0: { cellWidth: 52, fillColor: LBL },
-      1: { cellWidth: 47, fillColor: LBL },
+      0: { cellWidth: 16, fillColor: LBL },
+      1: { cellWidth: 44, fillColor: LBL },
       2: { cellWidth: 'auto', fillColor: VAL },
     },
-    // Layout: col0(52mm) + col1(47mm) + col2(91mm auto)
-    // Name/Anschrift: Beschriftung colSpan:2 (=99mm) | Wert col2 (=91mm)
-    //   → rechte Kante Beschriftung = 52+47 = 99mm (gleiche Linie wie Bankverbindung-Sublabels)
-    // Bankverbindung: Hauptlabel col0 rowspan:4 (52mm) | Sublabel col1 (47mm) | Wert col2 (91mm)
     body: [
       [
         { content: 'Name, Vorname', colSpan: 2, styles: { fillColor: LBL } },
@@ -216,7 +216,7 @@ export function verdienstausfallPdf(form, STUNDENSATZ) {
       ],
       [
         { content: 'Anschrift', colSpan: 2, styles: { fillColor: LBL } },
-        { content: form.anschrift || '', styles: { fillColor: VAL, minCellHeight: 8 } },
+        { content: form.anschrift || '', styles: { fillColor: VAL } },
       ],
       [
         { content: 'Bankverbindung', rowSpan: 4, styles: { valign: 'middle', fillColor: LBL } },
@@ -242,18 +242,19 @@ export function verdienstausfallPdf(form, STUNDENSATZ) {
   y = doc.lastAutoTable.finalY + 3
 
   // ── Einsatz-Tabelle ────────────────────────────────────────────────────────
-  // Spalten: Einsatz(rowspan:2) | Datum/Uhrzeit | [von] | [uhrzeit] | [bis] | [uhrzeit]
-  // TW=190: 22 + 55 + 14 + 34 + 10 + 55 = 190
+  // col0(Einsatz)=20mm + col1(Datum)=40mm = 60mm laut Vorlage
+  // Restliche 105mm: col2=12, col3=33, col4=10, col5=auto(50) → 20+40+12+33+10+50=165 ✓
+  // Höhe: 2 Zeilen × 6mm = 12mm
   autoTable(doc, {
     startY: y,
-    margin: { left: ML, right: MR },
-    tableWidth: TW,
-    styles: { fontSize: 9, cellPadding: 2, lineColor: [0, 0, 0], lineWidth: 0.25, fillColor: VAL },
+    margin: { left: VML, right: VML },
+    tableWidth: VTW,
+    styles: { fontSize: 9, cellPadding: 1.5, minCellHeight: 6, lineColor: [0, 0, 0], lineWidth: 0.25, fillColor: VAL },
     columnStyles: {
-      0: { cellWidth: 22, fillColor: LBL },
-      1: { cellWidth: 55, fillColor: LBL },
-      2: { cellWidth: 14, fillColor: LBL },
-      3: { cellWidth: 34, fillColor: VAL },
+      0: { cellWidth: 20, fillColor: LBL },
+      1: { cellWidth: 40, fillColor: LBL },
+      2: { cellWidth: 12, fillColor: LBL },
+      3: { cellWidth: 33, fillColor: VAL },
       4: { cellWidth: 10, fillColor: LBL },
       5: { cellWidth: 'auto', fillColor: VAL },
     },
@@ -274,21 +275,23 @@ export function verdienstausfallPdf(form, STUNDENSATZ) {
     theme: 'grid',
   })
 
-  y = doc.lastAutoTable.finalY + 7  // Leerzeile nach Einsatz-Tabelle
+  y = doc.lastAutoTable.finalY + 7
   doc.setFontSize(9)
   doc.setFont('helvetica', 'bold')
-  doc.text('1.2 fuer den Einsatzzeitraum entstandener Verdienstausfall:', ML, y); y += 6  // Leerzeile vor Abrechnung-Tabelle
+  doc.text('1.2 fuer den Einsatzzeitraum entstandener Verdienstausfall:', VML, y); y += 6
 
   // ── Abrechnung-Tabelle ─────────────────────────────────────────────────────
+  // col0=60mm (Abrechnung), col1=55mm (Beschreibung), col2=auto=50mm (Wert) → 60+55+50=165 ✓
+  // Höhe: 2 Zeilen × 6mm = 12mm
   autoTable(doc, {
     startY: y,
-    margin: { left: ML, right: MR },
-    tableWidth: TW,
-    styles: { fontSize: 9, cellPadding: 2, lineColor: [0, 0, 0], lineWidth: 0.25, fillColor: VAL },
+    margin: { left: VML, right: VML },
+    tableWidth: VTW,
+    styles: { fontSize: 9, cellPadding: 1.5, minCellHeight: 6, lineColor: [0, 0, 0], lineWidth: 0.25, fillColor: VAL },
     columnStyles: {
-      0: { cellWidth: 30, fillColor: LBL },
-      1: { cellWidth: 'auto', fillColor: LBL },
-      2: { cellWidth: 30, halign: 'right', fillColor: VAL },
+      0: { cellWidth: 60, fillColor: LBL },
+      1: { cellWidth: 55, fillColor: LBL },
+      2: { cellWidth: 'auto', halign: 'right', fillColor: VAL },
     },
     body: [
       [
@@ -309,22 +312,22 @@ export function verdienstausfallPdf(form, STUNDENSATZ) {
   // ── Versicherungstext ──────────────────────────────────────────────────────
   doc.setFontSize(9)
   doc.setFont('helvetica', 'normal')
-  doc.text('Hiermit wird versichert, dass die gemachten Angaben der Wahrheit entsprechen.', ML, y); y += 4
-  doc.text('Die hier erzielten Einnahmen sind einkommenssteuerpflichtig.', ML, y); y += 18
+  doc.text('Hiermit wird versichert, dass die gemachten Angaben der Wahrheit entsprechen.', VML, y); y += 4
+  doc.text('Die hier erzielten Einnahmen sind einkommenssteuerpflichtig.', VML, y); y += 18
 
   // ── Unterschriften ─────────────────────────────────────────────────────────
   doc.setLineWidth(0.3)
-  doc.line(ML, y, ML + TW, y); y += 3
+  doc.line(VML, y, VML + VTW, y); y += 3
   doc.setFontSize(8)
   doc.setFont('helvetica', 'normal')
-  doc.text('Ort, Datum, Unterschrift, Antragsteller, Firmenstempel', ML, y); y += 16
-  doc.line(ML, y, ML + TW, y); y += 3
-  doc.text('Ort, Datum, Unterschrift Ortsbrandmeister', ML, y); y += 12
+  doc.text('Ort, Datum, Unterschrift, Antragsteller, Firmenstempel', VML, y); y += 16
+  doc.line(VML, y, VML + VTW, y); y += 3
+  doc.text('Ort, Datum, Unterschrift Ortsbrandmeister', VML, y); y += 12
 
   // ── Erlaeuterungen ─────────────────────────────────────────────────────────
   doc.setFontSize(8)
   doc.setFont('helvetica', 'bold')
-  doc.text('Erlaeuterungen:', ML, y); y += 4
+  doc.text('Erlaeuterungen:', VML, y); y += 4
   doc.setFont('helvetica', 'normal')
   const erl = [
     `Fuer die nachgewiesene Einsatzzeit im Feuerwehrdienst erhalten Selbstaendige und Freiberufler als Entschaedigung fuer Verdienstausfall eine Pauschalentschaedigung von ${STUNDENSATZ},00 Euro je Stunde. Fuer angefangene Stunden bis 30 Minuten wird der halbe, im uebrigen der volle Stundensatz gezahlt.`,
@@ -333,8 +336,8 @@ export function verdienstausfallPdf(form, STUNDENSATZ) {
     'Die Antraege sind durch den Ortsbrandmeister gegenzuzeichnen.',
   ]
   erl.forEach((e, idx) => {
-    const lines = doc.splitTextToSize(`${idx + 1}. ${e}`, TW - 6)
-    doc.text(lines, ML + 3, y)
+    const lines = doc.splitTextToSize(`${idx + 1}. ${e}`, VTW - 6)
+    doc.text(lines, VML + 3, y)
     y += lines.length * 3.5 + 1.5
   })
 

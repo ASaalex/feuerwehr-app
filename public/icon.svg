@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Roter abgerundeter Hintergrund (passend zur App) -->
+  <rect width="512" height="512" rx="96" fill="#B91C1C"/>
+
+  <!-- Flamme (weiss, klassische Form) -->
+  <path d="
+    M256 68
+    C256 68 350 158 350 228
+    C350 248 344 266 336 280
+    C338 258 328 238 312 226
+    C318 252 314 278 298 294
+    C306 268 300 240 280 228
+    C285 258 278 282 256 294
+    C234 282 227 258 232 228
+    C212 240 206 268 214 294
+    C198 278 194 252 200 226
+    C184 238 174 258 176 280
+    C168 266 162 248 162 228
+    C162 158 256 68 256 68 Z
+  " fill="white"/>
+
+  <!-- Innere Flamme (hellrot für Tiefe) -->
+  <path d="
+    M256 165
+    C256 165 300 210 300 248
+    C300 272 280 290 256 295
+    C232 290 212 272 212 248
+    C212 210 256 165 256 165 Z
+  " fill="#FCA5A5" opacity="0.55"/>
+
+  <!-- Kern (weisser Glühpunkt) -->
+  <path d="
+    M256 222
+    C256 222 276 244 276 262
+    C276 274 267 283 256 285
+    C245 283 236 274 236 262
+    C236 244 256 222 256 222 Z
+  " fill="white" opacity="0.7"/>
+</svg>
