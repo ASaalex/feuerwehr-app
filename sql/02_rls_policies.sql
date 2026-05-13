@@ -81,8 +81,11 @@ create policy "Nur Admin verwaltet Wehren"
 create policy "Dokumente lesen nach Rolle"
   on public.dokumente for select
   using (
-    public.is_aktiv() and
-    public.get_my_rolle() = any(sichtbar_fuer)
+    public.is_aktiv() and (
+      public.get_my_rolle() = any(sichtbar_fuer) or
+      -- Tablet-Nutzer sehen die gleichen Dokumente wie Kameraden
+      (public.get_my_rolle() = 'tablet' and 'kamerad' = any(sichtbar_fuer))
+    )
   );
 
 create policy "Admin und Ausbilder laden Dokumente hoch"
