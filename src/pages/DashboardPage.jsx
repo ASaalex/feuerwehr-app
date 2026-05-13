@@ -29,7 +29,7 @@ export default function DashboardPage() {
       { data: kList },
     ] = await Promise.all([
 (() => {
-        let q = supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('status', 'aktiv')
+        let q = supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('status', 'aktiv').neq('rolle', 'tablet')
         if (profile?.rolle === 'wehrleiter' && profile?.wehr_id) {
           q = q.eq('wehr_id', profile.wehr_id)
         } else if (profile?.rolle !== 'gemeindebrandmeister' && profile?.wehr_id) {
@@ -56,6 +56,7 @@ supabase.from('aufgaben').select('*', { count: 'exact', head: true })
         let q = supabase.from('profiles')
           .select('id,vorname,nachname,geburtsdatum,wehr_id,wehr:wehren(name),kamerad_lehrgaenge(lehrgang:lehrgaenge(name,kuerzel)),kamerad_wehren(wehr_id)')
           .eq('status', 'aktiv')
+          .neq('rolle', 'tablet')
           .order('nachname')
         if (profile?.rolle === 'gemeindebrandmeister') {
           // GBM sieht alle
