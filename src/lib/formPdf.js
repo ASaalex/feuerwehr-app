@@ -137,9 +137,15 @@ export function ausbildungsnachweisPdf(form, kameraden) {
 }
 
 // ─── VERDIENSTAUSFALL ────────────────────────────────────────────────────────
+// Beide Wege (lokal + Mail) nutzen exakt diese Funktion → immer identisches Ergebnis
 
 export function verdienstausfallPdf(form, STUNDENSATZ) {
   const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+
+  const LBL = [240, 240, 240]  // Hintergrundfarbe Beschriftungszellen
+  const VAL = [255, 255, 255]  // Hintergrundfarbe Wertzellen
+  const VML = 22.5             // linker Rand (Tabelle 165mm zentriert auf A4: (210-165)/2 = 22.5)
+  const VTW = 165              // Tabellenbreite laut Originalvorlage
 
   function fmt(iso) {
     if (!iso) return ''
@@ -151,134 +157,188 @@ export function verdienstausfallPdf(form, STUNDENSATZ) {
       ? fmt(form.datum_von)
       : `${fmt(form.datum_von)} bis ${fmt(form.datum_bis)}`
 
-  let y = 14
+  let y = 25
 
-  // Titel
+  // ── Titel ──────────────────────────────────────────────────────────────────
   doc.setFontSize(12)
   doc.setFont('helvetica', 'bold')
   doc.text('Antrag', PW / 2, y, { align: 'center' }); y += 5
-  doc.text('(Selbständige oder Freiberufler)', PW / 2, y, { align: 'center' }); y += 5
+  doc.text('(Selbstaendige oder Freiberufler)', PW / 2, y, { align: 'center' }); y += 5
   doc.setFont('helvetica', 'normal')
   doc.text('auf Erstattung des Verdienstausfalls', PW / 2, y, { align: 'center' }); y += 8
 
-  // Kopfzeile Ortsteil
+  // ── Kopfzeile: Ortsteil ────────────────────────────────────────────────────
   doc.setFontSize(9)
-  doc.text('bei Einsätzen der FFw Grammetal Ortsteilfeuerwehr', ML, y)
+  const kopfText = 'bei Einsaetzen der FFw Grammetal Ortsteilfeuerwehr'
+  doc.text(kopfText, VML, y)
+  const lineStart = VML + doc.getTextWidth(kopfText) + 2
   doc.setLineWidth(0.3)
-  const lineStart = ML + 74
-  doc.line(lineStart, y, PW - MR, y)
-  doc.text(form.ortsteil || '', lineStart + 2, y - 0.5)
-  y += 5
+  doc.line(lineStart, y, VML + VTW, y)
+  if (form.ortsteil) doc.text(form.ortsteil, lineStart + 2, y - 0.8)
+  y += 10  // mehr Abstand vor der Adresse
 
-  // Adresse
+  // ── Adresse ────────────────────────────────────────────────────────────────
   doc.setFontSize(9)
-  doc.text('Gemeinde Grammetal\nSchlosssgasse 19\n99428 Grammetal', ML, y)
-  y += 16
+  doc.setFont('helvetica', 'normal')
+  doc.text('Gemeinde Grammetal', VML, y); y += 4.5
+  doc.text('Schlossgasse 19', VML, y); y += 4.5
+  doc.text('99428 Grammetal', VML, y); y += 12  // mehr Abstand nach der Adresse
 
-  // Abschnitt 1
+  // ── Abschnitt 1 ────────────────────────────────────────────────────────────
   doc.setFontSize(10)
   doc.setFont('helvetica', 'bold')
-  doc.text('1. Angaben zum Antragsteller (durch den Antragsteller auszufüllen)', ML, y); y += 5
+  doc.text('1. Angaben zum Antragsteller (durch den Antragsteller auszufuellen)', VML, y); y += 7
   doc.setFontSize(9)
-  doc.text('1.1  Angaben zum Antragsteller:', ML, y); y += 3
+  doc.text('1.1  Angaben zum Antragsteller:', VML, y); y += 4
 
-  // Antragsteller-Tabelle
+  // ── Antragsteller-Tabelle ──────────────────────────────────────────────────
+  // col0=16mm (Bankverbindung-Label), col1=44mm (Sublabels), col2=auto=105mm (Werte)
+  // Summe: 16+44+105=165mm ✓
+  // Name/Anschrift: colSpan:2 → 16+44=60mm Label | 105mm Wert
+  // Bankverbindung: col0 rowSpan:4 (16mm) | col1 Sublabel (44mm) | col2 Wert (105mm)
+  // → rechte Kante Name/Vorname-Label = rechte Kante Bankverbindung+Sublabel = 60mm ✓
+  // Höhe: 6 Zeilen × ~6.7mm ≈ 40mm
+  const nameStr = `${form.name || ''}${form.name && form.vorname ? ', ' : ''}${form.vorname || ''}`
   autoTable(doc, {
     startY: y,
-    margin: { left: ML, right: MR },
-    tableWidth: TW,
-    styles: { fontSize: 9, cellPadding: 2, lineColor: [0, 0, 0], lineWidth: 0.25 },
+    margin: { left: VML, right: VML },
+    tableWidth: VTW,
+    styles: { fontSize: 9, cellPadding: 1.5, minCellHeight: 6.7, lineColor: [0, 0, 0], lineWidth: 0.25, fillColor: VAL },
     columnStyles: {
-      0: { cellWidth: 40, fontStyle: 'normal', fillColor: [240, 240, 240] },
-      1: { cellWidth: 'auto' },
+      0: { cellWidth: 16, fillColor: LBL },
+      1: { cellWidth: 44, fillColor: LBL },
+      2: { cellWidth: 'auto', fillColor: VAL },
     },
     body: [
-      ['Name, Vorname', `${form.name || ''}${form.name && form.vorname ? ', ' : ''}${form.vorname || ''}`],
-      ['Anschrift', { content: form.anschrift || '', styles: { minCellHeight: 8 } }],
-      ['Bankverbindung\n– Kontoinhaber', form.kontoinhaber || ''],
-      ['– Bank', form.bankname || ''],
-      ['– IBAN', { content: form.iban || '', styles: { font: 'courier', fontSize: 9 } }],
-      ['– BIC', { content: form.bic || '', styles: { font: 'courier', fontSize: 9 } }],
+      [
+        { content: 'Name, Vorname', colSpan: 2, styles: { fillColor: LBL } },
+        { content: nameStr, styles: { fillColor: VAL } },
+      ],
+      [
+        { content: 'Anschrift', colSpan: 2, styles: { fillColor: LBL } },
+        { content: form.anschrift || '', styles: { fillColor: VAL } },
+      ],
+      [
+        { content: 'Bankverbindung', rowSpan: 4, styles: { valign: 'middle', fillColor: LBL } },
+        { content: 'Name des Kontoinhabers', styles: { fillColor: LBL } },
+        { content: form.kontoinhaber || '', styles: { fillColor: VAL } },
+      ],
+      [
+        { content: 'Name und Sitz der Bank', styles: { fillColor: LBL } },
+        { content: form.bankname || '', styles: { fillColor: VAL } },
+      ],
+      [
+        { content: 'IBAN', styles: { fillColor: LBL } },
+        { content: form.iban || '', styles: { fillColor: VAL, font: 'courier', fontSize: 9 } },
+      ],
+      [
+        { content: 'BIC', styles: { fillColor: LBL } },
+        { content: form.bic || '', styles: { fillColor: VAL, font: 'courier', fontSize: 9 } },
+      ],
     ],
     theme: 'grid',
   })
 
   y = doc.lastAutoTable.finalY + 3
 
-  // Einsatz-Tabelle
+  // ── Einsatz-Tabelle ────────────────────────────────────────────────────────
+  // col0(Einsatz)=20mm + col1(Datum)=40mm = 60mm laut Vorlage
+  // Restliche 105mm: col2=12, col3=33, col4=10, col5=auto(50) → 20+40+12+33+10+50=165 ✓
+  // Höhe: 2 Zeilen × 6mm = 12mm
   autoTable(doc, {
     startY: y,
-    margin: { left: ML, right: MR },
-    tableWidth: TW,
-    styles: { fontSize: 9, cellPadding: 2, lineColor: [0, 0, 0], lineWidth: 0.25 },
+    margin: { left: VML, right: VML },
+    tableWidth: VTW,
+    styles: { fontSize: 9, cellPadding: 1.5, minCellHeight: 6, lineColor: [0, 0, 0], lineWidth: 0.25, fillColor: VAL },
     columnStyles: {
-      0: { cellWidth: 20, fillColor: [240, 240, 240] },
-      1: { cellWidth: 20, fillColor: [240, 240, 240] },
-      2: { cellWidth: 'auto' },
-      3: { cellWidth: 16, fillColor: [240, 240, 240] },
-      4: { cellWidth: 'auto' },
+      0: { cellWidth: 20, fillColor: LBL },
+      1: { cellWidth: 40, fillColor: LBL },
+      2: { cellWidth: 12, fillColor: LBL },
+      3: { cellWidth: 33, fillColor: VAL },
+      4: { cellWidth: 10, fillColor: LBL },
+      5: { cellWidth: 'auto', fillColor: VAL },
     },
     body: [
-      [{ content: 'Einsatz', rowSpan: 2, styles: { valign: 'middle' } }, 'Datum', { content: datumAnzeige, colSpan: 3 }],
-      ['', 'Uhrzeit', 'von', form.uhrzeit_von ? form.uhrzeit_von + ' Uhr' : '', 'bis', form.uhrzeit_bis ? form.uhrzeit_bis + ' Uhr' : ''],
+      [
+        { content: 'Einsatz', rowSpan: 2, styles: { valign: 'middle', fillColor: LBL } },
+        { content: 'Datum', styles: { fillColor: LBL } },
+        { content: datumAnzeige, colSpan: 4, styles: { fillColor: VAL } },
+      ],
+      [
+        { content: 'Uhrzeit', styles: { fillColor: LBL } },
+        { content: 'von', styles: { fillColor: LBL } },
+        { content: form.uhrzeit_von ? form.uhrzeit_von + ' Uhr' : '', styles: { fillColor: VAL } },
+        { content: 'bis', styles: { fillColor: LBL } },
+        { content: form.uhrzeit_bis ? form.uhrzeit_bis + ' Uhr' : '', styles: { fillColor: VAL } },
+      ],
     ],
     theme: 'grid',
   })
 
-  y = doc.lastAutoTable.finalY + 3
+  y = doc.lastAutoTable.finalY + 7
   doc.setFontSize(9)
   doc.setFont('helvetica', 'bold')
-  doc.text('1.2 für den Einsatzzeitraum entstandener Verdienstausfall:', ML, y); y += 3
+  doc.text('1.2 fuer den Einsatzzeitraum entstandener Verdienstausfall:', VML, y); y += 6
 
-  // Abrechnung-Tabelle
+  // ── Abrechnung-Tabelle ─────────────────────────────────────────────────────
+  // col0=60mm (Abrechnung), col1=55mm (Beschreibung), col2=auto=50mm (Wert) → 60+55+50=165 ✓
+  // Höhe: 2 Zeilen × 6mm = 12mm
   autoTable(doc, {
     startY: y,
-    margin: { left: ML, right: MR },
-    tableWidth: TW,
-    styles: { fontSize: 9, cellPadding: 2, lineColor: [0, 0, 0], lineWidth: 0.25 },
+    margin: { left: VML, right: VML },
+    tableWidth: VTW,
+    styles: { fontSize: 9, cellPadding: 1.5, minCellHeight: 6, lineColor: [0, 0, 0], lineWidth: 0.25, fillColor: VAL },
     columnStyles: {
-      0: { cellWidth: 30, fillColor: [240, 240, 240] },
-      1: { cellWidth: 'auto' },
-      2: { cellWidth: 28, halign: 'right' },
+      0: { cellWidth: 60, fillColor: LBL },
+      1: { cellWidth: 55, fillColor: LBL },
+      2: { cellWidth: 'auto', halign: 'right', fillColor: VAL },
     },
     body: [
-      [{ content: 'Abrechnung', rowSpan: 2, styles: { valign: 'middle' } },
-        `Anzahl Stunden à ${STUNDENSATZ} Euro`,
-        form.stunden ? form.stunden + ' Std.' : 'Std.'],
-      ['', 'Summe', form.summe ? form.summe + ' EUR' : 'EUR'],
+      [
+        { content: 'Abrechnung', rowSpan: 2, styles: { valign: 'middle', fillColor: LBL } },
+        { content: `Anzahl Stunden a ${STUNDENSATZ} Euro`, styles: { fillColor: LBL } },
+        { content: form.stunden ? form.stunden + ' Std.' : '', styles: { fillColor: VAL } },
+      ],
+      [
+        { content: 'Summe', styles: { fillColor: LBL } },
+        { content: form.summe ? form.summe + ' EUR' : '', styles: { fillColor: VAL, fontStyle: 'bold' } },
+      ],
     ],
     theme: 'grid',
   })
 
   y = doc.lastAutoTable.finalY + 5
+
+  // ── Versicherungstext ──────────────────────────────────────────────────────
   doc.setFontSize(9)
   doc.setFont('helvetica', 'normal')
-  doc.text('Hiermit wird versichert, dass die gemachten Angaben der Wahrheit entsprechen.', ML, y); y += 4
-  doc.text('Die hier erzielten Einnahmen sind einkommenssteuerpflichtig.', ML, y); y += 14
+  doc.text('Hiermit wird versichert, dass die gemachten Angaben der Wahrheit entsprechen.', VML, y); y += 4
+  doc.text('Die hier erzielten Einnahmen sind einkommenssteuerpflichtig.', VML, y); y += 18
 
-  // Unterschriften
+  // ── Unterschriften ─────────────────────────────────────────────────────────
   doc.setLineWidth(0.3)
-  doc.line(ML, y, ML + TW, y); y += 3
+  doc.line(VML, y, VML + VTW, y); y += 3
   doc.setFontSize(8)
-  doc.text('Ort, Datum, Unterschrift, Antragsteller, Firmenstempel', ML, y); y += 14
-  doc.line(ML, y, ML + TW, y); y += 3
-  doc.text('Ort, Datum, Unterschrift Ortsbrandmeister', ML, y); y += 12
+  doc.setFont('helvetica', 'normal')
+  doc.text('Ort, Datum, Unterschrift, Antragsteller, Firmenstempel', VML, y); y += 16
+  doc.line(VML, y, VML + VTW, y); y += 3
+  doc.text('Ort, Datum, Unterschrift Ortsbrandmeister', VML, y); y += 12
 
-  // Erläuterungen
+  // ── Erlaeuterungen ─────────────────────────────────────────────────────────
   doc.setFontSize(8)
   doc.setFont('helvetica', 'bold')
-  doc.text('Erläuterungen:', ML, y); y += 4
+  doc.text('Erlaeuterungen:', VML, y); y += 4
   doc.setFont('helvetica', 'normal')
   const erl = [
-    `Für die nachgewiesene Einsatzzeit im Feuerwehrdienst erhalten Selbständige und Freiberufler als Entschädigung für Verdienstausfall eine Pauschalentschädigung von ${STUNDENSATZ},00 Euro je Stunde. Für angefangene Stunden bis 30 Minuten wird der halbe, im übrigen der volle Stundensatz gezahlt.`,
-    'Der Verdienstausfall wird auf Antrag, werktags in der Zeit von 07.00 – 18.00 Uhr für maximal 8 Stunden pro Tag gewährt.',
+    `Fuer die nachgewiesene Einsatzzeit im Feuerwehrdienst erhalten Selbstaendige und Freiberufler als Entschaedigung fuer Verdienstausfall eine Pauschalentschaedigung von ${STUNDENSATZ},00 Euro je Stunde. Fuer angefangene Stunden bis 30 Minuten wird der halbe, im uebrigen der volle Stundensatz gezahlt.`,
+    'Der Verdienstausfall wird auf Antrag, werktags in der Zeit von 07.00 - 18.00 Uhr fuer maximal 8 Stunden pro Tag gewaehrt.',
     'Es sind amtliche Antragsformulare der Gemeinde zu verwenden.',
-    'Die Anträge sind durch den Ortsbrandmeister gegenzuzeichnen.',
+    'Die Antraege sind durch den Ortsbrandmeister gegenzuzeichnen.',
   ]
-  erl.forEach(e => {
-    const lines = doc.splitTextToSize('• ' + e, TW - 4)
-    doc.text(lines, ML + 2, y)
-    y += lines.length * 3.5 + 1
+  erl.forEach((e, idx) => {
+    const lines = doc.splitTextToSize(`${idx + 1}. ${e}`, VTW - 6)
+    doc.text(lines, VML + 3, y)
+    y += lines.length * 3.5 + 1.5
   })
 
   return doc.output('datauristring').split(',')[1]

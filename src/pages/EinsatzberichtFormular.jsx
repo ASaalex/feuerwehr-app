@@ -63,6 +63,7 @@ export default function EinsatzberichtFormular() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [mailStatus, setMailStatus] = useState(null)
+  const [mailModal, setMailModal] = useState(false)
   const [fotoVorschau, setFotoVorschau] = useState([]) // [{file?, pfad?, dataUrl}]
   const [fotosLaden, setFotosLaden] = useState(false)
   const fotoInputRef = useRef(null)
@@ -371,11 +372,9 @@ export default function EinsatzberichtFormular() {
   }
 
   // ── Per Mail senden ───────────────────────────────────────────
-  async function perMailSenden() {
+  async function perMailSenden(emailFeld) {
     if (!profile?.wehr_id) return alert('Du bist keiner Wache zugeordnet.')
-    const einsatzEmail = wehrData?.einsatzbericht_email
-    if (!einsatzEmail) return alert('Keine Einsatzbericht-E-Mail fuer diese Wache hinterlegt.\nBitte in Wachen-Verwaltung eintragen.')
-
+    setMailModal(false)
     setMailStatus('sending')
     try {
       const base64 = einsatzberichtPdf({ ...form, fotoDataUrls: fotoVorschau.map(f => f.dataUrl) }, wehrData?.name || '')
@@ -383,7 +382,7 @@ export default function EinsatzberichtFormular() {
       const { data, error } = await supabase.functions.invoke('resend-email', {
         body: {
           wehr_id: profile.wehr_id,
-          email_feld: 'einsatzbericht_email',
+          email_feld: emailFeld,
           datei_inhalt: base64,
           datei_name: `Einsatzbericht_${datumStr}.pdf`,
           titel: `Einsatzbericht ${form.datum || ''} – ${form.einsatzort || ''}`,
@@ -901,6 +900,87 @@ export default function EinsatzberichtFormular() {
         <div className="alert alert-success" style={{ marginBottom: 12 }}>✓ Einsatzbericht gesendet!</div>
       )}
 
+      {/* ── Mail-Auswahl-Modal ───────────────────────────────────── */}
+      {mailModal && (
+        <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && setMailModal(false)}>
+          <div className="modal" style={{ maxWidth: 400 }}>
+            <div className="modal-header">
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="22,7 12,13 2,7"/>
+                </svg>
+                Einsatzbericht senden
+              </h3>
+              <button className="btn btn-ghost btn-sm" onClick={() => setMailModal(false)}>✕</button>
+            </div>
+
+            <p style={{ fontSize: 13, color: 'var(--gray-500)', margin: '0 0 16px' }}>
+              Wohin soll der Einsatzbericht als PDF gesendet werden?
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {/* Drucker */}
+              {wehrData?.drucker_email ? (
+                <button
+                  className="btn btn-secondary"
+                  style={{ justifyContent: 'flex-start', gap: 12, padding: '14px 16px', textAlign: 'left' }}
+                  onClick={() => perMailSenden('drucker_email')}
+                >
+                  <span style={{ width: 36, height: 36, borderRadius: 8, background: 'var(--gray-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--gray-600)" strokeWidth="1.8">
+                      <polyline points="6,9 6,2 18,2 18,9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/>
+                    </svg>
+                  </span>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 14 }}>An Drucker senden</div>
+                    <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 2 }}>{wehrData.drucker_email}</div>
+                  </div>
+                </button>
+              ) : (
+                <div style={{ padding: '12px 16px', borderRadius: 8, border: '1px dashed var(--gray-200)', fontSize: 13, color: 'var(--gray-400)', display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="6,9 6,2 18,2 18,9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                  Kein Drucker konfiguriert
+                </div>
+              )}
+
+              {/* Einsatzbericht-E-Mail */}
+              {wehrData?.einsatzbericht_email ? (
+                <button
+                  className="btn btn-secondary"
+                  style={{ justifyContent: 'flex-start', gap: 12, padding: '14px 16px', textAlign: 'left' }}
+                  onClick={() => perMailSenden('einsatzbericht_email')}
+                >
+                  <span style={{ width: 36, height: 36, borderRadius: 8, background: 'var(--red-light)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--red)" strokeWidth="1.8">
+                      <rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="22,7 12,13 2,7"/>
+                    </svg>
+                  </span>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 14 }}>An Einsatz-E-Mail senden</div>
+                    <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 2 }}>{wehrData.einsatzbericht_email}</div>
+                  </div>
+                </button>
+              ) : (
+                <div style={{ padding: '12px 16px', borderRadius: 8, border: '1px dashed var(--gray-200)', fontSize: 13, color: 'var(--gray-400)', display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="22,7 12,13 2,7"/></svg>
+                  Keine Einsatz-E-Mail konfiguriert
+                </div>
+              )}
+
+              {!wehrData?.drucker_email && !wehrData?.einsatzbericht_email && (
+                <div className="alert alert-error" style={{ margin: 0 }}>
+                  Fuer diese Wache sind keine E-Mail-Adressen hinterlegt. Bitte in der Wachen-Verwaltung eintragen.
+                </div>
+              )}
+            </div>
+
+            <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
+              <button className="btn btn-secondary" onClick={() => setMailModal(false)}>Abbrechen</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Footer-Buttons */}
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap', paddingBottom: 32 }}>
         <button className="btn btn-secondary" onClick={() => navigate('/einsatzbericht')}>Abbrechen</button>
@@ -909,7 +989,7 @@ export default function EinsatzberichtFormular() {
         </button>
         <button
           className="btn btn-secondary"
-          onClick={perMailSenden}
+          onClick={() => setMailModal(true)}
           disabled={mailStatus === 'sending' || mailStatus === 'ok'}
         >
           {mailStatus === 'sending' ? (

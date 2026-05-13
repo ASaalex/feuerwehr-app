@@ -413,9 +413,11 @@ function WachenToggle({ pruefung, onToggle }) {
     const { data } = await wehrQuery
     setWehren(data ?? [])
 
-    // Wehrleiter: automatisch nur eigene Wache vorauswaehlen
     if (nurEigeneWache && myProfile?.wehr_id) {
-      setAuswahl([myProfile.wehr_id])
+      // Checkbox zeigen: gecheckt wenn null (alle duerfen) ODER eigene Wache explizit enthalten
+      const istEnthalten = pruefung.sichtbar_fuer_wehren === null ||
+        (pruefung.sichtbar_fuer_wehren ?? []).includes(myProfile.wehr_id)
+      setAuswahl(istEnthalten ? [myProfile.wehr_id] : [])
       setModus('ausgewaehlte')
     } else {
       setAuswahl(pruefung.sichtbar_fuer_wehren ?? [])
@@ -430,8 +432,32 @@ function WachenToggle({ pruefung, onToggle }) {
 
   async function handleSave() {
     setSaving(true)
+    let neueWehren
+    if (modus === 'alle') {
+      neueWehren = null  // null = alle Wachen sehen die Pruefung
+    } else if (nurEigeneWache && myProfile?.wehr_id) {
+      // Wehrleiter: nur eigene Wache ein-/ausschalten, andere unberuehrt lassen
+      const istChecked = (auswahl ?? []).includes(myProfile.wehr_id)
+      const aktuelle = pruefung.sichtbar_fuer_wehren  // null oder Array
+      if (istChecked) {
+        // Eigene Wache eintragen
+        neueWehren = aktuelle === null ? null : [...new Set([...aktuelle, myProfile.wehr_id])]
+      } else {
+        // Eigene Wache entfernen
+        if (aktuelle === null) {
+          // War 'alle' → alle Wachen laden und eigene herausnehmen
+          const { data: alleWehren } = await supabase.from('wehren').select('id')
+          neueWehren = (alleWehren ?? []).map(w => w.id).filter(id => id !== myProfile.wehr_id)
+        } else {
+          neueWehren = aktuelle.filter(id => id !== myProfile.wehr_id)
+        }
+      }
+    } else {
+      // Admin/GBM: leere Auswahl = [] (nicht null!), damit keine Wache sieht die Pruefung
+      neueWehren = auswahl?.length > 0 ? auswahl : []
+    }
     await supabase.from('pruefungen').update({
-      sichtbar_fuer_wehren: modus === 'alle' ? null : (auswahl?.length > 0 ? auswahl : null)
+      sichtbar_fuer_wehren: neueWehren
     }).eq('id', pruefung.id)
     setModal(false)
     setSaving(false)

@@ -10,7 +10,7 @@ import VerdienstausfallModal from './VerdienstausfallModal'
 const KATEGORIEN = [
   { value: 'dienstanweisung', label: 'Dienstanweisung/Satzung' },
   { value: 'vorlage', label: 'Vorlage' },
-  { value: 'sonstiges', label: 'Sonstiges' },
+  { value: 'sonstiges', label: 'Dienstvorschriften, Gesetze' },
 ]
 
 const KAT_COLOR = { dienstanweisung: 'red', vorlage: 'blue', ausbildung: 'green', sonstiges: 'gray' } // ausbildung behalten fuer alte Dokumente
@@ -120,8 +120,11 @@ export default function DokumentePage() {
   }
 
   const gefiltert = dokumente.filter(d => {
+    if (filter.suche) {
+      // Bei aktiver Suche alle Kategorien durchsuchen
+      return d.titel.toLowerCase().includes(filter.suche.toLowerCase())
+    }
     if (filter.kategorie !== 'alle' && d.kategorie !== filter.kategorie) return false
-    if (filter.suche && !d.titel.toLowerCase().includes(filter.suche.toLowerCase())) return false
     return true
   })
 

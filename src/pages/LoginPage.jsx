@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 
 export default function LoginPage() {
@@ -93,6 +93,16 @@ export default function LoginPage() {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Footer */}
+      <div style={{ padding: '16px 24px', textAlign: 'center', display: 'flex', justifyContent: 'center', gap: 20 }}>
+        <Link to="/impressum" style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', textDecoration: 'none' }}>
+          Impressum
+        </Link>
+        <Link to="/datenschutz-public" style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', textDecoration: 'none' }}>
+          Datenschutz
+        </Link>
       </div>
     </div>
   )
