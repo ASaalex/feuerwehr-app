@@ -205,14 +205,18 @@ export function verdienstausfallPdf(form, STUNDENSATZ) {
       1: { cellWidth: 47, fillColor: LBL },
       2: { cellWidth: 'auto', fillColor: VAL },
     },
+    // Layout: col0(52mm) + col1(47mm) + col2(91mm auto)
+    // Name/Anschrift: Beschriftung colSpan:2 (=99mm) | Wert col2 (=91mm)
+    //   → rechte Kante Beschriftung = 52+47 = 99mm (gleiche Linie wie Bankverbindung-Sublabels)
+    // Bankverbindung: Hauptlabel col0 rowspan:4 (52mm) | Sublabel col1 (47mm) | Wert col2 (91mm)
     body: [
       [
-        { content: 'Name, Vorname', styles: { fillColor: LBL } },
-        { content: nameStr, colSpan: 2, styles: { fillColor: VAL } },
+        { content: 'Name, Vorname', colSpan: 2, styles: { fillColor: LBL } },
+        { content: nameStr, styles: { fillColor: VAL } },
       ],
       [
-        { content: 'Anschrift', styles: { fillColor: LBL } },
-        { content: form.anschrift || '', colSpan: 2, styles: { fillColor: VAL, minCellHeight: 8 } },
+        { content: 'Anschrift', colSpan: 2, styles: { fillColor: LBL } },
+        { content: form.anschrift || '', styles: { fillColor: VAL, minCellHeight: 8 } },
       ],
       [
         { content: 'Bankverbindung', rowSpan: 4, styles: { valign: 'middle', fillColor: LBL } },
