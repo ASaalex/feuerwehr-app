@@ -192,16 +192,18 @@ supabase.from('aufgaben').select('*', { count: 'exact', head: true })
           navigate={navigate}
         />
 
-        {/* Pruefungen */}
-        <StatKachel
-          label="Aktive Pruefungen"
-          wert={stats.pruefungen}
-          farbe="#EEEDFE"
-          textfarbe="#3C3489"
-          icon={<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#3C3489" strokeWidth="1.5" opacity="0.5"><polyline points="9,11 12,14 22,4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>}
-          aktion={{ label: 'Pruefung ablegen', to: '/pruefungen' }}
-          navigate={navigate}
-        />
+        {/* Pruefungen – nicht fuer Tablet-Nutzer */}
+        {profile?.rolle !== 'tablet' && (
+          <StatKachel
+            label="Aktive Pruefungen"
+            wert={stats.pruefungen}
+            farbe="#EEEDFE"
+            textfarbe="#3C3489"
+            icon={<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#3C3489" strokeWidth="1.5" opacity="0.5"><polyline points="9,11 12,14 22,4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>}
+            aktion={{ label: 'Pruefung ablegen', to: '/pruefungen' }}
+            navigate={navigate}
+          />
+        )}
 
         {/* Aufgaben */}
         {aufgabenAktiv ? (
