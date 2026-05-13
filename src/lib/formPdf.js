@@ -173,26 +173,27 @@ export function verdienstausfallPdf(form, STUNDENSATZ) {
   doc.setLineWidth(0.3)
   doc.line(lineStart, y, PW - MR, y)
   if (form.ortsteil) doc.text(form.ortsteil, lineStart + 2, y - 0.8)
-  y += 6
+  y += 10  // mehr Abstand vor der Adresse
 
   // ── Adresse ────────────────────────────────────────────────────────────────
   doc.setFontSize(9)
   doc.setFont('helvetica', 'normal')
-  doc.text('Gemeinde Grammetal', ML, y); y += 4
-  doc.text('Schlossgasse 19', ML, y); y += 4
-  doc.text('99428 Grammetal', ML, y); y += 8
+  doc.text('Gemeinde Grammetal', ML, y); y += 4.5
+  doc.text('Schlossgasse 19', ML, y); y += 4.5
+  doc.text('99428 Grammetal', ML, y); y += 12  // mehr Abstand nach der Adresse
 
   // ── Abschnitt 1 ────────────────────────────────────────────────────────────
   doc.setFontSize(10)
   doc.setFont('helvetica', 'bold')
-  doc.text('1. Angaben zum Antragsteller (durch den Antragsteller auszufuellen)', ML, y); y += 5
+  doc.text('1. Angaben zum Antragsteller (durch den Antragsteller auszufuellen)', ML, y); y += 7  // Leerzeile danach
   doc.setFontSize(9)
-  doc.text('1.1  Angaben zum Antragsteller:', ML, y); y += 3
+  doc.text('1.1  Angaben zum Antragsteller:', ML, y); y += 4
 
   // ── Antragsteller-Tabelle mit korrekter Bankverbindung-Struktur ────────────
-  // Spalten: 0=Hauptlabel(40mm), 1=Sublabel(45mm), 2=Wert(auto)
+  // Spalten: 0=Hauptlabel(52mm=28%), 1=Sublabel(47mm), 2=Wert(91mm=auto)
   // "Name/Anschrift"-Zeilen: col0=Label, col1+2=Wert (colspan:2)
   // "Bankverbindung"-Zeilen: col0=rowspan:4, col1=Sublabel, col2=Wert
+  // col0-Breite entspricht exakt der "Bankverbindung"-Zelle → einheitliche linke Spalte
   const nameStr = `${form.name || ''}${form.name && form.vorname ? ', ' : ''}${form.vorname || ''}`
   autoTable(doc, {
     startY: y,
@@ -200,8 +201,8 @@ export function verdienstausfallPdf(form, STUNDENSATZ) {
     tableWidth: TW,
     styles: { fontSize: 9, cellPadding: 2, lineColor: [0, 0, 0], lineWidth: 0.25, fillColor: VAL },
     columnStyles: {
-      0: { cellWidth: 40, fillColor: LBL },
-      1: { cellWidth: 44, fillColor: LBL },
+      0: { cellWidth: 52, fillColor: LBL },
+      1: { cellWidth: 47, fillColor: LBL },
       2: { cellWidth: 'auto', fillColor: VAL },
     },
     body: [
@@ -269,10 +270,10 @@ export function verdienstausfallPdf(form, STUNDENSATZ) {
     theme: 'grid',
   })
 
-  y = doc.lastAutoTable.finalY + 3
+  y = doc.lastAutoTable.finalY + 7  // Leerzeile nach Einsatz-Tabelle
   doc.setFontSize(9)
   doc.setFont('helvetica', 'bold')
-  doc.text('1.2 fuer den Einsatzzeitraum entstandener Verdienstausfall:', ML, y); y += 3
+  doc.text('1.2 fuer den Einsatzzeitraum entstandener Verdienstausfall:', ML, y); y += 6  // Leerzeile vor Abrechnung-Tabelle
 
   // ── Abrechnung-Tabelle ─────────────────────────────────────────────────────
   autoTable(doc, {
