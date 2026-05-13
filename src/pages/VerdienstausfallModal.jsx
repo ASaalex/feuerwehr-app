@@ -386,10 +386,16 @@ export default function VerdienstausfallModal({ onClose }) {
   }
 
   function drucken() {
-    const html = generiereHtml()
-    const win = window.open('', '_blank')
-    win.document.write(html)
-    win.document.close()
+    // Gleiche jsPDF-Quelle wie der Mail-Versand → immer identisches Ergebnis
+    const base64 = verdienstausfallPdf(form, STUNDENSATZ)
+    const win = window.open('data:application/pdf;base64,' + base64, '_blank')
+    if (!win) {
+      // Fallback: direkt herunterladen
+      const link = document.createElement('a')
+      link.href = 'data:application/pdf;base64,' + base64
+      link.download = `Verdienstausfall_${(form.datum_von || 'unbekannt').replaceAll('-', '')}.pdf`
+      link.click()
+    }
     onClose()
   }
 
