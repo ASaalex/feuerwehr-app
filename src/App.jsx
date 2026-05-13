@@ -15,6 +15,8 @@ import LehrgaengePage from './pages/LehrgaengePage'
 import AusbildungPage from './pages/AusbildungPage'
 import AdminPage from './pages/AdminPage'
 import DatenschutzPage from './pages/DatenschutzPage'
+import DatenschutzPublicPage from './pages/DatenschutzPublicPage'
+import ImpressumPage from './pages/ImpressumPage'
 import EinstellungenPage from './pages/EinstellungenPage'
 import EinsatzberichtPage from './pages/EinsatzberichtPage'
 import EinsatzberichtFormular from './pages/EinsatzberichtFormular'
@@ -84,6 +86,8 @@ function AppRoutes() {
     <Routes>
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <LoginPage />} />
       <Route path="/registrieren" element={user ? <Navigate to="/" replace /> : <RegisterPage />} />
+      <Route path="/impressum" element={<ImpressumPage />} />
+      <Route path="/datenschutz-public" element={<DatenschutzPublicPage />} />
 
       <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
         <Route index element={<DashboardPage />} />

@@ -10,7 +10,7 @@ import VerdienstausfallModal from './VerdienstausfallModal'
 const KATEGORIEN = [
   { value: 'dienstanweisung', label: 'Dienstanweisung/Satzung' },
   { value: 'vorlage', label: 'Vorlage' },
-  { value: 'sonstiges', label: 'Sonstiges' },
+  { value: 'sonstiges', label: 'Dienstvorschriften, Gesetze' },
 ]
 
 const KAT_COLOR = { dienstanweisung: 'red', vorlage: 'blue', ausbildung: 'green', sonstiges: 'gray' } // ausbildung behalten fuer alte Dokumente
