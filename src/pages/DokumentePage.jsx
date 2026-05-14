@@ -135,8 +135,9 @@ export default function DokumentePage() {
 
   const gefiltert = dokumente.filter(d => {
     if (filter.suche) {
-      // Bei aktiver Suche alle Kategorien durchsuchen
-      return d.titel.toLowerCase().includes(filter.suche.toLowerCase())
+      // Bei aktiver Suche alle Kategorien durchsuchen (Titel + Beschreibung)
+      const q = filter.suche.toLowerCase()
+      return d.titel.toLowerCase().includes(q) || (d.beschreibung ?? '').toLowerCase().includes(q)
     }
     if (filter.kategorie !== 'alle' && d.kategorie !== filter.kategorie) return false
     return true
