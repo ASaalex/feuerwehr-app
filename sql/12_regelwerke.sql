@@ -65,3 +65,41 @@ create policy "regelwerke_delete" on public.regelwerke
       and rolle in ('wehrleiter', 'gemeindebrandmeister', 'ausbilder')
     )
   );
+
+-- ============================================================
+-- Storage-Bucket-Policies fuer den "regelwerke"-Bucket
+--
+-- WICHTIG: Zuerst den Bucket im Supabase-Dashboard anlegen:
+-- Storage → New Bucket → Name: "regelwerke" → Private → Save
+--
+-- Dann diese Policies hier ausfuehren.
+-- ============================================================
+
+drop policy if exists "regelwerke_storage_select" on storage.objects;
+create policy "regelwerke_storage_select"
+  on storage.objects for select
+  using (bucket_id = 'regelwerke' and auth.role() = 'authenticated');
+
+drop policy if exists "regelwerke_storage_insert" on storage.objects;
+create policy "regelwerke_storage_insert"
+  on storage.objects for insert
+  with check (
+    bucket_id = 'regelwerke'
+    and exists (
+      select 1 from public.profiles
+      where id = auth.uid()
+      and rolle in ('wehrleiter', 'gemeindebrandmeister', 'ausbilder')
+    )
+  );
+
+drop policy if exists "regelwerke_storage_delete" on storage.objects;
+create policy "regelwerke_storage_delete"
+  on storage.objects for delete
+  using (
+    bucket_id = 'regelwerke'
+    and exists (
+      select 1 from public.profiles
+      where id = auth.uid()
+      and rolle in ('wehrleiter', 'gemeindebrandmeister', 'ausbilder')
+    )
+  );

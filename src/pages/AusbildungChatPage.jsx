@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { format } from 'date-fns'
 import { de } from 'date-fns/locale'
+
+const COOLDOWN_SEK = 4 // Mindestabstand zwischen zwei KI-Anfragen
 
 const KATEGORIE_META = {
   verkehrsunfall:          { label: 'Verkehrsunfall',        farbe: '#E8F4FD', textfarbe: '#1565C0', icon: '🚗' },
@@ -128,8 +130,25 @@ export default function AusbildungChatPage() {
   const [ladend, setLadend] = useState(false)
   const [abgeschlossen, setAbgeschlossen] = useState(false)
   const [fehler, setFehler] = useState('')
+  const [cooldown, setCooldown] = useState(0) // verbleibende Sekunden Wartezeit
+  const cooldownRef = useRef(null)
 
   useEffect(() => { ladeDaten() }, [])
+
+  // Cooldown-Timer: zählt sekündlich runter
+  function starteCooldown() {
+    clearInterval(cooldownRef.current)
+    setCooldown(COOLDOWN_SEK)
+    cooldownRef.current = setInterval(() => {
+      setCooldown(prev => {
+        if (prev <= 1) { clearInterval(cooldownRef.current); return 0 }
+        return prev - 1
+      })
+    }, 1000)
+  }
+
+  // Aufräumen beim Unmount
+  useEffect(() => () => clearInterval(cooldownRef.current), [])
 
   useEffect(() => {
     chatEndeRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -190,7 +209,22 @@ export default function AusbildungChatPage() {
 
     if (error || !data?.antwort) {
       const details = data?.error ?? error?.message ?? 'Unbekannter Fehler'
-      setFehler(`KI-Antwort fehlgeschlagen: ${details}`)
+
+      // 429: unterscheide RPM (kurz warten) vs RPD (Tageslimit)
+      if (String(details).includes('429')) {
+        const istTageslimit = String(details).toLowerCase().includes('quota') || String(details).toLowerCase().includes('billing')
+        if (istTageslimit) {
+          setFehler(
+            '⏳ Tages-Kontingent der KI erschöpft (1.500 Anfragen/Tag im kostenlosen Tarif). ' +
+            'Das Limit wird täglich um Mitternacht zurückgesetzt. ' +
+            'Alternativ: neuen API-Key in Google AI Studio erstellen und als Supabase-Secret hinterlegen.'
+          )
+        } else {
+          setFehler('⏱ Zu viele Anfragen in kurzer Zeit (max. 15/Minute). Bitte 60 Sekunden warten und erneut senden.')
+        }
+      } else {
+        setFehler(`KI-Antwort fehlgeschlagen: ${details}`)
+      }
       return
     }
 
@@ -201,6 +235,7 @@ export default function AusbildungChatPage() {
     ]
 
     setNachrichten(aktualisiert)
+    starteCooldown() // Schutz: 4 Sek. Pause nach jeder KI-Antwort
 
     // Session in DB speichern
     await supabase.from('uebungs_sessions').update({
@@ -219,7 +254,7 @@ export default function AusbildungChatPage() {
 
   async function sendeNachricht(e) {
     e?.preventDefault()
-    if (!eingabe.trim() || ladend || abgeschlossen) return
+    if (!eingabe.trim() || ladend || abgeschlossen || cooldown > 0) return
     setFehler('')
 
     const userMsg = { role: 'user', content: eingabe.trim(), ts: new Date().toISOString() }
@@ -440,14 +475,14 @@ export default function AusbildungChatPage() {
             value={eingabe}
             onChange={e => setEingabe(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendeNachricht() } }}
-            placeholder="Deine Antwort… (Enter zum Senden, Shift+Enter für neue Zeile)"
+            placeholder={cooldown > 0 ? `Bitte ${cooldown} Sek. warten…` : 'Deine Antwort… (Enter zum Senden, Shift+Enter für neue Zeile)'}
             rows={2}
-            disabled={ladend}
-            style={{ flex: 1, resize: 'none', borderRadius: 10, padding: '8px 12px', fontSize: 13, border: '1.5px solid var(--gray-200)', lineHeight: 1.4 }}
+            disabled={ladend || cooldown > 0}
+            style={{ flex: 1, resize: 'none', borderRadius: 10, padding: '8px 12px', fontSize: 13, border: `1.5px solid ${cooldown > 0 ? 'var(--gray-200)' : 'var(--gray-200)'}`, lineHeight: 1.4, opacity: cooldown > 0 ? 0.6 : 1 }}
           />
-          <button type="submit" className="btn btn-primary" disabled={!eingabe.trim() || ladend}
-            style={{ alignSelf: 'flex-end', padding: '8px 16px', flexShrink: 0 }}>
-            {ladend ? '…' : '→'}
+          <button type="submit" className="btn btn-primary" disabled={!eingabe.trim() || ladend || cooldown > 0}
+            style={{ alignSelf: 'flex-end', padding: '8px 16px', flexShrink: 0, minWidth: 44 }}>
+            {ladend ? '…' : cooldown > 0 ? `${cooldown}s` : '→'}
           </button>
         </form>
       )}
