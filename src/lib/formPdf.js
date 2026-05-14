@@ -348,46 +348,47 @@ export function verdienstausfallPdf(form, STUNDENSATZ) {
 
 export function auslagenerstattungPdf(form, gesamt) {
   const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+  const AML = 20   // linker Rand (Tabelle 170mm zentriert auf A4: (210-170)/2 = 20)
+  const ATW = 170  // Tabellenbreite laut Originalvorlage
 
   let y = 14
 
   // Absender
   doc.setFontSize(9)
   doc.setFont('helvetica', 'bold')
-  doc.text('Absender:', ML, y); y += 4
+  doc.text('Absender:', AML, y); y += 4
   doc.setFont('helvetica', 'normal')
-  doc.text(form.absender || '', ML, y); y += (form.absender?.split('\n').length || 1) * 4 + 10
+  doc.text(form.absender || '', AML, y); y += (form.absender?.split('\n').length || 1) * 4 + 10
 
   // Empfänger
-  doc.text('Gemeinde Grammetal\nSchlossgasse 19\n99428 Grammetal', ML, y); y += 18
+  doc.text('Gemeinde Grammetal\nSchlossgasse 19\n99428 Grammetal', AML, y); y += 18
 
   // Titel
   doc.setFontSize(14)
   doc.setFont('helvetica', 'bold')
-  doc.text('Antrag auf Auslagenerstattung', ML, y); y += 7
+  doc.text('Antrag auf Auslagenerstattung', AML, y); y += 7
   doc.setFontSize(9)
   doc.setFont('helvetica', 'normal')
-  doc.text('Ich bitte um Erstattung folgender Positionen (Beleg/e sind beigefügt):', ML, y); y += 4
+  doc.text('Ich bitte um Erstattung folgender Positionen (Beleg/e sind beigefügt):', AML, y); y += 4
 
   // Positionen-Tabelle
-  const gefuellteZeilen = form.zeilen.filter(z => z.firma || z.gegenstand || z.preis)
-  const alleZeilen = form.zeilen
-
+  // col0=9mm, col1=65mm, col2=75mm, col3=21mm → 9+65+75+21=170mm ✓
+  // Kopfzeile: 12.2mm hoch; Datenzeilen: 11mm hoch
   autoTable(doc, {
     startY: y,
-    margin: { left: ML, right: MR },
-    tableWidth: TW,
-    styles: { fontSize: 9, cellPadding: 2, lineColor: [0, 0, 0], lineWidth: 0.25 },
-    headStyles: { fillColor: [210, 210, 210], fontStyle: 'bold' },
+    margin: { left: AML, right: AML },
+    tableWidth: ATW,
+    styles: { fontSize: 9, cellPadding: 2, minCellHeight: 11, lineColor: [0, 0, 0], lineWidth: 0.25 },
+    headStyles: { fillColor: [210, 210, 210], fontStyle: 'bold', minCellHeight: 12.2 },
     columnStyles: {
-      0: { cellWidth: 10, halign: 'center' },
-      1: { cellWidth: 55 },
-      2: { cellWidth: 'auto' },
-      3: { cellWidth: 28, halign: 'right' },
+      0: { cellWidth: 9, halign: 'center' },
+      1: { cellWidth: 65 },
+      2: { cellWidth: 75 },
+      3: { cellWidth: 21, halign: 'right' },
     },
     head: [['Nr.', 'Firma/Institution', 'Gegenstand/Verwendungszweck', 'Bruttopreis']],
     body: [
-      ...alleZeilen.map((z, i) => {
+      ...form.zeilen.map((z, i) => {
         const preis = parseFloat(z.preis?.replace(',', '.')) || 0
         return [
           i + 1,
@@ -404,43 +405,47 @@ export function auslagenerstattungPdf(form, gesamt) {
 
   y = doc.lastAutoTable.finalY + 5
   doc.setFontSize(9)
-  doc.text('Ich bitte um Überweisung. Meine Kontoverbindung lautet:', ML, y); y += 5
+  doc.text('Ich bitte um Überweisung. Meine Kontoverbindung lautet:', AML, y); y += 5
 
-  // IBAN / BIC
+  // IBAN – 10mm hoch
   doc.setFontSize(8)
-  doc.text('IBAN (max. 22 Stellen)  Angabe erforderlich', ML, y); y += 3
+  doc.setFont('helvetica', 'normal')
+  doc.text('IBAN (max. 22 Stellen)  Angabe erforderlich', AML, y); y += 3
   doc.setLineWidth(0.3)
-  doc.rect(ML, y, 90, 8)
+  doc.rect(AML, y, 90, 10)
   doc.setFontSize(10)
   doc.setFont('courier', 'normal')
-  doc.text(form.iban || '', ML + 3, y + 5.5)
-  y += 12
+  doc.text(form.iban || '', AML + 3, y + 6.5)
+  y += 13
 
+  // BIC – 10mm hoch
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(8)
-  doc.text('BIC (8 oder 11 Stellen)', ML, y); y += 3
+  doc.text('BIC (8 oder 11 Stellen)', AML, y); y += 3
   doc.setLineWidth(0.3)
-  doc.rect(ML, y, 50, 8)
+  doc.rect(AML, y, 50, 10)
   doc.setFontSize(10)
   doc.setFont('courier', 'normal')
-  doc.text(form.bic || '', ML + 3, y + 5.5)
+  doc.text(form.bic || '', AML + 3, y + 6.5)
   y += 14
 
   // Bestätigung
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(8.5)
-  doc.text('Die sachliche und rechnerische Richtigkeit wird bestätigt.', ML, y); y += 10
+  doc.text('Die sachliche und rechnerische Richtigkeit wird bestätigt.', AML, y); y += 10
 
-  // Unterschriften
+  // Unterschriften: 170mm total, erste Box 65mm, zweite Box 105mm
   doc.setLineWidth(0.3)
-  const halfW = (TW - 10) / 2
-  doc.rect(ML, y, halfW, 12)
-  doc.rect(ML + halfW + 10, y, halfW, 12)
+  const box1W = 65
+  const box2W = ATW - box1W  // 105mm
+  doc.rect(AML, y, box1W, 12)
+  doc.rect(AML + box1W, y, box2W, 12)
   doc.setFontSize(8)
-  doc.text(form.datum || '', ML + 2, y + 8)
+  doc.setFont('helvetica', 'normal')
+  doc.text(form.datum || '', AML + 2, y + 8)
   y += 14
-  doc.text('Datum', ML + 2, y)
-  doc.text('Unterschrift', ML + halfW + 12, y)
+  doc.text('Datum', AML + 2, y)
+  doc.text('Unterschrift', AML + box1W + 4, y)
 
   return doc.output('datauristring').split(',')[1]
 }
