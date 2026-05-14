@@ -5,9 +5,9 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-function json(data: unknown, status = 200) {
+function json(data: unknown) {
   return new Response(JSON.stringify(data), {
-    status,
+    status: 200,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 }
@@ -94,7 +94,7 @@ serve(async (req) => {
   try {
     const apiKey = Deno.env.get("GEMINI_API_KEY");
     if (!apiKey) {
-      return json({ error: "GEMINI_API_KEY nicht konfiguriert" }, 500);
+      return json({ error: "GEMINI_API_KEY nicht konfiguriert" });
     }
 
     const body = await req.json();
@@ -104,7 +104,7 @@ serve(async (req) => {
     };
 
     if (!nachrichten || !Array.isArray(nachrichten)) {
-      return json({ error: "nachrichten fehlt oder ungueltig" }, 400);
+      return json({ error: "nachrichten fehlt oder ungueltig" });
     }
 
     const systemPrompt = szenario
@@ -151,7 +151,7 @@ serve(async (req) => {
     if (!geminiRes.ok) {
       const err = await geminiRes.text();
       console.error("Gemini Fehler:", geminiRes.status, err);
-      return json({ error: "Gemini API Fehler " + geminiRes.status + ": " + err.slice(0, 200) }, 502);
+      return json({ error: "Gemini API Fehler " + geminiRes.status + ": " + err.slice(0, 200) });
     }
 
     const geminiData = await geminiRes.json();
@@ -160,12 +160,12 @@ serve(async (req) => {
     if (!antwort) {
       const blockReason = geminiData?.promptFeedback?.blockReason ?? "unbekannt";
       console.error("Leere Antwort:", blockReason);
-      return json({ error: "Keine Antwort von Gemini. Grund: " + blockReason }, 502);
+      return json({ error: "Keine Antwort von Gemini. Grund: " + blockReason });
     }
 
     return json({ antwort });
   } catch (err) {
     console.error("Fehler:", err);
-    return json({ error: "Interner Fehler: " + String(err) }, 500);
+    return json({ error: "Interner Fehler: " + String(err) });
   }
 });
