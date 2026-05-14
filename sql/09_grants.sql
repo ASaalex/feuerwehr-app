@@ -37,6 +37,10 @@ grant select, insert, update, delete on public.pruefungs_ergebnisse to service_r
 grant select, insert, update, delete on public.aufgaben to authenticated;
 grant select, insert, update, delete on public.aufgaben to service_role;
 
+-- ── kamerad_wehren ───────────────────────────────────────────────────────────
+grant select, insert, update, delete on public.kamerad_wehren to authenticated;
+grant select, insert, update, delete on public.kamerad_wehren to service_role;
+
 -- ── einsatzberichte (Migration 08) ───────────────────────────────────────────
 grant select, insert, update, delete on public.einsatzberichte to authenticated;
 grant select, insert, update, delete on public.einsatzberichte to service_role;

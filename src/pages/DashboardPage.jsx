@@ -69,7 +69,7 @@ supabase.from('aufgaben').select('*', { count: 'exact', head: true })
 (() => {
         // Alle aktiven Kameraden laden - Filterung nach Haupt- und Nebenwache im Code
         let q = supabase.from('profiles')
-          .select('id,vorname,nachname,geburtsdatum,wehr_id,wehr:wehren(name),kamerad_lehrgaenge(lehrgang:lehrgaenge(name,kuerzel)),kamerad_wehren(wehr_id)')
+          .select('id,vorname,nachname,geburtsdatum,wehr_id,wehr:wehren(name),kamerad_lehrgaenge(lehrgang:lehrgaenge(name,kuerzel))')
           .eq('status', 'aktiv')
           .neq('rolle', 'tablet')
           .order('nachname')
@@ -97,6 +97,17 @@ supabase.from('aufgaben').select('*', { count: 'exact', head: true })
       return pr.sichtbar_fuer_wehren.includes(profile.wehr_id)
     }).length
 
+    // Kameraden laden, die eine meiner Wachen als Nebenwache haben
+    // (direkte Abfrage nötig, da RLS embedded-relation für andere User blockiert)
+    let nebenMitgliederIds = []
+    if (profile?.rolle !== 'gemeindebrandmeister' && alleMeineWehrIds.length > 0) {
+      const { data: nwMitglieder } = await supabase
+        .from('kamerad_wehren')
+        .select('kamerad_id')
+        .in('wehr_id', alleMeineWehrIds)
+      nebenMitgliederIds = (nwMitglieder ?? []).map(x => x.kamerad_id)
+    }
+
     setStats({ kameraden: kameraden ?? 0, dokumente: dokumente ?? 0, pruefungen: pruefungenAnzahl, aufgaben: aufgaben ?? 0 })
     const hauptWehrName = wehr?.name ?? ''
     setWehrName(hauptWehrName)
@@ -109,7 +120,7 @@ supabase.from('aufgaben').select('*', { count: 'exact', head: true })
     if (profile?.rolle !== 'gemeindebrandmeister' && alleMeineWehrIds.length > 0) {
       gefilterteKameraden = gefilterteKameraden.filter(k =>
         alleMeineWehrIds.includes(k.wehr_id) ||
-        (k.kamerad_wehren ?? []).some(w => alleMeineWehrIds.includes(w.wehr_id))
+        nebenMitgliederIds.includes(k.id)
       )
     }
     setKameradenListe(gefilterteKameraden)
