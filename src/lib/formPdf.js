@@ -353,17 +353,26 @@ export function auslagenerstattungPdf(form, gesamt) {
 
   let y = 14
 
-  // Absender
+  // ── Absender (Überschrift unterstrichen) ────────────────────────────────────
   doc.setFontSize(9)
   doc.setFont('helvetica', 'bold')
-  doc.text('Absender:', AML, y); y += 4
+  doc.text('Absender:', AML, y)
+  doc.setLineWidth(0.25)
+  doc.line(AML, y + 0.8, AML + doc.getTextWidth('Absender:'), y + 0.8)
+  y += 4
   doc.setFont('helvetica', 'normal')
-  doc.text(form.absender || '', AML, y); y += (form.absender?.split('\n').length || 1) * 4 + 10
+  doc.text(form.absender || '', AML, y)
 
-  // Empfänger
-  doc.text('Gemeinde Grammetal\nSchlossgasse 19\n99428 Grammetal', AML, y); y += 18
+  // ── Empfänger-Adresse: fest bei 60mm vom Seitenrand ──────────────────────
+  y = 60
+  doc.setFontSize(9)
+  doc.setFont('helvetica', 'normal')
+  doc.text('Gemeinde Grammetal', AML, y); y += 4.5
+  doc.text('Schlossgasse 19', AML, y); y += 4.5
+  doc.text('99428 Grammetal', AML, y)
+  y += 18  // ~18mm Abstand bis zur Überschrift
 
-  // Titel
+  // ── Titel ─────────────────────────────────────────────────────────────────
   doc.setFontSize(14)
   doc.setFont('helvetica', 'bold')
   doc.text('Antrag auf Auslagenerstattung', AML, y); y += 7
@@ -371,15 +380,18 @@ export function auslagenerstattungPdf(form, gesamt) {
   doc.setFont('helvetica', 'normal')
   doc.text('Ich bitte um Erstattung folgender Positionen (Beleg/e sind beigefügt):', AML, y); y += 4
 
-  // Positionen-Tabelle
+  // ── Positionen-Tabelle ────────────────────────────────────────────────────
+  // Keine Hintergrundfarben: weiß mit schwarzer Schrift, Kopfzeile fett
   // col0=9mm, col1=65mm, col2=75mm, col3=21mm → 9+65+75+21=170mm ✓
-  // Kopfzeile: 12.2mm hoch; Datenzeilen: 11mm hoch
+  // Kopfzeile: 12.2mm; Datenzeilen: 11mm; Gesamt-Zeile: 7mm
+  const WHITE = [255, 255, 255]
+  const BLACK = [0, 0, 0]
   autoTable(doc, {
     startY: y,
     margin: { left: AML, right: AML },
     tableWidth: ATW,
-    styles: { fontSize: 9, cellPadding: 2, minCellHeight: 11, lineColor: [0, 0, 0], lineWidth: 0.25 },
-    headStyles: { fillColor: [210, 210, 210], fontStyle: 'bold', minCellHeight: 12.2 },
+    styles: { fontSize: 9, cellPadding: 2, minCellHeight: 11, lineColor: BLACK, lineWidth: 0.25, fillColor: WHITE, textColor: BLACK },
+    headStyles: { fillColor: WHITE, textColor: BLACK, fontStyle: 'bold', minCellHeight: 12.2 },
     columnStyles: {
       0: { cellWidth: 9, halign: 'center' },
       1: { cellWidth: 65 },
@@ -397,55 +409,67 @@ export function auslagenerstattungPdf(form, gesamt) {
           preis > 0 ? preis.toLocaleString('de-DE', { minimumFractionDigits: 2 }) + ' €' : '',
         ]
       }),
-      [{ content: 'Gesamt', colSpan: 3, styles: { halign: 'right', fontStyle: 'bold', fillColor: [235, 235, 235] } },
-        { content: gesamt.toLocaleString('de-DE', { minimumFractionDigits: 2 }) + ' €', styles: { halign: 'right', fontStyle: 'bold', fillColor: [235, 235, 235] } }],
+      [
+        { content: 'Gesamt', colSpan: 3, styles: { halign: 'right', fontStyle: 'bold', fillColor: WHITE, textColor: BLACK, minCellHeight: 7 } },
+        { content: gesamt.toLocaleString('de-DE', { minimumFractionDigits: 2 }) + ' €', styles: { halign: 'right', fontStyle: 'bold', fillColor: WHITE, textColor: BLACK, minCellHeight: 7 } },
+      ],
     ],
     theme: 'grid',
   })
 
   y = doc.lastAutoTable.finalY + 5
   doc.setFontSize(9)
+  doc.setFont('helvetica', 'normal')
   doc.text('Ich bitte um Überweisung. Meine Kontoverbindung lautet:', AML, y); y += 5
 
-  // IBAN – 10mm hoch
-  doc.setFontSize(8)
-  doc.setFont('helvetica', 'normal')
-  doc.text('IBAN (max. 22 Stellen)  Angabe erforderlich', AML, y); y += 3
-  doc.setLineWidth(0.3)
-  doc.rect(AML, y, 90, 10)
-  doc.setFontSize(10)
-  doc.setFont('courier', 'normal')
-  doc.text(form.iban || '', AML + 3, y + 6.5)
-  y += 13
+  // ── IBAN / BIC als Tabelle (Label | Wert) ─────────────────────────────────
+  autoTable(doc, {
+    startY: y,
+    margin: { left: AML, right: AML },
+    tableWidth: ATW,
+    styles: { fontSize: 9, cellPadding: 2, minCellHeight: 10, lineColor: BLACK, lineWidth: 0.25, fillColor: WHITE, textColor: BLACK },
+    columnStyles: {
+      0: { cellWidth: 65, fontStyle: 'bold' },
+      1: { cellWidth: 'auto', font: 'courier' },
+    },
+    body: [
+      ['IBAN (max. 22 Stellen)', form.iban || ''],
+      ['BIC (8 oder 11 Stellen)', form.bic || ''],
+    ],
+    theme: 'grid',
+  })
 
-  // BIC – 10mm hoch
-  doc.setFont('helvetica', 'normal')
-  doc.setFontSize(8)
-  doc.text('BIC (8 oder 11 Stellen)', AML, y); y += 3
-  doc.setLineWidth(0.3)
-  doc.rect(AML, y, 50, 10)
-  doc.setFontSize(10)
-  doc.setFont('courier', 'normal')
-  doc.text(form.bic || '', AML + 3, y + 6.5)
-  y += 14
+  y = doc.lastAutoTable.finalY + 5
 
-  // Bestätigung
+  // ── Bestätigung ───────────────────────────────────────────────────────────
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(8.5)
-  doc.text('Die sachliche und rechnerische Richtigkeit wird bestätigt.', AML, y); y += 10
+  doc.text('Die sachliche und rechnerische Richtigkeit wird bestätigt.', AML, y); y += 8
 
-  // Unterschriften: 170mm total, erste Box 65mm, zweite Box 105mm
-  doc.setLineWidth(0.3)
-  const box1W = 65
-  const box2W = ATW - box1W  // 105mm
-  doc.rect(AML, y, box1W, 12)
-  doc.rect(AML + box1W, y, box2W, 12)
-  doc.setFontSize(8)
-  doc.setFont('helvetica', 'normal')
-  doc.text(form.datum || '', AML + 2, y + 8)
-  y += 14
-  doc.text('Datum', AML + 2, y)
-  doc.text('Unterschrift', AML + box1W + 4, y)
+  // ── Datum / Unterschrift als Tabelle ──────────────────────────────────────
+  // Zeile 1 (Schreibfeld): enthält ggf. eingetragenes Datum oben
+  // Zeile 2 (Beschriftung): "Datum" und "Unterschrift" als Label unten
+  autoTable(doc, {
+    startY: y,
+    margin: { left: AML, right: AML },
+    tableWidth: ATW,
+    styles: { fontSize: 8, cellPadding: 2, lineColor: BLACK, lineWidth: 0.25, fillColor: WHITE, textColor: BLACK },
+    columnStyles: {
+      0: { cellWidth: 65 },
+      1: { cellWidth: 105 },
+    },
+    body: [
+      [
+        { content: form.datum || '', styles: { minCellHeight: 18, valign: 'top' } },
+        { content: '', styles: { minCellHeight: 18 } },
+      ],
+      [
+        { content: 'Datum', styles: { minCellHeight: 6, fontStyle: 'bold' } },
+        { content: 'Unterschrift', styles: { minCellHeight: 6, fontStyle: 'bold' } },
+      ],
+    ],
+    theme: 'grid',
+  })
 
   return doc.output('datauristring').split(',')[1]
 }
