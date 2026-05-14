@@ -4,10 +4,10 @@ import { useAuth } from '../context/AuthContext'
 import { format } from 'date-fns'
 import { de } from 'date-fns/locale'
 import * as pdfjsLib from 'pdfjs-dist'
+import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 
-// PDF.js Worker (CDN, passend zur installierten Version)
-pdfjsLib.GlobalWorkerOptions.workerSrc =
-  `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`
+// Worker lokal aus node_modules laden (kein CDN noetig)
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
 
 async function extrahierePdfText(datei) {
   const arrayBuffer = await datei.arrayBuffer()
