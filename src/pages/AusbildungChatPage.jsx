@@ -189,7 +189,8 @@ export default function AusbildungChatPage() {
     })
 
     if (error || !data?.antwort) {
-      setFehler('KI-Antwort fehlgeschlagen. Bitte versuche es erneut.')
+      const details = data?.error ?? error?.message ?? 'Unbekannter Fehler'
+      setFehler(`KI-Antwort fehlgeschlagen: ${details}`)
       return
     }
 

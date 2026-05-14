@@ -134,7 +134,7 @@ serve(async (req) => {
     }
 
     const geminiUrl =
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
 
     const geminiRes = await fetch(geminiUrl, {
       method: "POST",
@@ -161,7 +161,7 @@ serve(async (req) => {
     if (!geminiRes.ok) {
       const err = await geminiRes.text();
       console.error("Gemini Fehler:", geminiRes.status, err);
-      return json({ error: `Gemini API Fehler: ${geminiRes.status}` }, 502);
+      return json({ error: `Gemini API Fehler ${geminiRes.status}: ${err.slice(0, 200)}` }, 502);
     }
 
     const geminiData = await geminiRes.json();
@@ -169,12 +169,14 @@ serve(async (req) => {
       geminiData?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
 
     if (!antwort) {
-      return json({ error: "Keine Antwort von Gemini erhalten" }, 502);
+      const blockReason = geminiData?.promptFeedback?.blockReason ?? "unbekannt";
+      console.error("Leere Antwort, blockReason:", blockReason, JSON.stringify(geminiData));
+      return json({ error: `Keine Antwort von Gemini (Grund: ${blockReason})` }, 502);
     }
 
     return json({ antwort });
   } catch (err) {
     console.error("Unerwarteter Fehler:", err);
-    return json({ error: "Interner Serverfehler" }, 500);
+    return json({ error: `Interner Fehler: ${String(err)}` }, 500);
   }
 });
