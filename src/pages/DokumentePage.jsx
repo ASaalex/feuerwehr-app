@@ -72,9 +72,23 @@ export default function DokumentePage() {
     setUploading(false)
   }
 
+  // Oeffnet eine URL zuverlaessig auf Desktop und Handy.
+  // window.open() wird auf mobilen Browsern oft als Popup blockiert –
+  // ein echter <a>-Klick umgeht diesen Schutz.
+  function openUrl(url, filename) {
+    const a = document.createElement('a')
+    a.href = url
+    a.target = '_blank'
+    a.rel = 'noopener noreferrer'
+    if (filename) a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+  }
+
   async function handleDownload(dok) {
     const { data } = await supabase.storage.from('dokumente').createSignedUrl(dok.datei_pfad, 60)
-    if (data?.signedUrl) window.open(data.signedUrl, '_blank')
+    if (data?.signedUrl) openUrl(data.signedUrl)
   }
 
   async function handlePrint(dok) {
@@ -85,13 +99,13 @@ export default function DokumentePage() {
         // PDF in neuem Tab oeffnen, Browser-Druckdialog startet automatisch
         const win = window.open(data.signedUrl, '_blank')
         if (win) {
-          win.onload = () => {
-            try { win.print() } catch(e) {}
-          }
+          win.onload = () => { try { win.print() } catch(e) {} }
+        } else {
+          // Fallback fuer mobile Browser (Popup geblockt)
+          openUrl(data.signedUrl)
         }
       } else {
-        // Andere Dateitypen: erst oeffnen, dann Nutzer manuell drucken lassen
-        window.open(data.signedUrl, '_blank')
+        openUrl(data.signedUrl)
       }
     }
   }
