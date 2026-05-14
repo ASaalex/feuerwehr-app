@@ -146,8 +146,14 @@ export default function Layout() {
         padding: '6px 0 env(safe-area-inset-bottom)',
         flexDirection: 'row', alignItems: 'center',
         overflowX: 'auto', WebkitOverflowScrolling: 'touch',
+        // PWA (Standalone-Modus): verhindert, dass iOS horizontale Wischgesten
+        // als Vor/Zurück-Navigation abfängt und blockiert damit Scroll der Bottom-Nav
+        touchAction: 'pan-x',
+        overscrollBehaviorX: 'contain',
+        scrollbarWidth: 'none',       // Firefox: Scrollbar verstecken
+        msOverflowStyle: 'none',      // IE/Edge: Scrollbar verstecken
       }}>
-        <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', minWidth: 'max-content', padding: '0 4px' }}>
+        <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', minWidth: 'max-content', padding: '0 4px', touchAction: 'pan-x' }}>
           {navFilter(NAV).map(item => (
             <NavLink key={item.to} to={item.to} end={item.exact}
               style={({ isActive }) => ({
@@ -186,6 +192,9 @@ export default function Layout() {
       </nav>
 
       <style>{`
+        /* Scrollbar der Bottom-Nav unsichtbar machen (Chrome/Safari/PWA) */
+        .mobile-bottom-nav::-webkit-scrollbar { display: none; }
+
         @media (max-width: 768px) {
           .sidebar-desktop { display: none !important; }
           .mobile-header { display: flex !important; }
