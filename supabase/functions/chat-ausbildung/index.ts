@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -107,9 +108,36 @@ serve(async (req) => {
       return json({ error: "nachrichten fehlt oder ungueltig" });
     }
 
-    const systemPrompt = szenario
-      ? SYSTEM_PROMPT + "\n\nAKTUELLES SZENARIO:\n" + szenario
-      : SYSTEM_PROMPT;
+    // Regelwerke aus Supabase laden (falls vorhanden)
+    let regelwerkeText = "";
+    try {
+      const supabaseUrl = Deno.env.get("SUPABASE_URL");
+      const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      if (supabaseUrl && supabaseKey) {
+        const sb = createClient(supabaseUrl, supabaseKey);
+        const { data: rw } = await sb
+          .from("regelwerke")
+          .select("titel, inhalt_text")
+          .eq("aktiv", true)
+          .not("inhalt_text", "is", null);
+        if (rw && rw.length > 0) {
+          regelwerkeText = "\n\n=== OFFIZIELLE REGELWERKE (massgeblich fuer Bewertung) ===\n";
+          for (const r of rw) {
+            // Max. 8000 Zeichen pro Dokument um Kontext nicht zu sprengen
+            const text = (r.inhalt_text ?? "").slice(0, 8000);
+            regelwerkeText += "\n--- " + r.titel + " ---\n" + text + "\n";
+          }
+          regelwerkeText += "\n=== ENDE REGELWERKE ===\n";
+          regelwerkeText += "Bewerte AUSSCHLIESSLICH nach den obigen Regelwerken. ";
+          regelwerkeText += "Das integrierte Basiswissen ist nur Fallback wenn kein Regelwerk passt.\n";
+        }
+      }
+    } catch (rwErr) {
+      console.warn("Regelwerke konnten nicht geladen werden:", rwErr);
+    }
+
+    const systemPrompt = SYSTEM_PROMPT + regelwerkeText +
+      (szenario ? "\n\nAKTUELLES SZENARIO:\n" + szenario : "");
 
     const contents = nachrichten.map((m) => ({
       role: m.role === "assistant" ? "model" : "user",
