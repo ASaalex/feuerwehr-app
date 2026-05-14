@@ -10,6 +10,7 @@ export default function DashboardPage() {
   const navigate = useNavigate()
   const [stats, setStats] = useState({ kameraden: 0, dokumente: 0, pruefungen: 0, aufgaben: 0 })
   const [wehrName, setWehrName] = useState('')
+  const [kameradenWehrenLabel, setKameradenWehrenLabel] = useState('')
   const [meineAufgaben, setMeineAufgaben] = useState([])
   const [ausstehend, setAusstehend] = useState([])
   const [kameradenListe, setKameradenListe] = useState([])
@@ -19,6 +20,21 @@ export default function DashboardPage() {
   useEffect(() => { fetchData() }, [])
 
   async function fetchData() {
+    // Eigene Nebenwachen vorab laden – Wehrleiter rückt auch mit Nebenwachen aus
+    // → Kameraden aller eigenen Wachen (Haupt + Neben) anzeigen
+    let alleMeineWehrIds = profile?.wehr_id ? [profile.wehr_id] : []
+    let nebenWehrNamen = []
+    if (profile?.id && profile?.wehr_id && profile?.rolle !== 'gemeindebrandmeister') {
+      const { data: nwData } = await supabase
+        .from('kamerad_wehren')
+        .select('wehr_id, wehr:wehren(name)')
+        .eq('kamerad_id', profile.id)
+      if (nwData?.length) {
+        alleMeineWehrIds = [...new Set([profile.wehr_id, ...nwData.map(w => w.wehr_id)])]
+        nebenWehrNamen = nwData.map(w => w.wehr?.name).filter(Boolean)
+      }
+    }
+
     const [
       { count: kameraden },
       { count: dokumente },
@@ -29,11 +45,10 @@ export default function DashboardPage() {
       { data: kList },
     ] = await Promise.all([
 (() => {
+        // Zählt Kameraden aller Wachen des eingeloggten Nutzers (inkl. Nebenwachen)
         let q = supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('status', 'aktiv').neq('rolle', 'tablet')
-        if (profile?.rolle === 'wehrleiter' && profile?.wehr_id) {
-          q = q.eq('wehr_id', profile.wehr_id)
-        } else if (profile?.rolle !== 'gemeindebrandmeister' && profile?.wehr_id) {
-          q = q.eq('wehr_id', profile.wehr_id)
+        if (profile?.rolle !== 'gemeindebrandmeister' && alleMeineWehrIds.length > 0) {
+          q = q.in('wehr_id', alleMeineWehrIds)
         }
         return q
       })(),
@@ -83,14 +98,18 @@ supabase.from('aufgaben').select('*', { count: 'exact', head: true })
     }).length
 
     setStats({ kameraden: kameraden ?? 0, dokumente: dokumente ?? 0, pruefungen: pruefungenAnzahl, aufgaben: aufgaben ?? 0 })
-    setWehrName(wehr?.name ?? '')
+    const hauptWehrName = wehr?.name ?? ''
+    setWehrName(hauptWehrName)
+    // Label für die Kameraden-Kachel: alle eigenen Wachen anzeigen
+    const alleNamen = [hauptWehrName, ...nebenWehrNamen].filter(Boolean)
+    setKameradenWehrenLabel(alleNamen.join(' & '))
     setMeineAufgaben(aufgabenData ?? [])
-    // Filtern: Kameraden der eigenen Wache (Haupt- oder Nebenwache)
+    // Kameraden aller eigenen Wachen anzeigen (Haupt- und Nebenwachen)
     let gefilterteKameraden = kList ?? []
-    if (profile?.rolle !== 'gemeindebrandmeister' && profile?.wehr_id) {
+    if (profile?.rolle !== 'gemeindebrandmeister' && alleMeineWehrIds.length > 0) {
       gefilterteKameraden = gefilterteKameraden.filter(k =>
-        k.wehr_id === profile.wehr_id ||
-        (k.kamerad_wehren ?? []).some(w => w.wehr_id === profile.wehr_id)
+        alleMeineWehrIds.includes(k.wehr_id) ||
+        (k.kamerad_wehren ?? []).some(w => alleMeineWehrIds.includes(w.wehr_id))
       )
     }
     setKameradenListe(gefilterteKameraden)
@@ -166,7 +185,7 @@ supabase.from('aufgaben').select('*', { count: 'exact', head: true })
         >
           <div>
             <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', marginBottom: 2 }}>
-              Aktive Kameraden {wehrName ? `· ${wehrName}` : ''}
+              Aktive Kameraden {kameradenWehrenLabel ? `· ${kameradenWehrenLabel}` : ''}
             </div>
             <div style={{ fontSize: 36, fontWeight: 700, color: 'white', lineHeight: 1 }}>{kameradenListe.length}</div>
             <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', marginTop: 6 }}>Tippen fuer Detailansicht</div>
