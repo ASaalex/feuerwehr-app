@@ -13,6 +13,9 @@ import NutzerAnlegenPage from './pages/NutzerAnlegenPage'
 import WachenPage from './pages/WachenPage'
 import LehrgaengePage from './pages/LehrgaengePage'
 import AusbildungPage from './pages/AusbildungPage'
+import AusbildungChatPage from './pages/AusbildungChatPage'
+import SzenarienAdminPage from './pages/SzenarienAdminPage'
+import RegelwerkeAdminPage from './pages/RegelwerkeAdminPage'
 import AdminPage from './pages/AdminPage'
 import DatenschutzPage from './pages/DatenschutzPage'
 import DatenschutzPublicPage from './pages/DatenschutzPublicPage'
@@ -100,6 +103,9 @@ function AppRoutes() {
         <Route path="datenschutz" element={<ProtectedRoute><DatenschutzPage /></ProtectedRoute>} />
         <Route path="dokumente" element={<DokumentePage />} />
         <Route path="ausbildung" element={<ProtectedRoute><AusbildungPage /></ProtectedRoute>} />
+        <Route path="ausbildung/chat" element={<ProtectedRoute><AusbildungChatPage /></ProtectedRoute>} />
+        <Route path="szenarien" element={<ProtectedRoute adminOnly><SzenarienAdminPage /></ProtectedRoute>} />
+        <Route path="regelwerke" element={<ProtectedRoute adminOnly><RegelwerkeAdminPage /></ProtectedRoute>} />
         <Route path="pruefungen" element={<PruefungenPage />} />
         <Route path="aufgaben" element={
           <AufgabenRoute><AufgabenPage /></AufgabenRoute>

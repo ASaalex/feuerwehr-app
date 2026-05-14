@@ -13,6 +13,8 @@ const NAV = [
 const NAV_ADMIN = [
   { to: '/kameraden', label: 'Kameraden', icon: IconKameraden },
   { to: '/nutzer-anlegen', label: 'Nutzer anlegen', icon: IconNutzerAnlegen },
+  { to: '/szenarien', label: 'Szenarien', icon: IconSzenarien },
+  { to: '/regelwerke', label: 'Regelwerke', icon: IconRegelwerke },
   { to: '/wachen', label: 'Wachen', icon: IconWachen },
   { to: '/lehrgaenge', label: 'Lehrgaenge', icon: IconLehrgang },
 ]
@@ -146,8 +148,14 @@ export default function Layout() {
         padding: '6px 0 env(safe-area-inset-bottom)',
         flexDirection: 'row', alignItems: 'center',
         overflowX: 'auto', WebkitOverflowScrolling: 'touch',
+        // PWA (Standalone-Modus): verhindert, dass iOS horizontale Wischgesten
+        // als Vor/Zurück-Navigation abfängt und blockiert damit Scroll der Bottom-Nav
+        touchAction: 'pan-x',
+        overscrollBehaviorX: 'contain',
+        scrollbarWidth: 'none',       // Firefox: Scrollbar verstecken
+        msOverflowStyle: 'none',      // IE/Edge: Scrollbar verstecken
       }}>
-        <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', minWidth: 'max-content', padding: '0 4px' }}>
+        <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', minWidth: 'max-content', padding: '0 4px', touchAction: 'pan-x' }}>
           {navFilter(NAV).map(item => (
             <NavLink key={item.to} to={item.to} end={item.exact}
               style={({ isActive }) => ({
@@ -186,6 +194,9 @@ export default function Layout() {
       </nav>
 
       <style>{`
+        /* Scrollbar der Bottom-Nav unsichtbar machen (Chrome/Safari/PWA) */
+        .mobile-bottom-nav::-webkit-scrollbar { display: none; }
+
         @media (max-width: 768px) {
           .sidebar-desktop { display: none !important; }
           .mobile-header { display: flex !important; }
@@ -242,3 +253,5 @@ function IconWachen() {
 function IconNutzerAnlegen() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg> }
 function IconAbmelden() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16,17 21,12 16,7"/><line x1="21" y1="12" x2="9" y2="12"/></svg> }
 function IconEinsatz() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg> }
+function IconSzenarien() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="9" y1="10" x2="15" y2="10"/><line x1="9" y1="14" x2="12" y2="14"/></svg> }
+function IconRegelwerke() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg> }

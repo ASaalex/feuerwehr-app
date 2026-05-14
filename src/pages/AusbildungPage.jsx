@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { format } from 'date-fns'
@@ -125,6 +126,26 @@ export default function AusbildungPage() {
       </div>
 
       {msg && <div className="alert alert-success">{msg}</div>}
+
+      {/* Einsatz-Simulation Banner */}
+      <Link to="/ausbildung/chat" style={{ textDecoration: 'none', display: 'block', marginBottom: 20 }}>
+        <div style={{
+          background: 'linear-gradient(135deg, #B91C1C 0%, #991B1B 100%)',
+          borderRadius: 12, padding: '16px 20px',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+          cursor: 'pointer', transition: 'opacity 150ms',
+        }}
+          onMouseEnter={e => e.currentTarget.style.opacity = '0.92'}
+          onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+        >
+          <div>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>KI-gestützt</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: 'white', marginBottom: 2 }}>🎮 Einsatz-Simulation</div>
+            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)' }}>Taktisches Training mit KI-Ausbilder · Bewertung nach FwDV &amp; ThürBKG</div>
+          </div>
+          <div style={{ fontSize: 28, opacity: 0.8 }}>🚒</div>
+        </div>
+      </Link>
 
       {/* Filter */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>

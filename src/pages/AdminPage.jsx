@@ -4,6 +4,8 @@ import { useAuth } from '../context/AuthContext'
 const ALLE_ITEMS = [
   { to: '/kameraden', label: 'Kameraden', desc: 'Kameraden verwalten und freischalten', icon: '👥', color: '#E6F1FB', nurGbm: false },
   { to: '/nutzer-anlegen', label: 'Nutzer anlegen', desc: 'Neue Kameraden direkt anlegen', icon: '➕', color: '#D5F5E3', nurGbm: false },
+  { to: '/szenarien', label: 'Szenarien', desc: 'Einsatzszenarien fuer KI-Training verwalten', icon: '🎮', color: '#FDE8E8', nurGbm: false },
+  { to: '/regelwerke', label: 'Regelwerke', desc: 'FwDV-PDFs & ThuerBKG fuer KI-Ausbilder', icon: '📚', color: '#EEF2FF', nurGbm: false },
   { to: '/wachen', label: 'Wachen', desc: 'Ortsfeuerwehren verwalten', icon: '🏠', color: '#FADBD8', nurGbm: true },
   { to: '/lehrgaenge', label: 'Lehrgaenge', desc: 'Lehrgaenge anlegen und verwalten', icon: '🎓', color: '#EEEDFE', nurGbm: true },
   { to: '/einstellungen', label: 'Einstellungen', desc: 'SMTP-Zugangsdaten & Mail-Drucker', icon: '⚙️', color: '#F0F0F0', nurGbm: true },
