@@ -13,39 +13,15 @@ function json(data: unknown) {
   });
 }
 
-const SYSTEM_PROMPT = [
-  "Du bist ein erfahrener Feuerwehr-Ausbilder der Freiwilligen Feuerwehr Grammetal (Thueringen).",
-  "Fuehre einen Kamerad durch ein taktisches Einsatz-Szenario. Antworte immer auf Deutsch.",
-  "Bleibe ausschliesslich beim Thema Feuerwehr-Ausbildung.",
-  "",
-  "ABLAUF (ca. 5-8 Schritte):",
-  "1. Beschreibe die Alarmierungsmeldung (nutze das gegebene Szenario)",
-  "2. Stelle eine konkrete Frage zum ersten Handlungsschritt",
-  "3. Bewerte die Antwort, stelle die naechste Situation vor",
-  "4. Nach dem letzten Schritt: Gesamtbewertung",
-  "",
-  "ANTWORTFORMAT (IMMER exakt einhalten, Emojis nicht weglassen):",
-  "✅ RICHTIG: [Was korrekt war]",
-  "❌ FEHLT: [Was fehlte oder falsch war]",
-  "📖 VORSCHRIFT: [FwDV-Referenz]",
-  "▶ SITUATION: [Naechste Einsatzsituation und Frage]",
-  "",
-  "Regeln:",
-  "- Beim ersten Schritt NUR: ▶ SITUATION mit Alarmierungsmeldung und erster Frage",
-  "- ✅ RICHTIG und ▶ SITUATION sind immer Pflicht",
-  "- ❌ FEHLT und 📖 VORSCHRIFT nur wenn etwas fehlte",
-  "- Beim letzten Schritt: 🏁 UEBUNG BEENDET: [Note A/B/C/D und Zusammenfassung]",
-].join("\n");
-
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
   try {
-    const apiKey = Deno.env.get("OPENROUTER_API_KEY");
+    const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
     if (!apiKey) {
-      return json({ error: "OPENROUTER_API_KEY nicht konfiguriert" });
+      return json({ error: "ANTHROPIC_API_KEY nicht konfiguriert" });
     }
 
     const body = await req.json();
@@ -58,8 +34,9 @@ serve(async (req) => {
       return json({ error: "nachrichten fehlt oder ungueltig" });
     }
 
-    // Regelwerke aus Supabase laden (falls vorhanden)
+    // Regelwerke aus Supabase laden
     let regelwerkeText = "";
+    let regelwerkeGeladen = false;
     try {
       const supabaseUrl = Deno.env.get("SUPABASE_URL");
       const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -71,68 +48,91 @@ serve(async (req) => {
           .eq("aktiv", true)
           .not("inhalt_text", "is", null);
         if (rw && rw.length > 0) {
-          regelwerkeText = "\n\n=== OFFIZIELLE REGELWERKE (massgeblich fuer Bewertung) ===\n";
+          regelwerkeGeladen = true;
+          regelwerkeText = "\n\n=== DIENSTVORSCHRIFTEN (einzige Grundlage fuer Bewertung) ===\n";
           for (const r of rw) {
-            const text = (r.inhalt_text ?? "").slice(0, 2000);
+            const text = (r.inhalt_text ?? "").slice(0, 6000);
             regelwerkeText += "\n--- " + r.titel + " ---\n" + text + "\n";
           }
-          regelwerkeText += "\n=== ENDE REGELWERKE ===\n";
-          regelwerkeText += "Bewerte AUSSCHLIESSLICH nach den obigen Regelwerken. ";
-          regelwerkeText += "Das integrierte Basiswissen ist nur Fallback wenn kein Regelwerk passt.\n";
+          regelwerkeText += "\n=== ENDE DIENSTVORSCHRIFTEN ===\n";
         }
       }
     } catch (rwErr) {
       console.warn("Regelwerke konnten nicht geladen werden:", rwErr);
     }
 
-    const systemPrompt = SYSTEM_PROMPT + regelwerkeText +
-      (szenario ? "\n\nAKTUELLES SZENARIO:\n" + szenario : "");
+    const systemPrompt = [
+      "Du bist ein erfahrener Feuerwehr-Ausbilder der Freiwilligen Feuerwehr Grammetal (Thueringen).",
+      "Fuehre einen Kamerad durch ein taktisches Einsatz-Szenario. Antworte immer auf Deutsch.",
+      "Bleibe ausschliesslich beim Thema Feuerwehr-Ausbildung.",
+      "",
+      regelwerkeGeladen
+        ? "WICHTIG: Bewerte und erklaere AUSSCHLIESSLICH nach den unten bereitgestellten Dienstvorschriften. Erfinde keine Paragraphen, Abschnitte oder Regeln die nicht darin stehen. Wenn etwas nicht in den Vorschriften steht, erwaehne es nicht."
+        : "WICHTIG: Es wurden keine Dienstvorschriften hinterlegt. Teile dem Kamerad mit, dass der Administrator zuerst die offiziellen PDFs (FwDV, ThuerBKG) unter Administration -> Regelwerke hochladen muss, bevor Uebungen bewertet werden koennen.",
+      "",
+      "ABLAUF (ca. 5-8 Schritte):",
+      "1. Alarmierungsmeldung beschreiben (Szenario nutzen)",
+      "2. Konkrete Frage zum naechsten Handlungsschritt stellen",
+      "3. Antwort bewerten und naechste Situation beschreiben",
+      "4. Nach letztem Schritt: Gesamtbewertung mit Note",
+      "",
+      "ANTWORTFORMAT (exakt einhalten, Emojis nicht weglassen):",
+      "✅ RICHTIG: [Was korrekt war]",
+      "❌ FEHLT: [Was fehlte oder falsch war]",
+      "📖 VORSCHRIFT: [Exakter Titel des Dokuments aus den Dienstvorschriften]",
+      "▶ SITUATION: [Naechste Einsatzsituation und Frage]",
+      "",
+      "Regeln:",
+      "- Erster Schritt NUR: ▶ SITUATION mit Alarmierung und erster Frage",
+      "- ✅ RICHTIG und ▶ SITUATION sind immer Pflicht",
+      "- ❌ FEHLT und 📖 VORSCHRIFT nur wenn etwas fehlte",
+      "- Letzter Schritt: 🏁 UEBUNG BEENDET: [Note A/B/C/D und Zusammenfassung]",
+      regelwerkeText,
+      szenario ? "\n\nAKTUELLES SZENARIO:\n" + szenario : "",
+    ].join("\n");
 
-    // Nachrichten fuer Groq (OpenAI-kompatibles Format)
-    // Nur die letzten 6 Nachrichten senden um Token-Limit einzuhalten
-    const letzteNachrichten = nachrichten.slice(-6);
-    const messages: Array<{ role: string; content: string }> = [
-      { role: "system", content: systemPrompt },
-      ...letzteNachrichten.map((m) => ({
-        role: m.role === "assistant" ? "assistant" : "user",
-        // KI-Antworten auf 800 Zeichen kuerzen um Tokens zu sparen
-        content: m.role === "assistant" ? m.content.slice(0, 800) : m.content,
-      })),
-    ];
+    // Nachrichten aufbereiten (letzte 10, init-Nachricht herausfiltern)
+    const letzteNachrichten = nachrichten
+      .filter(m => !(m.role === "user" && m.content === "Starte das Szenario. Beschreibe die Alarmierungsmeldung."))
+      .slice(-10);
 
-    // Sicherstellen dass mindestens eine User-Nachricht vorhanden
-    if (messages.length === 1) {
-      messages.push({ role: "user", content: "Starte das Szenario." });
+    // Anthropic erwartet abwechselnde user/assistant Rollen
+    // und dass die erste Nachricht user ist
+    const messages = letzteNachrichten.map(m => ({
+      role: m.role === "assistant" ? "assistant" : "user",
+      content: m.content,
+    }));
+
+    if (messages.length === 0 || messages[0].role !== "user") {
+      messages.unshift({ role: "user", content: "Starte das Szenario." });
     }
 
-    const orRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": "Bearer " + apiKey,
-        "HTTP-Referer": "https://feuerwehr-grammetal.vercel.app",
-        "X-Title": "Feuerwehr Grammetal KI-Ausbilder",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "openai/gpt-oss-20b:free",
+        model: "claude-haiku-4-5",
+        max_tokens: 1024,
+        system: systemPrompt,
         messages,
-        temperature: 0.65,
-        max_tokens: 700,
-        top_p: 0.9,
       }),
     });
 
-    if (!orRes.ok) {
-      const err = await orRes.text();
-      console.error("OpenRouter Fehler:", orRes.status, err);
-      return json({ error: "KI-Fehler " + orRes.status + ": " + err.slice(0, 200) });
+    if (!anthropicRes.ok) {
+      const err = await anthropicRes.text();
+      console.error("Anthropic Fehler:", anthropicRes.status, err);
+      return json({ error: "KI-Fehler " + anthropicRes.status + ": " + err.slice(0, 200) });
     }
 
-    const orData = await orRes.json();
-    const antwort = orData?.choices?.[0]?.message?.content ?? "";
+    const anthropicData = await anthropicRes.json();
+    const antwort = anthropicData?.content?.[0]?.text ?? "";
 
     if (!antwort) {
-      console.error("Leere Antwort von OpenRouter:", JSON.stringify(orData));
+      console.error("Leere Antwort von Anthropic:", JSON.stringify(anthropicData));
       return json({ error: "Keine Antwort von der KI erhalten." });
     }
 
