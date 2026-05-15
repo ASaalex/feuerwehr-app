@@ -93,9 +93,9 @@ serve(async (req) => {
   }
 
   try {
-    const apiKey = Deno.env.get("GEMINI_API_KEY");
+    const apiKey = Deno.env.get("GROQ_API_KEY");
     if (!apiKey) {
-      return json({ error: "GEMINI_API_KEY nicht konfiguriert" });
+      return json({ error: "GROQ_API_KEY nicht konfiguriert" });
     }
 
     const body = await req.json();
@@ -123,7 +123,6 @@ serve(async (req) => {
         if (rw && rw.length > 0) {
           regelwerkeText = "\n\n=== OFFIZIELLE REGELWERKE (massgeblich fuer Bewertung) ===\n";
           for (const r of rw) {
-            // Max. 8000 Zeichen pro Dokument um Kontext nicht zu sprengen
             const text = (r.inhalt_text ?? "").slice(0, 8000);
             regelwerkeText += "\n--- " + r.titel + " ---\n" + text + "\n";
           }
@@ -139,56 +138,47 @@ serve(async (req) => {
     const systemPrompt = SYSTEM_PROMPT + regelwerkeText +
       (szenario ? "\n\nAKTUELLES SZENARIO:\n" + szenario : "");
 
-    const contents = nachrichten.map((m) => ({
-      role: m.role === "assistant" ? "model" : "user",
-      parts: [{ text: m.content }],
-    }));
+    // Nachrichten fuer Groq (OpenAI-kompatibles Format)
+    const messages: Array<{ role: string; content: string }> = [
+      { role: "system", content: systemPrompt },
+      ...nachrichten.map((m) => ({
+        role: m.role === "assistant" ? "assistant" : "user",
+        content: m.content,
+      })),
+    ];
 
-    if (contents.length === 0 || contents[0].role !== "user") {
-      contents.unshift({
-        role: "user",
-        parts: [{ text: "Starte das Szenario." }],
-      });
+    // Sicherstellen dass mindestens eine User-Nachricht vorhanden
+    if (messages.length === 1) {
+      messages.push({ role: "user", content: "Starte das Szenario." });
     }
 
-    const geminiUrl =
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + apiKey;
-
-    const geminiRes = await fetch(geminiUrl, {
+    const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + apiKey,
+      },
       body: JSON.stringify({
-        systemInstruction: {
-          parts: [{ text: systemPrompt }],
-        },
-        contents,
-        generationConfig: {
-          temperature: 0.65,
-          maxOutputTokens: 1200,
-          topP: 0.9,
-        },
-        safetySettings: [
-          { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
-          { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
-          { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_ONLY_HIGH" },
-          { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
-        ],
+        model: "llama-3.3-70b-versatile",
+        messages,
+        temperature: 0.65,
+        max_tokens: 1200,
+        top_p: 0.9,
       }),
     });
 
-    if (!geminiRes.ok) {
-      const err = await geminiRes.text();
-      console.error("Gemini Fehler:", geminiRes.status, err);
-      return json({ error: "Gemini API Fehler " + geminiRes.status + ": " + err.slice(0, 200) });
+    if (!groqRes.ok) {
+      const err = await groqRes.text();
+      console.error("Groq Fehler:", groqRes.status, err);
+      return json({ error: "Groq API Fehler " + groqRes.status + ": " + err.slice(0, 200) });
     }
 
-    const geminiData = await geminiRes.json();
-    const antwort = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    const groqData = await groqRes.json();
+    const antwort = groqData?.choices?.[0]?.message?.content ?? "";
 
     if (!antwort) {
-      const blockReason = geminiData?.promptFeedback?.blockReason ?? "unbekannt";
-      console.error("Leere Antwort:", blockReason);
-      return json({ error: "Keine Antwort von Gemini. Grund: " + blockReason });
+      console.error("Leere Antwort von Groq:", JSON.stringify(groqData));
+      return json({ error: "Keine Antwort von Groq erhalten." });
     }
 
     return json({ antwort });

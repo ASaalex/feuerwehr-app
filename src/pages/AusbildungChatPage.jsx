@@ -210,18 +210,9 @@ export default function AusbildungChatPage() {
     if (error || !data?.antwort) {
       const details = data?.error ?? error?.message ?? 'Unbekannter Fehler'
 
-      // 429: unterscheide RPM (kurz warten) vs RPD (Tageslimit)
+      // 429: zu viele Anfragen
       if (String(details).includes('429')) {
-        const istTageslimit = String(details).toLowerCase().includes('quota') || String(details).toLowerCase().includes('billing')
-        if (istTageslimit) {
-          setFehler(
-            '⏳ Tages-Kontingent der KI erschöpft (1.500 Anfragen/Tag im kostenlosen Tarif). ' +
-            'Das Limit wird täglich um Mitternacht zurückgesetzt. ' +
-            'Alternativ: neuen API-Key in Google AI Studio erstellen und als Supabase-Secret hinterlegen.'
-          )
-        } else {
-          setFehler('⏱ Zu viele Anfragen in kurzer Zeit (max. 15/Minute). Bitte 60 Sekunden warten und erneut senden.')
-        }
+        setFehler('⏱ Zu viele Anfragen in kurzer Zeit. Bitte 60 Sekunden warten und erneut senden.')
       } else {
         setFehler(`KI-Antwort fehlgeschlagen: ${details}`)
       }
