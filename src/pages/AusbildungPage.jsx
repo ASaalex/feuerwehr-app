@@ -26,8 +26,18 @@ export default function AusbildungPage() {
   const [ausbildungsModal, setAusbildungsModal] = useState(false)
   const [auslagenModal, setAuslagenModal] = useState(false)
   const [verdienstModal, setVerdienstModal] = useState(false)
+  const [kiGuthaben, setKiGuthaben] = useState(null)
 
-  useEffect(() => { fetchDokumente() }, [])
+  useEffect(() => { fetchDokumente(); fetchKiGuthaben() }, [])
+
+  async function fetchKiGuthaben() {
+    const { data } = await supabase
+      .from('profiles')
+      .select('ki_guthaben_cent')
+      .eq('id', profile.id)
+      .single()
+    setKiGuthaben(data?.ki_guthaben_cent ?? 0)
+  }
 
   async function fetchDokumente() {
     const { data } = await supabase.from('dokumente').select('*, hochgeladen_von:profiles(vorname,nachname)').order('erstellt_am', { ascending: false })
@@ -128,24 +138,60 @@ export default function AusbildungPage() {
       {msg && <div className="alert alert-success">{msg}</div>}
 
       {/* Einsatz-Simulation Banner */}
-      <Link to="/ausbildung/chat" style={{ textDecoration: 'none', display: 'block', marginBottom: 20 }}>
-        <div style={{
-          background: 'linear-gradient(135deg, #B91C1C 0%, #991B1B 100%)',
-          borderRadius: 12, padding: '16px 20px',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
-          cursor: 'pointer', transition: 'opacity 150ms',
-        }}
-          onMouseEnter={e => e.currentTarget.style.opacity = '0.92'}
-          onMouseLeave={e => e.currentTarget.style.opacity = '1'}
-        >
-          <div>
-            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>KI-gestützt</div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: 'white', marginBottom: 2 }}>🎮 Einsatz-Simulation</div>
-            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)' }}>Taktisches Training mit KI-Ausbilder · Bewertung nach FwDV &amp; ThürBKG</div>
+      {kiGuthaben !== null && kiGuthaben <= 0 ? (
+        /* Kein Guthaben → ausgegraut, nicht klickbar */
+        <div style={{ marginBottom: 20 }}>
+          <div style={{
+            background: 'linear-gradient(135deg, #9CA3AF 0%, #6B7280 100%)',
+            borderRadius: 12, padding: '16px 20px',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+            opacity: 0.75, cursor: 'not-allowed',
+          }}>
+            <div>
+              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>KI-gestützt</div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: 'white', marginBottom: 4 }}>🎮 Einsatz-Simulation</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 12, padding: '2px 10px', borderRadius: 20, background: 'rgba(255,255,255,0.2)', color: 'white', fontWeight: 600 }}>
+                  💳 0,00 € Guthaben
+                </span>
+                <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.8)' }}>– Wehrleiter um Aufladung bitten</span>
+              </div>
+            </div>
+            <div style={{ fontSize: 28, opacity: 0.5 }}>🚒</div>
           </div>
-          <div style={{ fontSize: 28, opacity: 0.8 }}>🚒</div>
         </div>
-      </Link>
+      ) : (
+        <Link to="/ausbildung/chat" style={{ textDecoration: 'none', display: 'block', marginBottom: 20 }}>
+          <div style={{
+            background: 'linear-gradient(135deg, #B91C1C 0%, #991B1B 100%)',
+            borderRadius: 12, padding: '16px 20px',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+            cursor: 'pointer', transition: 'opacity 150ms',
+          }}
+            onMouseEnter={e => e.currentTarget.style.opacity = '0.92'}
+            onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+          >
+            <div>
+              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>KI-gestützt</div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: 'white', marginBottom: 4 }}>🎮 Einsatz-Simulation</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)' }}>Taktisches Training mit KI-Ausbilder · Bewertung nach FwDV &amp; ThürBKG</span>
+                {kiGuthaben !== null && (
+                  <span style={{
+                    fontSize: 11, padding: '2px 9px', borderRadius: 20, fontWeight: 600,
+                    background: kiGuthaben < 20 ? 'rgba(251,191,36,0.3)' : 'rgba(255,255,255,0.2)',
+                    color: kiGuthaben < 20 ? '#FDE68A' : 'rgba(255,255,255,0.9)',
+                    border: kiGuthaben < 20 ? '1px solid rgba(251,191,36,0.5)' : '1px solid rgba(255,255,255,0.2)',
+                  }}>
+                    💳 {(kiGuthaben / 100).toFixed(2).replace('.', ',')} €
+                  </span>
+                )}
+              </div>
+            </div>
+            <div style={{ fontSize: 28, opacity: 0.8 }}>🚒</div>
+          </div>
+        </Link>
+      )}
 
       {/* Filter */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>

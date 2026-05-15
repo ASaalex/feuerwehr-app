@@ -24,24 +24,46 @@ serve(async (req) => {
       return json({ error: "ANTHROPIC_API_KEY nicht konfiguriert" });
     }
 
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const sb = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
+
     const body = await req.json();
-    const { nachrichten, szenario } = body as {
+    const { nachrichten, szenario, kamerad_id } = body as {
       nachrichten: Array<{ role: string; content: string }>;
       szenario?: string;
+      kamerad_id?: string;
     };
 
     if (!nachrichten || !Array.isArray(nachrichten)) {
       return json({ error: "nachrichten fehlt oder ungueltig" });
     }
 
-    // Regelwerke aus Supabase laden
+    // ── Guthaben prüfen ──────────────────────────────────────────────────────
+    let guthabenVorher = 9999; // Fallback: kein Limit wenn kein kamerad_id
+    if (kamerad_id && sb) {
+      const { data: profil, error: profErr } = await sb
+        .from("profiles")
+        .select("ki_guthaben_cent")
+        .eq("id", kamerad_id)
+        .single();
+
+      if (profErr || !profil) {
+        return json({ error: "Profil nicht gefunden" });
+      }
+
+      guthabenVorher = profil.ki_guthaben_cent ?? 0;
+
+      if (guthabenVorher <= 0) {
+        return json({ error: "KEIN_GUTHABEN" });
+      }
+    }
+
+    // ── Regelwerke aus Supabase laden ────────────────────────────────────────
     let regelwerkeText = "";
     let regelwerkeGeladen = false;
-    try {
-      const supabaseUrl = Deno.env.get("SUPABASE_URL");
-      const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-      if (supabaseUrl && supabaseKey) {
-        const sb = createClient(supabaseUrl, supabaseKey);
+    if (sb) {
+      try {
         const { data: rw } = await sb
           .from("regelwerke")
           .select("titel, inhalt_text")
@@ -56,12 +78,13 @@ serve(async (req) => {
           }
           regelwerkeText += "\n=== ENDE DIENSTVORSCHRIFTEN ===\n";
         }
+      } catch (rwErr) {
+        console.warn("Regelwerke konnten nicht geladen werden:", rwErr);
       }
-    } catch (rwErr) {
-      console.warn("Regelwerke konnten nicht geladen werden:", rwErr);
     }
 
-    const systemPrompt = [
+    // ── System-Prompt (wird gecacht) ─────────────────────────────────────────
+    const systemText = [
       "Du bist ein erfahrener Feuerwehr-Ausbilder der Freiwilligen Feuerwehr Grammetal (Thueringen).",
       "Fuehre einen Kamerad durch ein taktisches Einsatz-Szenario. Antworte immer auf Deutsch.",
       "Bleibe ausschliesslich beim Thema Feuerwehr-Ausbildung.",
@@ -91,13 +114,11 @@ serve(async (req) => {
       szenario ? "\n\nAKTUELLES SZENARIO:\n" + szenario : "",
     ].join("\n");
 
-    // Nachrichten aufbereiten (letzte 10, init-Nachricht herausfiltern)
+    // ── Nachrichten aufbereiten ──────────────────────────────────────────────
     const letzteNachrichten = nachrichten
       .filter(m => !(m.role === "user" && m.content === "Starte das Szenario. Beschreibe die Alarmierungsmeldung."))
       .slice(-10);
 
-    // Anthropic erwartet abwechselnde user/assistant Rollen
-    // und dass die erste Nachricht user ist
     const messages = letzteNachrichten.map(m => ({
       role: m.role === "assistant" ? "assistant" : "user",
       content: m.content,
@@ -107,17 +128,25 @@ serve(async (req) => {
       messages.unshift({ role: "user", content: "Starte das Szenario." });
     }
 
+    // ── Anthropic API mit Prompt Caching ─────────────────────────────────────
     const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
+        "anthropic-beta": "prompt-caching-2024-07-31",
       },
       body: JSON.stringify({
         model: "claude-haiku-4-5",
         max_tokens: 1024,
-        system: systemPrompt,
+        system: [
+          {
+            type: "text",
+            text: systemText,
+            cache_control: { type: "ephemeral" },
+          },
+        ],
         messages,
       }),
     });
@@ -136,7 +165,48 @@ serve(async (req) => {
       return json({ error: "Keine Antwort von der KI erhalten." });
     }
 
-    return json({ antwort });
+    // ── Kosten berechnen (in Cent, ≈ USD-Cent ≈ EUR-Cent) ───────────────────
+    // Claude Haiku 4.5: Input $0.80/MTok, Output $4.00/MTok
+    // Cache Write $1.00/MTok, Cache Read $0.08/MTok
+    const usage = anthropicData.usage ?? {};
+    const inputCost    = (usage.input_tokens                  ?? 0) * 0.00008;
+    const outputCost   = (usage.output_tokens                 ?? 0) * 0.00040;
+    const cacheWrCost  = (usage.cache_creation_input_tokens   ?? 0) * 0.00010;
+    const cacheRdCost  = (usage.cache_read_input_tokens       ?? 0) * 0.000008;
+    const totalCostCent = inputCost + outputCost + cacheWrCost + cacheRdCost;
+    const kostenCent = Math.max(1, Math.round(totalCostCent));
+
+    console.log(
+      `Tokens: in=${usage.input_tokens} out=${usage.output_tokens} ` +
+      `cache_wr=${usage.cache_creation_input_tokens} cache_rd=${usage.cache_read_input_tokens} ` +
+      `→ ${totalCostCent.toFixed(4)} Cent (abgebucht: ${kostenCent} Cent)`
+    );
+
+    // ── Guthaben abbuchen ────────────────────────────────────────────────────
+    let guthabenRestCent = guthabenVorher;
+    if (kamerad_id && sb && guthabenVorher < 9999) {
+      const neuesGuthaben = Math.max(0, guthabenVorher - kostenCent);
+
+      await sb
+        .from("profiles")
+        .update({ ki_guthaben_cent: neuesGuthaben })
+        .eq("id", kamerad_id);
+
+      await sb.from("ki_transaktionen").insert({
+        kamerad_id,
+        betrag_cent: -kostenCent,
+        typ: "abbuchung",
+        beschreibung:
+          `KI-Simulation: ${usage.input_tokens ?? 0} Input ` +
+          `+ ${usage.output_tokens ?? 0} Output Token ` +
+          `(Cache: ${usage.cache_read_input_tokens ?? 0} gelesen, ` +
+          `${usage.cache_creation_input_tokens ?? 0} geschrieben)`,
+      });
+
+      guthabenRestCent = neuesGuthaben;
+    }
+
+    return json({ antwort, kosten_cent: kostenCent, guthaben_rest_cent: guthabenRestCent });
   } catch (err) {
     console.error("Fehler:", err);
     return json({ error: "Interner Fehler: " + String(err) });
