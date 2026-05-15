@@ -247,15 +247,7 @@ supabase.from('aufgaben').select('*', { count: 'exact', head: true })
             navigate={navigate}
             highlight={stats.aufgaben > 0}
           />
-        ) : (
-          <div style={{ background: 'var(--gray-100)', borderRadius: 12, padding: '16px 16px 14px', opacity: 0.5, border: '1.5px solid transparent' }}>
-            <div style={{ fontSize: 11, fontWeight: 500, color: 'var(--gray-400)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 2 }}>Aufgaben</div>
-            <div style={{ fontSize: 14, color: 'var(--gray-400)', marginTop: 6 }}>Nicht aktiviert</div>
-            <div style={{ marginTop: 14, padding: '8px 0', borderRadius: 8, background: 'var(--gray-200)', fontSize: 12, textAlign: 'center', color: 'var(--gray-400)' }}>
-              Fuer diese Wache deaktiviert
-            </div>
-          </div>
-        )}
+        ) : null}
 
         {/* Profil */}
         <StatKachel
