@@ -22,6 +22,25 @@ const SCHWIERIGKEIT_FARBE = {
   schwer: { bg: '#FCE4EC', text: '#880E4F' },
 }
 
+const NOTE_META = {
+  A: { bg: '#DCFCE7', text: '#15803D', label: 'Note A' },
+  B: { bg: '#D1FAE5', text: '#065F46', label: 'Note B' },
+  C: { bg: '#FEF3C7', text: '#B45309', label: 'Note C' },
+  D: { bg: '#FEE2E2', text: '#B91C1C', label: 'Note D' },
+}
+
+function extrahiereNote(nachrichten) {
+  if (!nachrichten?.length) return null
+  for (let i = nachrichten.length - 1; i >= 0; i--) {
+    const m = nachrichten[i]
+    if (m.role === 'assistant' && m.content?.includes('🏁')) {
+      const match = m.content.match(/Note\s+([A-D])\b/i)
+      if (match) return match[1].toUpperCase()
+    }
+  }
+  return null
+}
+
 // ── Nachricht-Renderer: parst das strukturierte Feedback-Format ──────────────
 function NachrichtBlase({ msg }) {
   const istUser = msg.role === 'user'
@@ -119,10 +138,14 @@ export default function AusbildungChatPage() {
   const navigate = useNavigate()
   const chatEndeRef = useRef(null)
 
-  const [phase, setPhase] = useState('auswahl') // 'auswahl' | 'chat' | 'verlauf'
+  const [phase, setPhase] = useState('auswahl') // 'auswahl' | 'chat' | 'verlauf' | 'auswertung'
   const [szenarien, setSzenarien] = useState([])
   const [vergSessions, setVergSessions] = useState([])
   const [loading, setLoading] = useState(true)
+  const [auswertungSessions, setAuswertungSessions] = useState([])
+  const [auswertungLoading, setAuswertungLoading] = useState(false)
+
+  const istAdmin = ['wehrleiter', 'gemeindebrandmeister', 'ausbilder'].includes(profile?.rolle)
 
   const [aktSession, setAktSession] = useState(null)
   const [nachrichten, setNachrichten] = useState([])
@@ -167,11 +190,28 @@ export default function AusbildungChatPage() {
   async function ladeDaten() {
     const [{ data: sz }, { data: sess }] = await Promise.all([
       supabase.from('szenarien').select('*').eq('aktiv', true).order('kategorie').order('titel'),
-      supabase.from('uebungs_sessions').select('id,szenario_titel,erstellt_am,abgeschlossen,nachrichten').eq('kamerad_id', profile.id).order('erstellt_am', { ascending: false }).limit(10),
+      supabase.from('uebungs_sessions').select('id,szenario_id,szenario_titel,erstellt_am,abgeschlossen,nachrichten').eq('kamerad_id', profile.id).order('erstellt_am', { ascending: false }).limit(20),
     ])
     setSzenarien(sz ?? [])
     setVergSessions(sess ?? [])
     setLoading(false)
+  }
+
+  async function ladeAuswertung() {
+    setAuswertungLoading(true)
+    let q = supabase
+      .from('uebungs_sessions')
+      .select('id, szenario_titel, erstellt_am, abgeschlossen, nachrichten, kamerad:profiles!kamerad_id(vorname, nachname)')
+      .order('erstellt_am', { ascending: false })
+      .limit(200)
+    if (profile?.rolle === 'wehrleiter' && profile?.wehr_id) {
+      // Nur Kameraden der eigenen Wache
+      const { data: kIds } = await supabase.from('profiles').select('id').eq('wehr_id', profile.wehr_id)
+      if (kIds?.length) q = q.in('kamerad_id', kIds.map(k => k.id))
+    }
+    const { data } = await q
+    setAuswertungSessions(data ?? [])
+    setAuswertungLoading(false)
   }
 
   async function starteSzenario(szenario) {
@@ -302,6 +342,28 @@ export default function AusbildungChatPage() {
     setPhase('verlauf')
   }
 
+  async function fortsetzeSzenario(sess) {
+    if (kiGuthaben !== null && kiGuthaben <= 0) {
+      setFehler('💳 Kein KI-Guthaben vorhanden. Bitte den Wehrleiter um Aufladung bitten.')
+      return
+    }
+    setFehler('')
+    setAbgeschlossen(false)
+    setNachrichten(sess.nachrichten ?? [])
+    // Szenario-Daten aus geladenem Array oder per DB-Abfrage
+    const szenario = szenarien.find(s => s.id === sess.szenario_id)
+      ?? { id: sess.szenario_id, titel: sess.szenario_titel, kategorie: 'sonstiges', anfangs_meldung: sess.szenario_titel ?? '', schwierigkeitsgrad: 'mittel' }
+    setAktSession({ ...sess, szenario })
+    setPhase('chat')
+  }
+
+  async function loescheSession(sess, e) {
+    e.stopPropagation()
+    if (!confirm(`Übung "${sess.szenario_titel ?? 'Unbekannt'}" wirklich löschen?`)) return
+    await supabase.from('uebungs_sessions').delete().eq('id', sess.id)
+    await ladeDaten()
+  }
+
   if (loading) return <div className="loading-page"><div className="spinner"></div></div>
 
   // ── Szenario-Auswahl ─────────────────────────────────────────────────────
@@ -406,27 +468,162 @@ export default function AusbildungChatPage() {
         {/* Vergangene Sessions */}
         {vergSessions.length > 0 && (
           <div style={{ marginTop: 32 }}>
-            <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Meine letzten Übungen</h3>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <h3 style={{ fontSize: 14, fontWeight: 600 }}>Meine letzten Übungen</h3>
+              {istAdmin && (
+                <button className="btn btn-sm btn-secondary" onClick={() => { setPhase('auswertung'); ladeAuswertung() }}
+                  style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}>
+                  📊 Alle Kameraden auswerten
+                </button>
+              )}
+            </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {vergSessions.map(sess => (
-                <button key={sess.id} onClick={() => oeffneVerlauf(sess)}
-                  style={{ background: 'white', border: '1px solid var(--gray-100)', borderRadius: 10, padding: '10px 14px', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <span style={{ fontSize: 20 }}>{sess.abgeschlossen ? '🏁' : '⏸️'}</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--gray-700)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {sess.szenario_titel ?? 'Unbekanntes Szenario'}
-                    </div>
-                    <div style={{ fontSize: 11, color: 'var(--gray-400)' }}>
-                      {format(new Date(sess.erstellt_am), 'dd.MM.yyyy HH:mm', { locale: de })}
-                      {' · '}{(sess.nachrichten ?? []).filter(m => m.role === 'user').length} Antworten
-                      {sess.abgeschlossen ? ' · Abgeschlossen' : ' · Nicht beendet'}
+              {vergSessions.map(sess => {
+                const note = extrahiereNote(sess.nachrichten)
+                const noteMeta = note ? NOTE_META[note] : null
+                return (
+                  <div key={sess.id} style={{ background: 'white', border: '1px solid var(--gray-100)', borderRadius: 10, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <span style={{ fontSize: 20, flexShrink: 0 }}>{sess.abgeschlossen ? '🏁' : '⏸️'}</span>
+                    {/* Hauptinfo – klickbar für Verlauf */}
+                    <button onClick={() => oeffneVerlauf(sess)}
+                      style={{ flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--gray-700)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 220 }}>
+                          {sess.szenario_titel ?? 'Unbekanntes Szenario'}
+                        </span>
+                        {noteMeta && (
+                          <span style={{ fontSize: 11, fontWeight: 700, padding: '1px 7px', borderRadius: 8, background: noteMeta.bg, color: noteMeta.text, flexShrink: 0 }}>
+                            {noteMeta.label}
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--gray-400)', marginTop: 2 }}>
+                        {format(new Date(sess.erstellt_am), 'dd.MM.yyyy HH:mm', { locale: de })}
+                        {' · '}{(sess.nachrichten ?? []).filter(m => m.role === 'user').length} Antworten
+                        {sess.abgeschlossen ? '' : ' · Unterbrochen'}
+                      </div>
+                    </button>
+                    {/* Aktions-Buttons */}
+                    <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                      {!sess.abgeschlossen && (
+                        <button className="btn btn-sm btn-primary" onClick={() => fortsetzeSzenario(sess)}
+                          style={{ fontSize: 11, padding: '4px 10px' }}
+                          disabled={kiGuthaben !== null && kiGuthaben <= 0}
+                          title="Übung fortsetzen">
+                          ▶ Weiter
+                        </button>
+                      )}
+                      <button onClick={e => loescheSession(sess, e)}
+                        style={{ padding: '4px 8px', borderRadius: 6, border: 'none', background: 'var(--gray-100)', color: 'var(--gray-400)', cursor: 'pointer', fontSize: 12 }}
+                        title="Übung löschen">
+                        🗑
+                      </button>
                     </div>
                   </div>
-                  <span style={{ color: 'var(--gray-300)', flexShrink: 0 }}>→</span>
-                </button>
-              ))}
+                )
+              })}
             </div>
           </div>
+        )}
+      </div>
+    )
+  }
+
+  // ── Auswertungs-Ansicht (Admin) ──────────────────────────────────────────
+  if (phase === 'auswertung') {
+    const noteStats = { A: 0, B: 0, C: 0, D: 0, offen: 0 }
+    auswertungSessions.forEach(s => {
+      const n = extrahiereNote(s.nachrichten)
+      if (n) noteStats[n]++
+      else noteStats.offen++
+    })
+
+    return (
+      <div>
+        <div className="page-header">
+          <div>
+            <button className="btn btn-ghost btn-sm" onClick={() => setPhase('auswahl')} style={{ marginBottom: 8, padding: '4px 8px', fontSize: 12 }}>
+              ← Zurück
+            </button>
+            <h1>Auswertung – Alle Übungen</h1>
+            <p style={{ marginTop: 4 }}>Abgelegte Einsatz-Simulationen aller Kameraden</p>
+          </div>
+        </div>
+
+        {auswertungLoading ? (
+          <div className="loading-page"><div className="spinner"></div></div>
+        ) : (
+          <>
+            {/* Statistik-Kacheln */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: 10, marginBottom: 24 }}>
+              {Object.entries(noteStats).map(([key, count]) => {
+                const meta = key === 'offen' ? { bg: '#F1F5F9', text: '#64748B', label: 'Offen' } : NOTE_META[key]
+                return (
+                  <div key={key} style={{ background: meta.bg, borderRadius: 10, padding: '12px 14px', textAlign: 'center' }}>
+                    <div style={{ fontSize: 22, fontWeight: 700, color: meta.text }}>{count}</div>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: meta.text }}>{meta.label}</div>
+                  </div>
+                )
+              })}
+              <div style={{ background: '#F8FAFC', borderRadius: 10, padding: '12px 14px', textAlign: 'center' }}>
+                <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--gray-600)' }}>{auswertungSessions.length}</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--gray-400)' }}>Gesamt</div>
+              </div>
+            </div>
+
+            {/* Tabelle */}
+            <div className="card" style={{ padding: 0 }}>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Kamerad</th>
+                      <th>Szenario</th>
+                      <th>Datum</th>
+                      <th>Note</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {auswertungSessions.length === 0 ? (
+                      <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--gray-400)', padding: 32 }}>Noch keine Übungen abgelegt</td></tr>
+                    ) : auswertungSessions.map(sess => {
+                      const note = extrahiereNote(sess.nachrichten)
+                      const noteMeta = note ? NOTE_META[note] : null
+                      const antworten = (sess.nachrichten ?? []).filter(m => m.role === 'user').length
+                      return (
+                        <tr key={sess.id}>
+                          <td style={{ fontWeight: 500 }}>
+                            {sess.kamerad ? `${sess.kamerad.vorname} ${sess.kamerad.nachname}` : '–'}
+                          </td>
+                          <td style={{ fontSize: 13, color: 'var(--gray-600)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {sess.szenario_titel ?? '–'}
+                          </td>
+                          <td style={{ fontSize: 12, color: 'var(--gray-400)', whiteSpace: 'nowrap' }}>
+                            {format(new Date(sess.erstellt_am), 'dd.MM.yy HH:mm', { locale: de })}
+                          </td>
+                          <td>
+                            {noteMeta ? (
+                              <span style={{ fontSize: 12, fontWeight: 700, padding: '2px 8px', borderRadius: 8, background: noteMeta.bg, color: noteMeta.text }}>
+                                {noteMeta.label}
+                              </span>
+                            ) : (
+                              <span style={{ fontSize: 12, color: 'var(--gray-300)' }}>–</span>
+                            )}
+                          </td>
+                          <td>
+                            <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 8, background: sess.abgeschlossen ? '#ECFDF5' : '#FFF8E1', color: sess.abgeschlossen ? '#065F46' : '#B45309', fontWeight: 500 }}>
+                              {sess.abgeschlossen ? `✓ ${antworten} Antworten` : `⏸ ${antworten} Antworten`}
+                            </span>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
         )}
       </div>
     )
@@ -442,7 +639,7 @@ export default function AusbildungChatPage() {
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
         <button className="btn btn-ghost btn-sm" onClick={beendeSession} style={{ padding: '4px 8px', fontSize: 12, flexShrink: 0 }}>
-          ← {istVerlauf ? 'Zurück' : 'Abbrechen'}
+          ← {istVerlauf ? 'Zurück' : abgeschlossen ? 'Zurück' : 'Abbrechen'}
         </button>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
