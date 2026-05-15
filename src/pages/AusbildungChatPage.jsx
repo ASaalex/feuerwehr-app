@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext'
 import { format } from 'date-fns'
 import { de } from 'date-fns/locale'
 
-const COOLDOWN_SEK = 8 // Mindestabstand zwischen zwei KI-Anfragen (Groq TPM-Limit)
+const COOLDOWN_SEK = 8 // Mindestabstand zwischen zwei KI-Anfragen
 
 const KATEGORIE_META = {
   verkehrsunfall:          { label: 'Verkehrsunfall',        farbe: '#E8F4FD', textfarbe: '#1565C0', icon: '🚗' },
@@ -132,8 +132,18 @@ export default function AusbildungChatPage() {
   const [fehler, setFehler] = useState('')
   const [cooldown, setCooldown] = useState(0) // verbleibende Sekunden Wartezeit
   const cooldownRef = useRef(null)
+  const [kiGuthaben, setKiGuthaben] = useState(null) // null = noch nicht geladen
 
-  useEffect(() => { ladeDaten() }, [])
+  useEffect(() => { ladeDaten(); ladeGuthaben() }, [])
+
+  async function ladeGuthaben() {
+    const { data } = await supabase
+      .from('profiles')
+      .select('ki_guthaben_cent')
+      .eq('id', profile.id)
+      .single()
+    setKiGuthaben(data?.ki_guthaben_cent ?? 0)
+  }
 
   // Cooldown-Timer: zählt sekündlich runter
   function starteCooldown() {
@@ -165,6 +175,11 @@ export default function AusbildungChatPage() {
   }
 
   async function starteSzenario(szenario) {
+    // Guthaben prüfen
+    if (kiGuthaben !== null && kiGuthaben <= 0) {
+      setFehler('💳 Kein KI-Guthaben vorhanden. Bitte den Wehrleiter um Aufladung bitten.')
+      return
+    }
     setFehler('')
     setLadend(true)
     setAbgeschlossen(false)
@@ -204,19 +219,27 @@ export default function AusbildungChatPage() {
       body: {
         nachrichten: msgs,
         szenario: `${szenario.anfangs_meldung}\n\nKategorie: ${szenario.kategorie}\nSchwierigkeit: ${szenario.schwierigkeitsgrad}`,
+        kamerad_id: profile.id,
       },
     })
 
     if (error || !data?.antwort) {
       const details = data?.error ?? error?.message ?? 'Unbekannter Fehler'
 
-      // 429: zu viele Anfragen
-      if (String(details).includes('429')) {
+      if (details === 'KEIN_GUTHABEN') {
+        setFehler('💳 Kein KI-Guthaben mehr vorhanden. Bitte den Wehrleiter um Aufladung bitten.')
+        setKiGuthaben(0)
+      } else if (String(details).includes('429')) {
         setFehler('⏱ Zu viele Anfragen in kurzer Zeit. Bitte 60 Sekunden warten und erneut senden.')
       } else {
         setFehler(`KI-Antwort fehlgeschlagen: ${details}`)
       }
       return
+    }
+
+    // Guthaben aus Antwort aktualisieren
+    if (typeof data.guthaben_rest_cent === 'number') {
+      setKiGuthaben(data.guthaben_rest_cent)
     }
 
     const kiNachricht = { role: 'assistant', content: data.antwort, ts: new Date().toISOString() }
@@ -297,9 +320,31 @@ export default function AusbildungChatPage() {
           </div>
         </div>
 
+        {/* Guthaben-Anzeige */}
+        {kiGuthaben !== null && (
+          <div style={{
+            display: 'inline-flex', alignItems: 'center', gap: 8,
+            padding: '8px 14px', borderRadius: 10, marginBottom: 20,
+            background: kiGuthaben <= 0 ? '#FFF1F2' : kiGuthaben < 20 ? '#FFF8E1' : '#F0FDF4',
+            border: `1px solid ${kiGuthaben <= 0 ? '#FECDD3' : kiGuthaben < 20 ? '#FDE68A' : '#BBF7D0'}`,
+          }}>
+            <span style={{ fontSize: 16 }}>💳</span>
+            <span style={{ fontSize: 13, fontWeight: 500, color: kiGuthaben <= 0 ? '#BE123C' : kiGuthaben < 20 ? '#B45309' : '#15803D' }}>
+              KI-Guthaben: {(kiGuthaben / 100).toFixed(2)} €
+            </span>
+            {kiGuthaben <= 0 && (
+              <span style={{ fontSize: 12, color: '#BE123C' }}>– Bitte Wehrleiter kontaktieren</span>
+            )}
+            {kiGuthaben > 0 && kiGuthaben < 20 && (
+              <span style={{ fontSize: 12, color: '#B45309' }}>– Guthaben fast aufgebraucht</span>
+            )}
+          </div>
+        )}
+
         {/* Zufall-Button */}
         <div style={{ marginBottom: 24 }}>
-          <button className="btn btn-primary" onClick={zufallsSzenario} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button className="btn btn-primary" onClick={zufallsSzenario} disabled={kiGuthaben !== null && kiGuthaben <= 0}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, opacity: kiGuthaben !== null && kiGuthaben <= 0 ? 0.5 : 1 }}>
             <span style={{ fontSize: 18 }}>🎲</span> Zufalls-Szenario starten
           </button>
         </div>
@@ -409,6 +454,16 @@ export default function AusbildungChatPage() {
             {istVerlauf && !abgeschlossen && <span style={{ fontSize: 11, padding: '2px 8px', background: '#FFF8E1', color: '#F57F17', borderRadius: 10, fontWeight: 600 }}>Verlauf</span>}
           </div>
         </div>
+        {!istVerlauf && kiGuthaben !== null && (
+          <div style={{
+            fontSize: 11, padding: '3px 9px', borderRadius: 8, flexShrink: 0,
+            background: kiGuthaben <= 0 ? '#FFF1F2' : kiGuthaben < 20 ? '#FFF8E1' : '#F0FDF4',
+            color: kiGuthaben <= 0 ? '#BE123C' : kiGuthaben < 20 ? '#B45309' : '#15803D',
+            border: `1px solid ${kiGuthaben <= 0 ? '#FECDD3' : kiGuthaben < 20 ? '#FDE68A' : '#BBF7D0'}`,
+          }}>
+            💳 {(kiGuthaben / 100).toFixed(2)} €
+          </div>
+        )}
         {!istVerlauf && !abgeschlossen && (
           <button className="btn btn-secondary btn-sm" onClick={beendeSession} style={{ flexShrink: 0, fontSize: 12 }}>
             Übung beenden

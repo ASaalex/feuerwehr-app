@@ -44,6 +44,10 @@ export default function KameradenPage() {
   const [editTab, setEditTab] = useState('profil')
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
+  const [aufladeEuro, setAufladeEuro] = useState('')
+  const [aufladeLoading, setAufladeLoading] = useState(false)
+  const [kiTransaktionen, setKiTransaktionen] = useState([])
+  const [kiTransLoading, setKiTransLoading] = useState(false)
 
   const isGemeinde = myProfile?.rolle === 'gemeindebrandmeister'
   const isWehrleiter = myProfile?.rolle === 'wehrleiter'
@@ -123,6 +127,63 @@ export default function KameradenPage() {
       setTimeout(() => setMsg(''), 5000)
     }
     setSaving(false)
+  }
+
+  async function ladeKiTransaktionen(kameradId) {
+    setKiTransLoading(true)
+    const { data } = await supabase
+      .from('ki_transaktionen')
+      .select('*')
+      .eq('kamerad_id', kameradId)
+      .order('erstellt_am', { ascending: false })
+      .limit(20)
+    setKiTransaktionen(data ?? [])
+    setKiTransLoading(false)
+  }
+
+  async function aufladenKI() {
+    const euro = parseFloat(aufladeEuro.replace(',', '.'))
+    if (isNaN(euro) || euro <= 0) return
+    setAufladeLoading(true)
+    const cent = Math.round(euro * 100)
+    const neuesGuthaben = (editModal.ki_guthaben_cent ?? 0) + cent
+
+    const { error } = await supabase
+      .from('profiles')
+      .update({ ki_guthaben_cent: neuesGuthaben })
+      .eq('id', editModal.id)
+
+    if (!error) {
+      await supabase.from('ki_transaktionen').insert({
+        kamerad_id: editModal.id,
+        betrag_cent: cent,
+        typ: 'aufladung',
+        beschreibung: `Manuelle Aufladung durch ${myProfile.vorname} ${myProfile.nachname}`,
+        erstellt_von: myProfile.id,
+      })
+      setEditModal(m => ({ ...m, ki_guthaben_cent: neuesGuthaben }))
+      setAufladeEuro('')
+      await ladeKiTransaktionen(editModal.id)
+      await fetchKameraden()
+      setMsg(`${euro.toFixed(2).replace('.', ',')} € aufgeladen ✓`)
+      setTimeout(() => setMsg(''), 3000)
+    }
+    setAufladeLoading(false)
+  }
+
+  async function guthabenZuruecksetzen() {
+    if (!confirm('Guthaben wirklich auf 0 zurücksetzen?')) return
+    await supabase.from('profiles').update({ ki_guthaben_cent: 0 }).eq('id', editModal.id)
+    await supabase.from('ki_transaktionen').insert({
+      kamerad_id: editModal.id,
+      betrag_cent: -(editModal.ki_guthaben_cent ?? 0),
+      typ: 'abbuchung',
+      beschreibung: `Manuelles Zurücksetzen durch ${myProfile.vorname} ${myProfile.nachname}`,
+      erstellt_von: myProfile.id,
+    })
+    setEditModal(m => ({ ...m, ki_guthaben_cent: 0 }))
+    await ladeKiTransaktionen(editModal.id)
+    await fetchKameraden()
   }
 
   async function statusAendern(id, status) {
@@ -311,8 +372,15 @@ export default function KameradenPage() {
 
             {/* Tabs */}
             <div style={{ display: 'flex', borderBottom: '1px solid var(--gray-100)', marginBottom: 20 }}>
-              {[{ key: 'profil', label: 'Profil' }, { key: 'rolle', label: 'Rolle & Rechte' }].map(tab => (
-                <button key={tab.key} onClick={() => setEditTab(tab.key)} style={{
+              {[
+                { key: 'profil', label: 'Profil' },
+                { key: 'rolle', label: 'Rolle & Rechte' },
+                { key: 'ki_guthaben', label: '💳 KI-Guthaben' },
+              ].map(tab => (
+                <button key={tab.key} onClick={() => {
+                  setEditTab(tab.key)
+                  if (tab.key === 'ki_guthaben') ladeKiTransaktionen(editModal.id)
+                }} style={{
                   padding: '8px 18px', border: 'none', background: 'none', cursor: 'pointer',
                   fontSize: 14, fontWeight: editTab === tab.key ? 500 : 400,
                   color: editTab === tab.key ? 'var(--red)' : 'var(--gray-400)',
@@ -518,11 +586,126 @@ export default function KameradenPage() {
               </div>
             )}
 
+            {editTab === 'ki_guthaben' && (
+              <div>
+                {/* Aktuelles Guthaben */}
+                <div style={{
+                  padding: '20px 24px', borderRadius: 12, marginBottom: 24, textAlign: 'center',
+                  background: (editModal.ki_guthaben_cent ?? 0) <= 0 ? '#FFF1F2' : (editModal.ki_guthaben_cent ?? 0) < 20 ? '#FFF8E1' : '#F0FDF4',
+                  border: `1.5px solid ${(editModal.ki_guthaben_cent ?? 0) <= 0 ? '#FECDD3' : (editModal.ki_guthaben_cent ?? 0) < 20 ? '#FDE68A' : '#BBF7D0'}`,
+                }}>
+                  <div style={{ fontSize: 13, color: 'var(--gray-400)', marginBottom: 4 }}>Aktuelles KI-Guthaben</div>
+                  <div style={{
+                    fontSize: 32, fontWeight: 700,
+                    color: (editModal.ki_guthaben_cent ?? 0) <= 0 ? '#BE123C' : (editModal.ki_guthaben_cent ?? 0) < 20 ? '#B45309' : '#15803D',
+                  }}>
+                    {((editModal.ki_guthaben_cent ?? 0) / 100).toFixed(2).replace('.', ',')} €
+                  </div>
+                  {(editModal.ki_guthaben_cent ?? 0) <= 0 && (
+                    <div style={{ fontSize: 12, color: '#BE123C', marginTop: 4 }}>Keine Simulationen möglich</div>
+                  )}
+                  {(editModal.ki_guthaben_cent ?? 0) > 0 && (editModal.ki_guthaben_cent ?? 0) < 20 && (
+                    <div style={{ fontSize: 12, color: '#B45309', marginTop: 4 }}>Guthaben fast aufgebraucht</div>
+                  )}
+                </div>
+
+                {/* Aufladen */}
+                <div style={{ marginBottom: 24 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--gray-600)', marginBottom: 10 }}>Guthaben aufladen</div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    {/* Schnellbeträge */}
+                    {[1, 2, 5, 10].map(euro => (
+                      <button key={euro} type="button"
+                        onClick={() => setAufladeEuro(String(euro))}
+                        style={{
+                          padding: '6px 14px', borderRadius: 20, fontSize: 13, fontWeight: 500,
+                          border: '1px solid', cursor: 'pointer', transition: 'all 150ms',
+                          background: aufladeEuro === String(euro) ? 'var(--red)' : 'var(--white)',
+                          color: aufladeEuro === String(euro) ? 'white' : 'var(--gray-500)',
+                          borderColor: aufladeEuro === String(euro) ? 'var(--red)' : 'var(--gray-200)',
+                        }}>
+                        {euro} €
+                      </button>
+                    ))}
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      placeholder="Eigener Betrag"
+                      value={aufladeEuro}
+                      onChange={e => setAufladeEuro(e.target.value)}
+                      style={{ width: 130, fontSize: 13 }}
+                    />
+                    <span style={{ fontSize: 13, color: 'var(--gray-400)' }}>€</span>
+                    <button className="btn btn-primary btn-sm"
+                      onClick={aufladenKI}
+                      disabled={!aufladeEuro || parseFloat(aufladeEuro) <= 0 || aufladeLoading}
+                      style={{ minWidth: 90 }}>
+                      {aufladeLoading ? 'Lädt...' : '+ Aufladen'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Zurücksetzen */}
+                {(editModal.ki_guthaben_cent ?? 0) > 0 && (
+                  <div style={{ marginBottom: 24 }}>
+                    <button type="button" className="btn btn-sm btn-secondary"
+                      onClick={guthabenZuruecksetzen}
+                      style={{ fontSize: 12, color: 'var(--gray-400)' }}>
+                      Guthaben auf 0 zurücksetzen
+                    </button>
+                  </div>
+                )}
+
+                {/* Transaktions-Verlauf */}
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--gray-600)', marginBottom: 10 }}>
+                    Letzte Transaktionen
+                  </div>
+                  {kiTransLoading ? (
+                    <div style={{ textAlign: 'center', padding: 20 }}><div className="spinner" style={{ margin: '0 auto' }}></div></div>
+                  ) : kiTransaktionen.length === 0 ? (
+                    <div style={{ fontSize: 13, color: 'var(--gray-400)', padding: '12px 0' }}>Noch keine Transaktionen.</div>
+                  ) : (
+                    <div style={{ border: '1px solid var(--gray-100)', borderRadius: 8, overflow: 'hidden' }}>
+                      {kiTransaktionen.map((tx, i) => (
+                        <div key={tx.id} style={{
+                          display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
+                          borderBottom: i < kiTransaktionen.length - 1 ? '1px solid var(--gray-100)' : 'none',
+                          background: i % 2 === 0 ? 'white' : 'var(--gray-50)',
+                        }}>
+                          <span style={{ fontSize: 16, flexShrink: 0 }}>
+                            {tx.typ === 'aufladung' ? '⬆️' : '⬇️'}
+                          </span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 12, color: 'var(--gray-600)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {tx.beschreibung ?? (tx.typ === 'aufladung' ? 'Aufladung' : 'KI-Nutzung')}
+                            </div>
+                            <div style={{ fontSize: 11, color: 'var(--gray-400)' }}>
+                              {format(new Date(tx.erstellt_am), 'dd.MM.yyyy HH:mm', { locale: de })}
+                            </div>
+                          </div>
+                          <span style={{
+                            fontSize: 13, fontWeight: 600, flexShrink: 0,
+                            color: tx.betrag_cent > 0 ? '#15803D' : '#BE123C',
+                          }}>
+                            {tx.betrag_cent > 0 ? '+' : ''}{(tx.betrag_cent / 100).toFixed(2).replace('.', ',')} €
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--gray-100)' }}>
               <button className="btn btn-secondary" onClick={() => setEditModal(null)}>Abbrechen</button>
-              <button className="btn btn-primary" onClick={saveEdit} disabled={saving}>
-                {saving ? 'Speichern...' : 'Speichern'}
-              </button>
+              {editTab !== 'ki_guthaben' && (
+                <button className="btn btn-primary" onClick={saveEdit} disabled={saving}>
+                  {saving ? 'Speichern...' : 'Speichern'}
+                </button>
+              )}
             </div>
           </div>
         </div>
