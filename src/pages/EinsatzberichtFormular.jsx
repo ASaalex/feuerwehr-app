@@ -307,7 +307,12 @@ export default function EinsatzberichtFormular() {
     e.target.value = ''
   }
 
-  function removeFoto(i) {
+  async function removeFoto(i) {
+    const foto = fotoVorschau[i]
+    // Bereits in Storage gespeicherte Fotos sofort löschen
+    if (foto?.pfad) {
+      await supabase.storage.from('einsatz-fotos').remove([foto.pfad])
+    }
     setFotoVorschau(prev => prev.filter((_, idx) => idx !== i))
   }
 

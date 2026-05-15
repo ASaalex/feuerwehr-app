@@ -35,6 +35,21 @@ export default function EinsatzberichtPage() {
 
   async function handleLoeschen(b) {
     if (!confirm(`Einsatzbericht vom ${formatDatum(b.datum)} wirklich loeschen?`)) return
+
+    // Fotos aus Storage löschen
+    const { data: bericht } = await supabase
+      .from('einsatzberichte')
+      .select('foto_pfade')
+      .eq('id', b.id)
+      .single()
+
+    if (bericht?.foto_pfade?.length) {
+      const { error: storageErr } = await supabase.storage
+        .from('einsatz-fotos')
+        .remove(bericht.foto_pfade)
+      if (storageErr) console.warn('Storage-Löschfehler:', storageErr.message)
+    }
+
     await supabase.from('einsatzberichte').delete().eq('id', b.id)
     await fetchBerichte()
   }
