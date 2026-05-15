@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext'
 import { format } from 'date-fns'
 import { de } from 'date-fns/locale'
 
-const COOLDOWN_SEK = 4 // Mindestabstand zwischen zwei KI-Anfragen
+const COOLDOWN_SEK = 8 // Mindestabstand zwischen zwei KI-Anfragen (Groq TPM-Limit)
 
 const KATEGORIE_META = {
   verkehrsunfall:          { label: 'Verkehrsunfall',        farbe: '#E8F4FD', textfarbe: '#1565C0', icon: '🚗' },
