@@ -43,9 +43,9 @@ serve(async (req) => {
   }
 
   try {
-    const apiKey = Deno.env.get("GROQ_API_KEY");
+    const apiKey = Deno.env.get("OPENROUTER_API_KEY");
     if (!apiKey) {
-      return json({ error: "GROQ_API_KEY nicht konfiguriert" });
+      return json({ error: "OPENROUTER_API_KEY nicht konfiguriert" });
     }
 
     const body = await req.json();
@@ -105,14 +105,16 @@ serve(async (req) => {
       messages.push({ role: "user", content: "Starte das Szenario." });
     }
 
-    const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    const orRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Authorization": "Bearer " + apiKey,
+        "HTTP-Referer": "https://feuerwehr-grammetal.vercel.app",
+        "X-Title": "Feuerwehr Grammetal KI-Ausbilder",
       },
       body: JSON.stringify({
-        model: "llama-3.1-8b-instant",
+        model: "meta-llama/llama-3.1-8b-instruct:free",
         messages,
         temperature: 0.65,
         max_tokens: 700,
@@ -120,18 +122,18 @@ serve(async (req) => {
       }),
     });
 
-    if (!groqRes.ok) {
-      const err = await groqRes.text();
-      console.error("Groq Fehler:", groqRes.status, err);
-      return json({ error: "Groq API Fehler " + groqRes.status + ": " + err.slice(0, 200) });
+    if (!orRes.ok) {
+      const err = await orRes.text();
+      console.error("OpenRouter Fehler:", orRes.status, err);
+      return json({ error: "KI-Fehler " + orRes.status + ": " + err.slice(0, 200) });
     }
 
-    const groqData = await groqRes.json();
-    const antwort = groqData?.choices?.[0]?.message?.content ?? "";
+    const orData = await orRes.json();
+    const antwort = orData?.choices?.[0]?.message?.content ?? "";
 
     if (!antwort) {
-      console.error("Leere Antwort von Groq:", JSON.stringify(groqData));
-      return json({ error: "Keine Antwort von Groq erhalten." });
+      console.error("Leere Antwort von OpenRouter:", JSON.stringify(orData));
+      return json({ error: "Keine Antwort von der KI erhalten." });
     }
 
     return json({ antwort });
