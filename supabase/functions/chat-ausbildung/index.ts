@@ -73,7 +73,7 @@ serve(async (req) => {
         if (rw && rw.length > 0) {
           regelwerkeText = "\n\n=== OFFIZIELLE REGELWERKE (massgeblich fuer Bewertung) ===\n";
           for (const r of rw) {
-            const text = (r.inhalt_text ?? "").slice(0, 8000);
+            const text = (r.inhalt_text ?? "").slice(0, 2000);
             regelwerkeText += "\n--- " + r.titel + " ---\n" + text + "\n";
           }
           regelwerkeText += "\n=== ENDE REGELWERKE ===\n";
@@ -89,13 +89,14 @@ serve(async (req) => {
       (szenario ? "\n\nAKTUELLES SZENARIO:\n" + szenario : "");
 
     // Nachrichten fuer Groq (OpenAI-kompatibles Format)
-    // Nur die letzten 10 Nachrichten senden um Token-Limit nicht zu sprengen
-    const letzteNachrichten = nachrichten.slice(-10);
+    // Nur die letzten 6 Nachrichten senden um Token-Limit einzuhalten
+    const letzteNachrichten = nachrichten.slice(-6);
     const messages: Array<{ role: string; content: string }> = [
       { role: "system", content: systemPrompt },
       ...letzteNachrichten.map((m) => ({
         role: m.role === "assistant" ? "assistant" : "user",
-        content: m.content,
+        // KI-Antworten auf 800 Zeichen kuerzen um Tokens zu sparen
+        content: m.role === "assistant" ? m.content.slice(0, 800) : m.content,
       })),
     ];
 
@@ -111,10 +112,10 @@ serve(async (req) => {
         "Authorization": "Bearer " + apiKey,
       },
       body: JSON.stringify({
-        model: "llama-3.3-70b-versatile",
+        model: "llama-3.1-8b-instant",
         messages,
         temperature: 0.65,
-        max_tokens: 1200,
+        max_tokens: 700,
         top_p: 0.9,
       }),
     });
