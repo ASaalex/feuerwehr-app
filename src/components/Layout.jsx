@@ -145,50 +145,48 @@ export default function Layout() {
       <nav className="mobile-bottom-nav" style={{
         display: 'none', position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50,
         background: 'var(--gray-800)', borderTop: '1px solid rgba(255,255,255,0.08)',
-        padding: '6px 0 env(safe-area-inset-bottom)',
+        padding: '8px 0 env(safe-area-inset-bottom)',
         flexDirection: 'row', alignItems: 'center',
         overflowX: 'auto', WebkitOverflowScrolling: 'touch',
-        // PWA (Standalone-Modus): verhindert, dass iOS horizontale Wischgesten
-        // als Vor/Zurück-Navigation abfängt und blockiert damit Scroll der Bottom-Nav
         touchAction: 'pan-x',
         overscrollBehaviorX: 'contain',
-        scrollbarWidth: 'none',       // Firefox: Scrollbar verstecken
-        msOverflowStyle: 'none',      // IE/Edge: Scrollbar verstecken
+        scrollbarWidth: 'none',
+        msOverflowStyle: 'none',
       }}>
-        <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', minWidth: 'max-content', padding: '0 4px', touchAction: 'pan-x' }}>
+        <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', minWidth: 'max-content', padding: '0 6px', touchAction: 'pan-x' }}>
           {navFilter(NAV).map(item => (
             <NavLink key={item.to} to={item.to} end={item.exact}
               style={({ isActive }) => ({
-                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
-                padding: '5px 10px', borderRadius: 8, textDecoration: 'none', minWidth: 56,
+                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+                padding: '8px 14px', borderRadius: 10, textDecoration: 'none', minWidth: 66,
                 color: isActive ? 'white' : 'rgba(255,255,255,0.45)',
                 background: isActive ? 'rgba(192,57,43,0.3)' : 'transparent',
                 flexShrink: 0,
               })}>
-              <item.icon />
-              <span style={{ fontSize: 9, fontWeight: 500, whiteSpace: 'nowrap' }}>{item.label}</span>
+              <item.icon size={22} />
+              <span style={{ fontSize: 10, fontWeight: 500, whiteSpace: 'nowrap' }}>{item.label}</span>
             </NavLink>
           ))}
           {showAdmin && (
             <NavLink to="/admin"
               style={({ isActive }) => ({
-                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
-                padding: '5px 10px', borderRadius: 8, textDecoration: 'none', minWidth: 56,
+                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+                padding: '8px 14px', borderRadius: 10, textDecoration: 'none', minWidth: 66,
                 color: isActive ? 'white' : 'rgba(255,255,255,0.45)',
                 background: isActive ? 'rgba(192,57,43,0.3)' : 'transparent',
                 flexShrink: 0,
               })}>
-              <IconKameraden />
-              <span style={{ fontSize: 9, fontWeight: 500, whiteSpace: 'nowrap' }}>Admin</span>
+              <IconKameraden size={22} />
+              <span style={{ fontSize: 10, fontWeight: 500, whiteSpace: 'nowrap' }}>Admin</span>
             </NavLink>
           )}
           <button onClick={handleSignOut} style={{
-            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
-            padding: '5px 10px', background: 'transparent', border: 'none', cursor: 'pointer',
-            color: 'rgba(255,255,255,0.45)', minWidth: 56, flexShrink: 0,
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+            padding: '8px 14px', background: 'transparent', border: 'none', cursor: 'pointer',
+            color: 'rgba(255,255,255,0.45)', minWidth: 66, flexShrink: 0,
           }}>
-            <IconAbmelden />
-            <span style={{ fontSize: 9, fontWeight: 500, whiteSpace: 'nowrap' }}>Logout</span>
+            <IconAbmelden size={22} />
+            <span style={{ fontSize: 10, fontWeight: 500, whiteSpace: 'nowrap' }}>Logout</span>
           </button>
         </div>
       </nav>
@@ -202,7 +200,7 @@ export default function Layout() {
           .mobile-header { display: flex !important; }
           .mobile-bottom-nav { display: flex !important; }
           .main-content {
-            padding: 72px 12px 84px !important;
+            padding: 72px 12px 106px !important;
             min-width: 0;
             width: 100%;
             box-sizing: border-box;
@@ -210,7 +208,7 @@ export default function Layout() {
         }
         @media (max-width: 360px) {
           .mobile-header { padding: 10px 12px !important; }
-          .main-content { padding: 68px 10px 80px !important; }
+          .main-content { padding: 68px 10px 102px !important; }
         }
       `}</style>
     </div>
@@ -236,22 +234,22 @@ function rolleLabel(rolle) {
 function FlammenIcon() {
   return <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 2C12 2 7 8 7 13C7 15.76 9.24 18 12 18C14.76 18 17 15.76 17 13C17 8 12 2 12 2Z" fill="white" opacity="0.9"/><path d="M12 10C12 10 9 13 9 15C9 16.66 10.34 18 12 18C13.66 18 15 16.66 15 15C15 13 12 10 12 10Z" fill="rgba(255,255,255,0.5)"/></svg>
 }
-function IconDashboard() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg> }
-function IconDokumente() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg> }
-function IconAusbildung() {
-  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+function IconDashboard({ size = 16 }) { return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg> }
+function IconDokumente({ size = 16 }) { return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg> }
+function IconAusbildung({ size = 16 }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
 }
-function IconPruefungen() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="9,11 12,14 22,4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg> }
-function IconAufgaben() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg> }
-function IconKameraden() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> }
-function IconLehrgang() {
-  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
+function IconPruefungen({ size = 16 }) { return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="9,11 12,14 22,4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg> }
+function IconAufgaben({ size = 16 }) { return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg> }
+function IconKameraden({ size = 16 }) { return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> }
+function IconLehrgang({ size = 16 }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
 }
-function IconWachen() {
-  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9,22 9,12 15,12 15,22"/></svg>
+function IconWachen({ size = 16 }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9,22 9,12 15,12 15,22"/></svg>
 }
-function IconNutzerAnlegen() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg> }
-function IconAbmelden() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16,17 21,12 16,7"/><line x1="21" y1="12" x2="9" y2="12"/></svg> }
-function IconEinsatz() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg> }
-function IconSzenarien() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="9" y1="10" x2="15" y2="10"/><line x1="9" y1="14" x2="12" y2="14"/></svg> }
-function IconRegelwerke() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg> }
+function IconNutzerAnlegen({ size = 16 }) { return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg> }
+function IconAbmelden({ size = 16 }) { return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16,17 21,12 16,7"/><line x1="21" y1="12" x2="9" y2="12"/></svg> }
+function IconEinsatz({ size = 16 }) { return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg> }
+function IconSzenarien({ size = 16 }) { return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="9" y1="10" x2="15" y2="10"/><line x1="9" y1="14" x2="12" y2="14"/></svg> }
+function IconRegelwerke({ size = 16 }) { return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg> }
