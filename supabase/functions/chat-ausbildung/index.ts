@@ -114,7 +114,7 @@ serve(async (req) => {
         "X-Title": "Feuerwehr Grammetal KI-Ausbilder",
       },
       body: JSON.stringify({
-        model: "meta-llama/llama-3.1-8b-instruct:free",
+        model: "mistralai/mistral-7b-instruct:free",
         messages,
         temperature: 0.65,
         max_tokens: 700,
