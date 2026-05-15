@@ -114,7 +114,7 @@ serve(async (req) => {
         "X-Title": "Feuerwehr Grammetal KI-Ausbilder",
       },
       body: JSON.stringify({
-        model: "google/gemma-4-31b-it:free",
+        model: "openai/gpt-oss-20b:free",
         messages,
         temperature: 0.65,
         max_tokens: 700,
