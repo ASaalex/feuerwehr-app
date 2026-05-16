@@ -67,22 +67,73 @@ function extrahiereVorschriftRef(referenzText) {
   return { dokName, abschnitt, titelInhalt }
 }
 
+function istTocEintrag(text, idx, musterLen) {
+  // Prüft ob der Treffer in einem Inhaltsverzeichnis liegt:
+  // TOC-Zeilen enden auf Seitennummern oder folgen direkt auf weitere Nummern
+  const zeileNach = text.slice(idx + musterLen, idx + musterLen + 300)
+  const zeilen = zeileNach.split('\n').slice(0, 4)
+  // Wenn mind. 2 der nächsten 4 Zeilen mit Zahlen beginnen → wahrscheinlich TOC
+  const zahlZeilen = zeilen.filter(z => /^\s*[\d.]+\s/.test(z)).length
+  return zahlZeilen >= 2
+}
+
 function sucheAbschnittInText(text, abschnitt, titelInhalt) {
-  const suchTerme = [abschnitt, titelInhalt].filter(Boolean)
-  for (const term of suchTerme) {
-    const idx = text.toLowerCase().indexOf(term.toLowerCase())
-    if (idx !== -1) {
-      // Zeilenanfang vor dem Treffer suchen
-      let start = Math.max(0, text.lastIndexOf('\n', Math.max(0, idx - 50)) + 1)
-      let end = Math.min(text.length, idx + 2000)
-      // Sauberes Ende (nächster Abschnittsheader oder max. 2000 Zeichen)
-      const naechsterHeader = text.slice(idx + term.length, end).search(/\n(?:Abschnitt|§\s*\d|\d+\.\d+\s+[A-ZÄÖÜ])/i)
-      if (naechsterHeader !== -1 && naechsterHeader > 200) {
-        end = idx + term.length + naechsterHeader
+  if (!text) return null
+
+  const abschnittNr = abschnitt?.match(/[\d.]+/)?.[0] // z.B. "6" aus "Abschnitt 6"
+
+  // Suchmuster in absteigender Spezifität
+  const muster = []
+
+  // 1. Abschnittsnummer als eigenständige Überschrift: "\n6   " oder "\n6 Einsatz"
+  if (abschnittNr && titelInhalt) {
+    muster.push('\n' + abschnittNr + '   ' + titelInhalt)
+    muster.push('\n' + abschnittNr + '  ' + titelInhalt)
+    muster.push('\n' + abschnittNr + ' ' + titelInhalt)
+  }
+  if (abschnittNr) {
+    muster.push('\n' + abschnittNr + '   ')
+    muster.push('\n' + abschnittNr + '  ')
+  }
+  // 2. "Abschnitt 6" als eigene Zeile
+  if (abschnitt) {
+    muster.push('\n' + abschnitt)
+    muster.push(abschnitt + '\n')
+  }
+  // 3. Titel als eigene Zeile (letzter Fallback)
+  if (titelInhalt) {
+    muster.push('\n' + titelInhalt + '\n')
+    muster.push('\n' + titelInhalt + ' ')
+  }
+
+  for (const m of muster) {
+    let suchStart = 0
+    while (true) {
+      const idx = text.indexOf(m, suchStart)
+      if (idx === -1) break
+
+      // TOC-Einträge überspringen
+      if (!istTocEintrag(text, idx, m.length)) {
+        const start = Math.max(0, idx) // Zeilenstart inkl. Überschrift
+        const restText = text.slice(start + m.length)
+        // Nächsten Abschnittsheader finden (Zahl am Zeilenanfang oder "Abschnitt X")
+        const naechsterMatch = restText.search(/\n(?:\d+\s{2,}[A-ZÄÖÜ]|Abschnitt\s+\d|\d+\.\d+\s{2,})/m)
+        const end = start + m.length + (naechsterMatch !== -1 && naechsterMatch > 150 ? naechsterMatch : Math.min(restText.length, 2000))
+        return text.slice(start, end).trim()
       }
-      return text.slice(start, end).trim()
+      suchStart = idx + 1
     }
   }
+
+  // Letzter Fallback: einfache Textsuche (ignoriert TOC-Check)
+  for (const term of [abschnitt, titelInhalt].filter(Boolean)) {
+    const idx = text.toLowerCase().indexOf(term.toLowerCase())
+    if (idx !== -1) {
+      const start = Math.max(0, text.lastIndexOf('\n', Math.max(0, idx - 50)) + 1)
+      return text.slice(start, Math.min(text.length, idx + 2000)).trim()
+    }
+  }
+
   return null
 }
 
@@ -907,7 +958,7 @@ export default function AusbildungChatPage() {
               <div>
                 <div style={{ fontSize: 11, color: 'var(--gray-400)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2 }}>Dienstvorschrift</div>
                 <h3 style={{ margin: 0, fontSize: 15 }}>📖 {vorschriftModal.dokTitel}</h3>
-                <div style={{ fontSize: 12, color: '#6366F1', fontStyle: 'italic', marginTop: 3 }}>{vorschriftModal.referenz}</div>
+                <div style={{ fontSize: 12, color: '#6366F1', fontStyle: 'italic', marginTop: 3 }}>{renderMd(vorschriftModal.referenz)}</div>
               </div>
               <button className="btn btn-ghost btn-sm" onClick={() => setVorschriftModal(null)}>✕</button>
             </div>
