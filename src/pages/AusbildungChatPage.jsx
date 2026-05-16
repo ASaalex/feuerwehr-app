@@ -56,8 +56,38 @@ function extrahiereNote(nachrichten) {
   return null
 }
 
+// ── Vorschrift-Suche: findet den passenden Abschnitt im Regelwerk-Text ───────
+function extrahiereVorschriftRef(referenzText) {
+  const dokMatch = referenzText.match(/(?:FwDV\s*\d+|ThürBKG|ThuerBKG|DIN\s*[\dEN\-]+|UVV\s*\w+|vfdb\s*[\w\-]+)/i)
+  const dokName = dokMatch ? dokMatch[0].replace(/\s+/g, ' ').trim() : null
+  const abschnittMatch = referenzText.match(/(?:Abschnitt|§|Nr\.|Ziffer|Kapitel|Punkt)\s*[\d.]+/i)
+  const abschnitt = abschnittMatch ? abschnittMatch[0] : null
+  const titelMatch = referenzText.match(/"([^"]+)"/)
+  const titelInhalt = titelMatch ? titelMatch[1] : null
+  return { dokName, abschnitt, titelInhalt }
+}
+
+function sucheAbschnittInText(text, abschnitt, titelInhalt) {
+  const suchTerme = [abschnitt, titelInhalt].filter(Boolean)
+  for (const term of suchTerme) {
+    const idx = text.toLowerCase().indexOf(term.toLowerCase())
+    if (idx !== -1) {
+      // Zeilenanfang vor dem Treffer suchen
+      let start = Math.max(0, text.lastIndexOf('\n', Math.max(0, idx - 50)) + 1)
+      let end = Math.min(text.length, idx + 2000)
+      // Sauberes Ende (nächster Abschnittsheader oder max. 2000 Zeichen)
+      const naechsterHeader = text.slice(idx + term.length, end).search(/\n(?:Abschnitt|§\s*\d|\d+\.\d+\s+[A-ZÄÖÜ])/i)
+      if (naechsterHeader !== -1 && naechsterHeader > 200) {
+        end = idx + term.length + naechsterHeader
+      }
+      return text.slice(start, end).trim()
+    }
+  }
+  return null
+}
+
 // ── Nachricht-Renderer: parst das strukturierte Feedback-Format ──────────────
-function NachrichtBlase({ msg }) {
+function NachrichtBlase({ msg, onVorschriftClick }) {
   const istUser = msg.role === 'user'
 
   if (istUser) {
@@ -90,7 +120,7 @@ function NachrichtBlase({ msg }) {
         <div style={{ background: 'white', border: '1px solid var(--gray-100)', borderRadius: '4px 16px 16px 16px', overflow: 'hidden' }}>
           {zeilen.map((zeile, i) => {
             if (!zeile.trim()) return <div key={i} style={{ height: 6 }} />
-            return <ZeileFormatiert key={i} zeile={zeile} />
+            return <ZeileFormatiert key={i} zeile={zeile} onVorschriftClick={onVorschriftClick} />
           })}
         </div>
       </div>
@@ -105,7 +135,7 @@ function renderMd(text) {
   return parts.map((part, i) => i % 2 === 1 ? <strong key={i}>{part}</strong> : part)
 }
 
-function ZeileFormatiert({ zeile }) {
+function ZeileFormatiert({ zeile, onVorschriftClick }) {
   if (zeile.startsWith('✅')) {
     return (
       <div style={{ padding: '8px 14px', background: '#F0FDF4', borderLeft: '3px solid #16A34A', display: 'flex', gap: 6, alignItems: 'flex-start' }}>
@@ -123,10 +153,27 @@ function ZeileFormatiert({ zeile }) {
     )
   }
   if (zeile.startsWith('📖')) {
+    const referenzText = zeile.replace(/^📖\s*(VORSCHRIFT:?\s*)?/, '')
     return (
-      <div style={{ padding: '6px 14px', background: '#EEF2FF', borderLeft: '3px solid #6366F1', display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+      <div
+        onClick={() => onVorschriftClick?.(zeile)}
+        style={{
+          padding: '6px 14px', background: '#EEF2FF', borderLeft: '3px solid #6366F1',
+          display: 'flex', gap: 6, alignItems: 'flex-start',
+          cursor: onVorschriftClick ? 'pointer' : 'default',
+          transition: 'background 120ms',
+        }}
+        onMouseEnter={e => { if (onVorschriftClick) e.currentTarget.style.background = '#E0E7FF' }}
+        onMouseLeave={e => { e.currentTarget.style.background = '#EEF2FF' }}
+        title={onVorschriftClick ? 'Tippen zum Nachschlagen' : undefined}
+      >
         <span style={{ flexShrink: 0, marginTop: 1 }}>📖</span>
-        <span style={{ fontSize: 12, color: '#4338CA', lineHeight: 1.5, fontStyle: 'italic' }}>{zeile.replace(/^📖\s*(VORSCHRIFT:?\s*)?/, '')}</span>
+        <span style={{ fontSize: 12, color: '#4338CA', lineHeight: 1.5, fontStyle: 'italic' }}>
+          {renderMd(referenzText)}
+        </span>
+        {onVorschriftClick && (
+          <span style={{ flexShrink: 0, marginTop: 1, fontSize: 11, color: '#6366F1', marginLeft: 'auto', opacity: 0.7 }}>↗</span>
+        )}
       </div>
     )
   }
@@ -180,8 +227,10 @@ export default function AusbildungChatPage() {
   const [cooldown, setCooldown] = useState(0) // verbleibende Sekunden Wartezeit
   const cooldownRef = useRef(null)
   const [kiGuthaben, setKiGuthaben] = useState(null) // null = noch nicht geladen
+  const [regelwerke, setRegelwerke] = useState([])   // { titel, inhalt_text }[]
+  const [vorschriftModal, setVorschriftModal] = useState(null) // null | { referenz, dokTitel, abschnittText, gefunden }
 
-  useEffect(() => { ladeDaten(); ladeGuthaben() }, [])
+  useEffect(() => { ladeDaten(); ladeGuthaben(); ladeRegelwerke() }, [])
 
   async function ladeGuthaben() {
     const { data } = await supabase
@@ -190,6 +239,48 @@ export default function AusbildungChatPage() {
       .eq('id', profile.id)
       .single()
     setKiGuthaben(data?.ki_guthaben_cent ?? 0)
+  }
+
+  async function ladeRegelwerke() {
+    const { data } = await supabase
+      .from('regelwerke')
+      .select('titel, inhalt_text')
+      .eq('aktiv', true)
+      .not('inhalt_text', 'is', null)
+    setRegelwerke(data ?? [])
+  }
+
+  function oeffneVorschriftModal(zeile) {
+    const ref = zeile.replace(/^📖\s*(VORSCHRIFT:?\s*)?/, '').trim()
+    const { dokName, abschnitt, titelInhalt } = extrahiereVorschriftRef(ref)
+
+    // Passendes Regelwerk suchen
+    let gefundenesRw = null
+    if (dokName) {
+      const dokKey = dokName.replace(/\s+/g, '').toLowerCase()
+      gefundenesRw = regelwerke.find(rw =>
+        rw.titel.replace(/\s+/g, '').toLowerCase().includes(dokKey) ||
+        dokKey.includes(rw.titel.replace(/\s+/g, '').toLowerCase().split('–')[0].trim())
+      )
+    }
+    // Fallback: Volltext-Suche über alle Regelwerke
+    if (!gefundenesRw && (abschnitt || titelInhalt)) {
+      for (const rw of regelwerke) {
+        const fund = sucheAbschnittInText(rw.inhalt_text, abschnitt, titelInhalt)
+        if (fund) { gefundenesRw = rw; break }
+      }
+    }
+
+    const abschnittText = gefundenesRw
+      ? sucheAbschnittInText(gefundenesRw.inhalt_text, abschnitt, titelInhalt)
+      : null
+
+    setVorschriftModal({
+      referenz: ref,
+      dokTitel: gefundenesRw?.titel ?? dokName ?? 'Dienstvorschrift',
+      abschnittText,
+      gefunden: !!gefundenesRw,
+    })
   }
 
   // Cooldown-Timer: zählt sekündlich runter
@@ -781,7 +872,7 @@ export default function AusbildungChatPage() {
         )}
 
         {nachrichten.map((msg, i) => (
-          <NachrichtBlase key={i} msg={msg} />
+          <NachrichtBlase key={i} msg={msg} onVorschriftClick={regelwerke.length > 0 ? oeffneVorschriftModal : null} />
         ))}
 
         {ladend && nachrichten.length > 0 && (
@@ -803,6 +894,50 @@ export default function AusbildungChatPage() {
 
         <div ref={chatEndeRef} />
       </div>
+
+      {/* ── Vorschrift-Popup ──────────────────────────────────────────────────── */}
+      {vorschriftModal && (
+        <div
+          className="modal-backdrop"
+          onClick={e => e.target === e.currentTarget && setVorschriftModal(null)}
+          style={{ zIndex: 1100 }}
+        >
+          <div className="modal" style={{ maxWidth: 600, maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
+            <div className="modal-header" style={{ flexShrink: 0 }}>
+              <div>
+                <div style={{ fontSize: 11, color: 'var(--gray-400)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2 }}>Dienstvorschrift</div>
+                <h3 style={{ margin: 0, fontSize: 15 }}>📖 {vorschriftModal.dokTitel}</h3>
+                <div style={{ fontSize: 12, color: '#6366F1', fontStyle: 'italic', marginTop: 3 }}>{vorschriftModal.referenz}</div>
+              </div>
+              <button className="btn btn-ghost btn-sm" onClick={() => setVorschriftModal(null)}>✕</button>
+            </div>
+
+            <div style={{ overflowY: 'auto', padding: '16px 20px', flex: 1 }}>
+              {vorschriftModal.abschnittText ? (
+                <div style={{ fontSize: 13, color: 'var(--gray-800)', lineHeight: 1.75, whiteSpace: 'pre-wrap', fontFamily: 'var(--mono, monospace)', background: '#F8FAFC', borderRadius: 8, padding: '12px 16px', border: '1px solid var(--gray-100)' }}>
+                  {vorschriftModal.abschnittText}
+                </div>
+              ) : vorschriftModal.gefunden ? (
+                <div style={{ color: 'var(--gray-500)', fontSize: 13, textAlign: 'center', padding: '24px 0' }}>
+                  <div style={{ fontSize: 28, marginBottom: 10 }}>🔍</div>
+                  <div>Der genaue Abschnitt konnte im Dokument nicht gefunden werden.</div>
+                  <div style={{ fontSize: 12, marginTop: 6, color: 'var(--gray-400)' }}>Das Regelwerk ist hinterlegt – der Abschnitt liegt möglicherweise außerhalb des indexierten Bereichs.</div>
+                </div>
+              ) : (
+                <div style={{ color: 'var(--gray-500)', fontSize: 13, textAlign: 'center', padding: '24px 0' }}>
+                  <div style={{ fontSize: 28, marginBottom: 10 }}>📂</div>
+                  <div>Dieses Regelwerk ist noch nicht hinterlegt.</div>
+                  <div style={{ fontSize: 12, marginTop: 6, color: 'var(--gray-400)' }}>Bitte unter <strong>Administration → Regelwerke</strong> das entsprechende PDF hochladen.</div>
+                </div>
+              )}
+            </div>
+
+            <div style={{ flexShrink: 0, padding: '12px 20px', borderTop: '1px solid var(--gray-100)', display: 'flex', justifyContent: 'flex-end' }}>
+              <button className="btn btn-secondary" onClick={() => setVorschriftModal(null)}>Schließen</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Eingabe (nur bei aktiver, nicht abgeschlossener Session) */}
       {!istVerlauf && !abgeschlossen && (
