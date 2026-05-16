@@ -22,6 +22,21 @@ const SCHWIERIGKEIT_FARBE = {
   schwer: { bg: '#FCE4EC', text: '#880E4F' },
 }
 
+const FUNKTION_META = [
+  { key: 'gruppenfuehrer',  label: 'Gruppenführer',  kuerzel: 'GF',      icon: '🎯', farbe: '#3B82F6',
+    beschreibung: 'Lageerkundung, Befehlsgebung, Kommunikation mit EL' },
+  { key: 'melder',          label: 'Melder',          kuerzel: 'Me',      icon: '📻', farbe: '#8B5CF6',
+    beschreibung: 'Meldungsübermittlung, Verbindungsdienst' },
+  { key: 'angriffstrupp',   label: 'Angriffstrupp',   kuerzel: 'A-Trupp', icon: '🔥', farbe: '#EF4444',
+    beschreibung: 'Brandbekämpfung, Menschenrettung, Atemschutz' },
+  { key: 'wassertrupp',     label: 'Wassertrupp',     kuerzel: 'W-Trupp', icon: '💧', farbe: '#0EA5E9',
+    beschreibung: 'Wasserversorgung, Strahlrohrbedienung' },
+  { key: 'schlauchtrupp',   label: 'Schlauchtrupp',   kuerzel: 'S-Trupp', icon: '🔗', farbe: '#F59E0B',
+    beschreibung: 'Schlauchmanagement, Wasserversorgung verlegen' },
+  { key: 'maschinist',      label: 'Maschinist',      kuerzel: 'Ma',      icon: '⚙️', farbe: '#6B7280',
+    beschreibung: 'Pumpenführung, Fahrzeugbedienung, Hydrant' },
+]
+
 const NOTE_META = {
   A: { bg: '#DCFCE7', text: '#15803D', label: 'Note A' },
   B: { bg: '#D1FAE5', text: '#065F46', label: 'Note B' },
@@ -144,6 +159,7 @@ export default function AusbildungChatPage() {
   const [loading, setLoading] = useState(true)
   const [auswertungSessions, setAuswertungSessions] = useState([])
   const [auswertungLoading, setAuswertungLoading] = useState(false)
+  const [funktionModal, setFunktionModal] = useState(null) // { szenario, fortsetzen? }
 
   const istAdmin = ['wehrleiter', 'gemeindebrandmeister', 'ausbilder'].includes(profile?.rolle)
 
@@ -214,12 +230,13 @@ export default function AusbildungChatPage() {
     setAuswertungLoading(false)
   }
 
-  async function starteSzenario(szenario) {
+  async function starteSzenario(szenario, funktion) {
     // Guthaben prüfen
     if (kiGuthaben !== null && kiGuthaben <= 0) {
       setFehler('💳 Kein KI-Guthaben vorhanden. Bitte den Wehrleiter um Aufladung bitten.')
       return
     }
+    setFunktionModal(null)
     setFehler('')
     setLadend(true)
     setAbgeschlossen(false)
@@ -239,27 +256,30 @@ export default function AusbildungChatPage() {
       return
     }
 
-    setAktSession({ ...sess, szenario })
+    const session = { ...sess, szenario, funktion }
+    setAktSession(session)
     setPhase('chat')
 
     // Erste KI-Nachricht: Alarmierung starten
     const init = [{ role: 'user', content: 'Starte das Szenario. Beschreibe die Alarmierungsmeldung.' }]
-    await rufKiAuf(init, { ...sess, szenario }, szenario)
+    await rufKiAuf(init, session, szenario, funktion)
     setLadend(false)
   }
 
   async function zufallsSzenario() {
     if (!szenarien.length) return
     const zuf = szenarien[Math.floor(Math.random() * szenarien.length)]
-    await starteSzenario(zuf)
+    setFunktionModal({ szenario: zuf })
   }
 
-  async function rufKiAuf(msgs, session, szenario) {
+  async function rufKiAuf(msgs, session, szenario, funktion) {
+    const funk = funktion ?? session?.funktion
     const { data, error } = await supabase.functions.invoke('chat-ausbildung', {
       body: {
         nachrichten: msgs,
         szenario: `${szenario.anfangs_meldung}\n\nKategorie: ${szenario.kategorie}\nSchwierigkeit: ${szenario.schwierigkeitsgrad}`,
         kamerad_id: profile.id,
+        funktion: funk ?? null,
       },
     })
 
@@ -317,7 +337,7 @@ export default function AusbildungChatPage() {
     setEingabe('')
     setLadend(true)
 
-    await rufKiAuf(neueNachrichten, aktSession, aktSession.szenario)
+    await rufKiAuf(neueNachrichten, aktSession, aktSession.szenario, aktSession.funktion)
     setLadend(false)
   }
 
@@ -347,14 +367,25 @@ export default function AusbildungChatPage() {
       setFehler('💳 Kein KI-Guthaben vorhanden. Bitte den Wehrleiter um Aufladung bitten.')
       return
     }
+    // Szenario-Daten ermitteln, dann Funktionswahl anzeigen
+    const szenario = szenarien.find(s => s.id === sess.szenario_id)
+      ?? { id: sess.szenario_id, titel: sess.szenario_titel, kategorie: 'sonstiges', anfangs_meldung: sess.szenario_titel ?? '', schwierigkeitsgrad: 'mittel' }
     setFehler('')
     setAbgeschlossen(false)
     setNachrichten(sess.nachrichten ?? [])
-    // Szenario-Daten aus geladenem Array oder per DB-Abfrage
-    const szenario = szenarien.find(s => s.id === sess.szenario_id)
-      ?? { id: sess.szenario_id, titel: sess.szenario_titel, kategorie: 'sonstiges', anfangs_meldung: sess.szenario_titel ?? '', schwierigkeitsgrad: 'mittel' }
-    setAktSession({ ...sess, szenario })
-    setPhase('chat')
+    setFunktionModal({ szenario, fortsetzen: sess })
+  }
+
+  async function waehlesFunktionUndStarte(funktion) {
+    const { szenario, fortsetzen } = funktionModal
+    if (fortsetzen) {
+      // Bestehende Session fortsetzen
+      setFunktionModal(null)
+      setAktSession({ ...fortsetzen, szenario, funktion })
+      setPhase('chat')
+    } else {
+      await starteSzenario(szenario, funktion)
+    }
   }
 
   async function loescheSession(sess, e) {
@@ -426,7 +457,7 @@ export default function AusbildungChatPage() {
                 {szInKat.map(sz => {
                   const schw = SCHWIERIGKEIT_FARBE[sz.schwierigkeitsgrad] ?? SCHWIERIGKEIT_FARBE.mittel
                   return (
-                    <button key={sz.id} onClick={() => starteSzenario(sz)}
+                    <button key={sz.id} onClick={() => setFunktionModal({ szenario: sz })}
                       style={{
                         background: meta.farbe, border: `1.5px solid ${meta.textfarbe}20`,
                         borderRadius: 12, padding: '14px 16px', textAlign: 'left', cursor: 'pointer',
@@ -462,6 +493,52 @@ export default function AusbildungChatPage() {
             <div style={{ fontSize: 40, marginBottom: 12 }}>📋</div>
             <p style={{ color: 'var(--gray-400)' }}>Noch keine Szenarien vorhanden.</p>
             <p style={{ color: 'var(--gray-400)', fontSize: 13, marginTop: 4 }}>Wehrleiter oder Ausbilder können Szenarien unter Administration → Szenarien anlegen.</p>
+          </div>
+        )}
+
+        {/* ── Funktionswahl-Modal ──────────────────────────────────────────── */}
+        {funktionModal && (
+          <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && setFunktionModal(null)}>
+            <div className="modal" style={{ maxWidth: 480 }}>
+              <div className="modal-header">
+                <div>
+                  <div style={{ fontSize: 11, color: 'var(--gray-400)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>
+                    {funktionModal.fortsetzen ? 'Übung fortsetzen' : 'Übung starten'}
+                  </div>
+                  <h3 style={{ margin: 0, fontSize: 15 }}>{funktionModal.szenario?.titel}</h3>
+                </div>
+                <button className="btn btn-ghost btn-sm" onClick={() => setFunktionModal(null)}>✕</button>
+              </div>
+
+              <p style={{ fontSize: 13, color: 'var(--gray-500)', margin: '4px 0 20px' }}>
+                In welcher Funktion übst du heute?
+              </p>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                {FUNKTION_META.map(f => (
+                  <button key={f.key}
+                    onClick={() => waehlesFunktionUndStarte(f.key)}
+                    disabled={ladend}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px',
+                      borderRadius: 10, border: `1.5px solid ${f.farbe}30`, background: `${f.farbe}08`,
+                      cursor: 'pointer', textAlign: 'left', transition: 'all 150ms',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.background = `${f.farbe}18`; e.currentTarget.style.borderColor = `${f.farbe}60` }}
+                    onMouseLeave={e => { e.currentTarget.style.background = `${f.farbe}08`; e.currentTarget.style.borderColor = `${f.farbe}30` }}
+                  >
+                    <span style={{ fontSize: 22, flexShrink: 0 }}>{f.icon}</span>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: f.farbe, marginBottom: 2 }}>
+                        {f.label}
+                        <span style={{ fontSize: 10, fontWeight: 500, marginLeft: 5, color: 'var(--gray-400)' }}>{f.kuerzel}</span>
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--gray-400)', lineHeight: 1.4 }}>{f.beschreibung}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         )}
 
@@ -647,6 +724,14 @@ export default function AusbildungChatPage() {
             <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--gray-800)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {szenTitel}
             </span>
+            {aktSession?.funktion && (() => {
+              const f = FUNKTION_META.find(x => x.key === aktSession.funktion)
+              return f ? (
+                <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: `${f.farbe}15`, color: f.farbe, border: `1px solid ${f.farbe}30` }}>
+                  {f.icon} {f.kuerzel}
+                </span>
+              ) : null
+            })()}
             {abgeschlossen && <span style={{ fontSize: 11, padding: '2px 8px', background: '#ECFDF5', color: '#065F46', borderRadius: 10, fontWeight: 600 }}>Abgeschlossen</span>}
             {istVerlauf && !abgeschlossen && <span style={{ fontSize: 11, padding: '2px 8px', background: '#FFF8E1', color: '#F57F17', borderRadius: 10, fontWeight: 600 }}>Verlauf</span>}
           </div>

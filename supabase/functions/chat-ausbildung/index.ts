@@ -29,10 +29,11 @@ serve(async (req) => {
     const sb = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
 
     const body = await req.json();
-    const { nachrichten, szenario, kamerad_id } = body as {
+    const { nachrichten, szenario, kamerad_id, funktion } = body as {
       nachrichten: Array<{ role: string; content: string }>;
       szenario?: string;
       kamerad_id?: string;
+      funktion?: string;
     };
 
     if (!nachrichten || !Array.isArray(nachrichten)) {
@@ -83,8 +84,64 @@ serve(async (req) => {
       }
     }
 
-    // ── System-Prompt (wird gecacht) ─────────────────────────────────────────
-    const systemText = [
+    // ── Funktions-spezifische Anweisungen ────────────────────────────────────
+    const funktionAnweisungen: Record<string, string> = {
+      gruppenfuehrer: `FUNKTION: Gruppenführer (GF)
+Stelle NUR Fragen und Situationen die für den Gruppenführer relevant sind:
+- Lageerkundung und Lagemeldung an die Einsatzleitung
+- Befehlsgebung an die Trupps nach FwDV 3 (Auftrag, Mittel, Ziel, Weg, Zeit)
+- Kommunikation per Funk (Einsatzstellenfunk)
+- Sicherheitsbeobachtung, Rückzugssignal
+- Führungsvorgang: Erkundung → Entschluss → Befehl → Kontrolle
+Ignoriere Detailaufgaben der einzelnen Trupps (Schlauchlegen, Pumpe etc.).`,
+      melder: `FUNKTION: Melder (Me)
+Stelle NUR Fragen und Situationen die für den Melder relevant sind:
+- Entgegennahme und Übermittlung von Meldungen (exakt, vollständig)
+- Verbindung zwischen Einheiten und Einsatzleitung
+- Lagemeldungen formulieren (Ort, Lage, Massnahmen, Kräfte)
+- Funkkommunikation und Meldungsprotokoll
+Keine taktischen Führungsentscheidungen oder Truppaufgaben.`,
+      angriffstrupp: `FUNKTION: Angriffstrupp (A-Trupp)
+Stelle NUR Fragen und Situationen die für den Angriffstrupp relevant sind:
+- Vornahme des C-Rohrs / Hohlstrahlrohrs
+- Menschenrettung und Personensuche
+- Atemschutzeinsatz (PA anlegen, Druckkontrolle, Notfallsignal)
+- Eindringen in verrauchte Bereiche, Riegelstellung
+- Kommunikation mit GF und Atemschutzüberwachung
+Keine Wasserversorgungsaufgaben oder Pumpenführung.`,
+      wassertrupp: `FUNKTION: Wassertrupp (W-Trupp)
+Stelle NUR Fragen und Situationen die für den Wassertrupp relevant sind:
+- Aufbau der Wasserversorgung vom Hydrant zum Fahrzeug
+- Bedienung des B-Schlauch und Übergangsstück
+- Sicherstellung der Wasserversorgung (Meldung: "Wasser marsch/halt")
+- Rettungsunterstützung als Sicherungstrupp
+- Strahlrohrführung als Backup des Angriffstrupps
+Keine Pumpen- oder Fahrzeugbedienung.`,
+      schlauchtrupp: `FUNKTION: Schlauchtrupp (S-Trupp)
+Stelle NUR Fragen und Situationen die für den Schlauchtrupp relevant sind:
+- Verlegen von B- und C-Schläuchen
+- Aufbau der langen Wegstrecke / Pendelverkehr
+- Sichern der Schlauchleitung, Kupplungen schließen
+- Absicherung der Einsatzstelle (Warndreieck, Leitkegel)
+- Unterstützung Wasserversorgung über lange Strecken
+Keine Brandbekämpfung im Innenangriff.`,
+      maschinist: `FUNKTION: Maschinist (Ma)
+Stelle NUR Fragen und Situationen die für den Maschinisten relevant sind:
+- Inbetriebnahme der Feuerlöschkreiselpumpe (FP)
+- Hydrantenbetrieb: Standrohr setzen, Hydrant öffnen
+- Druckeinstellung und Überwachung (Eingangs-/Ausgangsdruck)
+- Pumpenleistung anpassen, Kavitation vermeiden
+- Fahrzeugaufstellung, Sicherung (Unterlegkeile, Feststellbremse)
+- Aggregat und Stromversorgung bedienen
+Keine Aufgaben im Innenangriff oder Schlauchmanagement.`,
+    };
+
+    const funktionText = funktion && funktionAnweisungen[funktion]
+      ? "\n\n" + funktionAnweisungen[funktion]
+      : "";
+
+    // ── Statischer System-Prompt (wird gecacht) ──────────────────────────────
+    const statischerText = [
       "Du bist ein erfahrener Feuerwehr-Ausbilder der Freiwilligen Feuerwehr Grammetal (Thueringen).",
       "Fuehre einen Kamerad durch ein taktisches Einsatz-Szenario. Antworte immer auf Deutsch.",
       "Bleibe ausschliesslich beim Thema Feuerwehr-Ausbildung.",
@@ -95,7 +152,7 @@ serve(async (req) => {
       "",
       "ABLAUF (ca. 5-8 Schritte):",
       "1. Alarmierungsmeldung beschreiben (Szenario nutzen)",
-      "2. Konkrete Frage zum naechsten Handlungsschritt stellen",
+      "2. Konkrete Frage zum naechsten Handlungsschritt stellen – NUR aus Sicht der angegebenen Funktion",
       "3. Antwort bewerten und naechste Situation beschreiben",
       "4. Nach letztem Schritt: Gesamtbewertung mit Note",
       "",
@@ -111,8 +168,13 @@ serve(async (req) => {
       "- ❌ FEHLT und 📖 VORSCHRIFT nur wenn etwas fehlte",
       "- Letzter Schritt: 🏁 UEBUNG BEENDET: [Note A/B/C/D und Zusammenfassung]",
       regelwerkeText,
-      szenario ? "\n\nAKTUELLES SZENARIO:\n" + szenario : "",
     ].join("\n");
+
+    // Dynamischer Teil (nicht gecacht): Szenario + Funktion
+    const dynamischerText = [
+      szenario ? "\n\nAKTUELLES SZENARIO:\n" + szenario : "",
+      funktionText,
+    ].join("");
 
     // ── Nachrichten aufbereiten ──────────────────────────────────────────────
     const letzteNachrichten = nachrichten
@@ -143,9 +205,12 @@ serve(async (req) => {
         system: [
           {
             type: "text",
-            text: systemText,
-            cache_control: { type: "ephemeral" },
+            text: statischerText,
+            cache_control: { type: "ephemeral" }, // Regelwerke werden gecacht
           },
+          ...(dynamischerText.trim()
+            ? [{ type: "text", text: dynamischerText }]
+            : []),
         ],
         messages,
       }),
