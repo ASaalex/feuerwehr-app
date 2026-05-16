@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { format } from 'date-fns'
 import { de } from 'date-fns/locale'
+import { renderMd, findeVorschriftInRegelwerken } from '../lib/vorschriftSuche'
 
 const COOLDOWN_SEK = 8 // Mindestabstand zwischen zwei KI-Anfragen
 
@@ -56,83 +57,6 @@ function extrahiereNote(nachrichten) {
   return null
 }
 
-// ── Vorschrift-Suche: findet den passenden Abschnitt im Regelwerk-Text ───────
-function extrahiereVorschriftRef(referenzText) {
-  const dokMatch = referenzText.match(/(?:FwDV\s*\d+|ThürBKG|ThuerBKG|DIN\s*[\dEN\-]+|UVV\s*\w+|vfdb\s*[\w\-]+)/i)
-  const dokName = dokMatch ? dokMatch[0].replace(/\s+/g, ' ').trim() : null
-  const abschnittMatch = referenzText.match(/(?:Abschnitt|§|Nr\.|Ziffer|Kapitel|Punkt)\s*[\d.]+/i)
-  const abschnitt = abschnittMatch ? abschnittMatch[0] : null
-  const titelMatch = referenzText.match(/"([^"]+)"/)
-  const titelInhalt = titelMatch ? titelMatch[1] : null
-  return { dokName, abschnitt, titelInhalt }
-}
-
-// Zuverlässige TOC-Erkennung:
-// In einem Inhaltsverzeichnis steht der NÄCHSTE Hauptabschnitt (z.B. "7   ") sehr bald
-// nach dem aktuellen (z.B. "6   Einsatz eines Zuges  6.1...  7   Einsatzablauf").
-// Im echten Inhalt kommt der nächste Hauptabschnitt erst nach 1000+ Zeichen.
-function istInhaltsverzeichnis(text, idx, matchLen, nrInt) {
-  const blick = text.slice(idx + matchLen, idx + matchLen + 450)
-  // Check 1: nächste Ganzzahl-Sektion erscheint in 450 Zeichen → TOC
-  if (nrInt) {
-    const naechste = nrInt + 1
-    // z.B. "  7   E" – Leerzeichen, dann 7, dann mind. 2 Spaces, dann Großbuchstabe
-    if (new RegExp('[\\s]' + naechste + '\\s{2,}[A-ZÄÖÜ]').test(blick)) return true
-    // oder am Anfang des Blicks "7   E"
-    if (new RegExp('^' + naechste + '\\s{2,}[A-ZÄÖÜ]').test(blick.trim())) return true
-  }
-  // Check 2: Hohe Dichte von Abschnittsnummern (4+) in 450 Zeichen
-  const treffer = (blick.match(/(?:^|\s)\d+(\.\d+)*\s{2,}/gm) || []).length
-  if (treffer >= 4) return true
-  return false
-}
-
-function sucheAbschnittInText(text, abschnitt, titelInhalt) {
-  if (!text) return null
-
-  const nr = abschnitt?.match(/[\d.]+/)?.[0]             // "6" aus "Abschnitt 6"
-  const nrInt = nr && !nr.includes('.') ? parseInt(nr) : null  // 6 als Integer
-
-  // Suchmuster: spezifisch → allgemein
-  const kandidaten = []
-  if (nr && titelInhalt) {
-    kandidaten.push(nr + '   ' + titelInhalt)
-    kandidaten.push(nr + '  ' + titelInhalt)
-    kandidaten.push(nr + ' ' + titelInhalt)
-  }
-  if (nr) {
-    kandidaten.push('  ' + nr + '   ')
-    kandidaten.push('\n' + nr + '   ')
-    kandidaten.push('\n' + nr + '  ')
-  }
-  if (abschnitt) kandidaten.push(abschnitt)
-  if (titelInhalt) kandidaten.push(titelInhalt)
-
-  for (const k of kandidaten) {
-    let von = 0
-    while (true) {
-      const idx = text.toLowerCase().indexOf(k.toLowerCase(), von)
-      if (idx === -1) break
-
-      if (!istInhaltsverzeichnis(text, idx, k.length, nrInt)) {
-        // Echter Abschnitt gefunden – Abschnitt bis zum nächsten Hauptabschnitt extrahieren
-        const start = idx
-        const rest = text.slice(idx + k.length)
-        const abschnittsEnde = nrInt
-          ? rest.search(new RegExp('(?:\\s{2,}|\\n)' + (nrInt + 1) + '\\s{2,}[A-ZÄÖÜ]'))
-          : rest.search(/(?:\s{2,}|\n)\d+\s{3,}[A-ZÄÖÜ]/)
-        const laenge = (abschnittsEnde > 100 && abschnittsEnde < 3000)
-          ? abschnittsEnde
-          : Math.min(rest.length, 2500)
-        return text.slice(start, idx + k.length + laenge).trim()
-      }
-      von = idx + 1
-    }
-  }
-
-  return null
-}
-
 // ── Nachricht-Renderer: parst das strukturierte Feedback-Format ──────────────
 function NachrichtBlase({ msg, onVorschriftClick }) {
   const istUser = msg.role === 'user'
@@ -173,13 +97,6 @@ function NachrichtBlase({ msg, onVorschriftClick }) {
       </div>
     </div>
   )
-}
-
-// Markdown-Fettschrift **text** → <strong>
-function renderMd(text) {
-  const parts = text.split(/\*\*(.*?)\*\*/g)
-  if (parts.length === 1) return text
-  return parts.map((part, i) => i % 2 === 1 ? <strong key={i}>{part}</strong> : part)
 }
 
 function ZeileFormatiert({ zeile, onVorschriftClick }) {
@@ -298,36 +215,7 @@ export default function AusbildungChatPage() {
   }
 
   function oeffneVorschriftModal(zeile) {
-    const ref = zeile.replace(/^📖\s*(VORSCHRIFT:?\s*)?/, '').trim()
-    const { dokName, abschnitt, titelInhalt } = extrahiereVorschriftRef(ref)
-
-    // Passendes Regelwerk suchen
-    let gefundenesRw = null
-    if (dokName) {
-      const dokKey = dokName.replace(/\s+/g, '').toLowerCase()
-      gefundenesRw = regelwerke.find(rw =>
-        rw.titel.replace(/\s+/g, '').toLowerCase().includes(dokKey) ||
-        dokKey.includes(rw.titel.replace(/\s+/g, '').toLowerCase().split('–')[0].trim())
-      )
-    }
-    // Fallback: Volltext-Suche über alle Regelwerke
-    if (!gefundenesRw && (abschnitt || titelInhalt)) {
-      for (const rw of regelwerke) {
-        const fund = sucheAbschnittInText(rw.inhalt_text, abschnitt, titelInhalt)
-        if (fund) { gefundenesRw = rw; break }
-      }
-    }
-
-    const abschnittText = gefundenesRw
-      ? sucheAbschnittInText(gefundenesRw.inhalt_text, abschnitt, titelInhalt)
-      : null
-
-    setVorschriftModal({
-      referenz: ref,
-      dokTitel: gefundenesRw?.titel ?? dokName ?? 'Dienstvorschrift',
-      abschnittText,
-      gefunden: !!gefundenesRw,
-    })
+    setVorschriftModal(findeVorschriftInRegelwerken(zeile, regelwerke))
   }
 
   // Cooldown-Timer: zählt sekündlich runter
