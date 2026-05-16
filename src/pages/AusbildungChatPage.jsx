@@ -67,70 +67,61 @@ function extrahiereVorschriftRef(referenzText) {
   return { dokName, abschnitt, titelInhalt }
 }
 
-function istTocEintrag(text, idx, musterLen) {
-  // Prüft ob der Treffer in einem Inhaltsverzeichnis liegt:
-  // TOC-Zeilen enden auf Seitennummern oder folgen direkt auf weitere Nummern
-  const zeileNach = text.slice(idx + musterLen, idx + musterLen + 300)
-  const zeilen = zeileNach.split('\n').slice(0, 4)
-  // Wenn mind. 2 der nächsten 4 Zeilen mit Zahlen beginnen → wahrscheinlich TOC
-  const zahlZeilen = zeilen.filter(z => /^\s*[\d.]+\s/.test(z)).length
-  return zahlZeilen >= 2
+// Prüft ob ein Treffer echter Abschnitt ist (nicht TOC).
+// PDFs werden oft ohne Zeilenumbrüche extrahiert – Segmente durch 2+ Spaces trennen.
+// TOC: Nach dem Treffer kommen sofort weitere Nummern-Einträge.
+// Echter Abschnitt: Nach dem Treffer kommt bald Fließtext (>50 Zeichen, keine Zahl am Anfang).
+function istEchterAbschnitt(nachText) {
+  const segmente = nachText.split(/\s{2,}|\n+/).map(s => s.trim()).filter(s => s.length > 3)
+  let toc = 0, inhalt = 0
+  for (const seg of segmente.slice(0, 10)) {
+    if (/^\d+(\.\d+)*\s+\w{2}/.test(seg) && seg.length < 90) toc++
+    else if (seg.length > 50 && !/^\d+[\d.]*\s/.test(seg)) inhalt++
+  }
+  return inhalt > 0 && inhalt >= toc
 }
 
 function sucheAbschnittInText(text, abschnitt, titelInhalt) {
   if (!text) return null
 
-  const abschnittNr = abschnitt?.match(/[\d.]+/)?.[0] // z.B. "6" aus "Abschnitt 6"
+  const nr = abschnitt?.match(/[\d.]+/)?.[0] // "6" aus "Abschnitt 6"
 
-  // Suchmuster in absteigender Spezifität
-  const muster = []
-
-  // 1. Abschnittsnummer als eigenständige Überschrift: "\n6   " oder "\n6 Einsatz"
-  if (abschnittNr && titelInhalt) {
-    muster.push('\n' + abschnittNr + '   ' + titelInhalt)
-    muster.push('\n' + abschnittNr + '  ' + titelInhalt)
-    muster.push('\n' + abschnittNr + ' ' + titelInhalt)
+  // Kandidaten: spezifisch → allgemein
+  const kandidaten = []
+  if (nr && titelInhalt) {
+    kandidaten.push(nr + '   ' + titelInhalt)
+    kandidaten.push(nr + '  ' + titelInhalt)
+    kandidaten.push(nr + ' ' + titelInhalt)
   }
-  if (abschnittNr) {
-    muster.push('\n' + abschnittNr + '   ')
-    muster.push('\n' + abschnittNr + '  ')
+  if (nr) {
+    kandidaten.push('  ' + nr + '   ')
+    kandidaten.push('\n' + nr + '   ')
+    kandidaten.push('\n' + nr + '  ')
   }
-  // 2. "Abschnitt 6" als eigene Zeile
   if (abschnitt) {
-    muster.push('\n' + abschnitt)
-    muster.push(abschnitt + '\n')
+    kandidaten.push(abschnitt)
   }
-  // 3. Titel als eigene Zeile (letzter Fallback)
   if (titelInhalt) {
-    muster.push('\n' + titelInhalt + '\n')
-    muster.push('\n' + titelInhalt + ' ')
+    kandidaten.push(titelInhalt)
   }
 
-  for (const m of muster) {
-    let suchStart = 0
+  for (const k of kandidaten) {
+    let von = 0
     while (true) {
-      const idx = text.indexOf(m, suchStart)
+      const idx = text.toLowerCase().indexOf(k.toLowerCase(), von)
       if (idx === -1) break
 
-      // TOC-Einträge überspringen
-      if (!istTocEintrag(text, idx, m.length)) {
-        const start = Math.max(0, idx) // Zeilenstart inkl. Überschrift
-        const restText = text.slice(start + m.length)
-        // Nächsten Abschnittsheader finden (Zahl am Zeilenanfang oder "Abschnitt X")
-        const naechsterMatch = restText.search(/\n(?:\d+\s{2,}[A-ZÄÖÜ]|Abschnitt\s+\d|\d+\.\d+\s{2,})/m)
-        const end = start + m.length + (naechsterMatch !== -1 && naechsterMatch > 150 ? naechsterMatch : Math.min(restText.length, 2000))
-        return text.slice(start, end).trim()
-      }
-      suchStart = idx + 1
-    }
-  }
+      const nachText = text.slice(idx + k.length, idx + k.length + 700)
 
-  // Letzter Fallback: einfache Textsuche (ignoriert TOC-Check)
-  for (const term of [abschnitt, titelInhalt].filter(Boolean)) {
-    const idx = text.toLowerCase().indexOf(term.toLowerCase())
-    if (idx !== -1) {
-      const start = Math.max(0, text.lastIndexOf('\n', Math.max(0, idx - 50)) + 1)
-      return text.slice(start, Math.min(text.length, idx + 2000)).trim()
+      if (istEchterAbschnitt(nachText)) {
+        const start = Math.max(0, idx)
+        const rest = text.slice(idx + k.length)
+        // Nächsten Haupt-Abschnitt auf gleicher Ebene finden (z.B. "  7   " oder "\n7 ")
+        const naechster = rest.search(/(?:\s{2,}|\n)\d+\s{2,}[A-ZÄÖÜ]/)
+        const laenge = naechster > 150 ? naechster : Math.min(rest.length, 2500)
+        return text.slice(start, idx + k.length + laenge).trim()
+      }
+      von = idx + 1
     }
   }
 
