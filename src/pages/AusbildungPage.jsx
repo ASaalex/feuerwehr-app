@@ -27,6 +27,10 @@ export default function AusbildungPage() {
   const [auslagenModal, setAuslagenModal] = useState(false)
   const [verdienstModal, setVerdienstModal] = useState(false)
   const [kiGuthaben, setKiGuthaben] = useState(null)
+  const [wissensFrage, setWissensFrage] = useState('')
+  const [wissensAntwort, setWissensAntwort] = useState(null)
+  const [wissensLoading, setWissensLoading] = useState(false)
+  const [wissensFehler, setWissensFehler] = useState('')
 
   useEffect(() => { fetchDokumente(); fetchKiGuthaben() }, [])
 
@@ -37,6 +41,40 @@ export default function AusbildungPage() {
       .eq('id', profile.id)
       .single()
     setKiGuthaben(data?.ki_guthaben_cent ?? 0)
+  }
+
+  async function stelleWissensFrage() {
+    const q = wissensFrage.trim()
+    if (!q || wissensLoading) return
+    setWissensLoading(true)
+    setWissensAntwort(null)
+    setWissensFehler('')
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat-ausbildung`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`,
+          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({
+          modus: 'wissen',
+          frage: q,
+          kamerad_id: profile?.id,
+        }),
+      })
+      const data = await res.json()
+      if (data.error) {
+        setWissensFehler(data.error === 'KEIN_GUTHABEN' ? 'Kein Guthaben – bitte beim Wehrleiter aufladen.' : data.error)
+      } else {
+        setWissensAntwort(data.antwort)
+        if (data.guthaben_rest_cent !== undefined) setKiGuthaben(data.guthaben_rest_cent)
+      }
+    } catch (e) {
+      setWissensFehler('Verbindungsfehler – bitte erneut versuchen.')
+    }
+    setWissensLoading(false)
   }
 
   async function fetchDokumente() {
@@ -192,6 +230,101 @@ export default function AusbildungPage() {
           </div>
         </Link>
       )}
+
+      {/* Wissensfrage Banner */}
+      <div style={{ marginBottom: 20 }}>
+        <div style={{
+          background: 'linear-gradient(135deg, #1D4ED8 0%, #1E40AF 100%)',
+          borderRadius: 12, padding: '16px 20px',
+        }}>
+          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>KI-gestützt</div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: 'white', marginBottom: 4 }}>💬 Wissensfrage</div>
+          <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.75)', marginBottom: 12 }}>
+            Stelle eine Frage – KI antwortet direkt aus den Dienstvorschriften
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              placeholder="z.B. Wer baut die Wasserversorgung im Löscheinsatz auf?"
+              value={wissensFrage}
+              onChange={e => { setWissensFrage(e.target.value); setWissensAntwort(null); setWissensFehler('') }}
+              onKeyDown={e => e.key === 'Enter' && stelleWissensFrage()}
+              disabled={wissensLoading || (kiGuthaben !== null && kiGuthaben <= 0)}
+              style={{
+                flex: 1,
+                background: 'rgba(255,255,255,0.15)',
+                border: '1px solid rgba(255,255,255,0.3)',
+                color: 'white',
+                borderRadius: 8,
+                padding: '9px 13px',
+                fontSize: 14,
+                outline: 'none',
+              }}
+            />
+            <button
+              onClick={stelleWissensFrage}
+              disabled={!wissensFrage.trim() || wissensLoading || (kiGuthaben !== null && kiGuthaben <= 0)}
+              style={{
+                background: 'rgba(255,255,255,0.2)',
+                border: '1px solid rgba(255,255,255,0.35)',
+                color: 'white',
+                borderRadius: 8,
+                padding: '9px 16px',
+                fontWeight: 600,
+                fontSize: 14,
+                cursor: 'pointer',
+                flexShrink: 0,
+                opacity: (!wissensFrage.trim() || wissensLoading || (kiGuthaben !== null && kiGuthaben <= 0)) ? 0.5 : 1,
+                transition: 'opacity 150ms',
+              }}
+            >
+              {wissensLoading ? '…' : 'Fragen →'}
+            </button>
+          </div>
+
+          {/* Antwort */}
+          {wissensLoading && (
+            <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, color: 'rgba(255,255,255,0.7)', fontSize: 13 }}>
+              <div style={{ width: 16, height: 16, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: 'white', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+              KI sucht in den Dienstvorschriften…
+            </div>
+          )}
+          {wissensFehler && (
+            <div style={{ marginTop: 10, background: 'rgba(254,202,202,0.15)', border: '1px solid rgba(254,202,202,0.3)', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#FCA5A5' }}>
+              ⚠️ {wissensFehler}
+            </div>
+          )}
+          {wissensAntwort && (
+            <div style={{ marginTop: 12, background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 8, padding: '12px 16px', fontSize: 14, color: 'white', lineHeight: 1.65 }}>
+              {wissensAntwort.split('\n').map((zeile, i) => {
+                const trimmed = zeile.trim()
+                if (!trimmed) return <div key={i} style={{ height: 6 }} />
+                const icon =
+                  trimmed.startsWith('📖') ? { bg: 'rgba(255,255,255,0.1)', weight: 600 } :
+                  trimmed.startsWith('✅') ? { bg: 'rgba(134,239,172,0.15)', weight: 500 } :
+                  trimmed.startsWith('💡') ? { bg: 'rgba(253,224,71,0.1)', weight: 400 } : null
+                const parts = trimmed.split(/\*\*(.*?)\*\*/g)
+                const rendered = parts.length === 1 ? trimmed : parts.map((p, j) => j % 2 === 1 ? <strong key={j}>{p}</strong> : p)
+                return icon ? (
+                  <div key={i} style={{ background: icon.bg, borderRadius: 6, padding: '6px 10px', marginBottom: 6, fontWeight: icon.weight }}>{rendered}</div>
+                ) : (
+                  <div key={i} style={{ paddingLeft: 4, marginBottom: 3 }}>{rendered}</div>
+                )
+              })}
+              <button
+                onClick={() => { setWissensAntwort(null); setWissensFrage('') }}
+                style={{ marginTop: 10, background: 'transparent', border: '1px solid rgba(255,255,255,0.3)', color: 'rgba(255,255,255,0.7)', borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
+              >
+                Neue Frage
+              </button>
+            </div>
+          )}
+          {kiGuthaben !== null && kiGuthaben <= 0 && (
+            <div style={{ marginTop: 10, fontSize: 12, color: 'rgba(255,255,255,0.6)' }}>
+              💳 Kein Guthaben – Wehrleiter um Aufladung bitten
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Filter */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
