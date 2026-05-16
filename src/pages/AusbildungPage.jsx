@@ -315,25 +315,24 @@ export default function AusbildungPage() {
                 const trimmed = zeile.trim()
                 if (!trimmed) return <div key={i} style={{ height: 6 }} />
                 if (trimmed.startsWith('📖')) {
-                  const kannNachschlagen = regelwerke.length > 0
                   return (
                     <div
                       key={i}
-                      onClick={() => kannNachschlagen && oeffneWissensVorschriftModal(trimmed)}
+                      onClick={() => oeffneWissensVorschriftModal(trimmed)}
                       style={{
                         background: 'rgba(255,255,255,0.1)', borderRadius: 6, padding: '6px 10px',
                         marginBottom: 6, fontWeight: 600,
-                        cursor: kannNachschlagen ? 'pointer' : 'default',
+                        cursor: 'pointer',
                         display: 'flex', alignItems: 'flex-start', gap: 6,
                         transition: 'background 120ms',
                       }}
-                      onMouseEnter={e => { if (kannNachschlagen) e.currentTarget.style.background = 'rgba(255,255,255,0.18)' }}
+                      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.18)' }}
                       onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)' }}
-                      title={kannNachschlagen ? 'Tippen zum Nachschlagen' : undefined}
+                      title="Tippen zum Nachschlagen"
                     >
                       <span style={{ flexShrink: 0 }}>📖</span>
                       <span style={{ flex: 1 }}>{renderMd(trimmed.replace(/^📖\s*(VORSCHRIFT:?\s*)?/, ''))}</span>
-                      {kannNachschlagen && <span style={{ flexShrink: 0, opacity: 0.7, fontSize: 12 }}>↗</span>}
+                      <span style={{ flexShrink: 0, opacity: 0.7, fontSize: 12 }}>↗</span>
                     </div>
                   )
                 }
