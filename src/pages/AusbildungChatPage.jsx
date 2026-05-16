@@ -67,26 +67,33 @@ function extrahiereVorschriftRef(referenzText) {
   return { dokName, abschnitt, titelInhalt }
 }
 
-// Prüft ob ein Treffer echter Abschnitt ist (nicht TOC).
-// PDFs werden oft ohne Zeilenumbrüche extrahiert – Segmente durch 2+ Spaces trennen.
-// TOC: Nach dem Treffer kommen sofort weitere Nummern-Einträge.
-// Echter Abschnitt: Nach dem Treffer kommt bald Fließtext (>50 Zeichen, keine Zahl am Anfang).
-function istEchterAbschnitt(nachText) {
-  const segmente = nachText.split(/\s{2,}|\n+/).map(s => s.trim()).filter(s => s.length > 3)
-  let toc = 0, inhalt = 0
-  for (const seg of segmente.slice(0, 10)) {
-    if (/^\d+(\.\d+)*\s+\w{2}/.test(seg) && seg.length < 90) toc++
-    else if (seg.length > 50 && !/^\d+[\d.]*\s/.test(seg)) inhalt++
+// Zuverlässige TOC-Erkennung:
+// In einem Inhaltsverzeichnis steht der NÄCHSTE Hauptabschnitt (z.B. "7   ") sehr bald
+// nach dem aktuellen (z.B. "6   Einsatz eines Zuges  6.1...  7   Einsatzablauf").
+// Im echten Inhalt kommt der nächste Hauptabschnitt erst nach 1000+ Zeichen.
+function istInhaltsverzeichnis(text, idx, matchLen, nrInt) {
+  const blick = text.slice(idx + matchLen, idx + matchLen + 450)
+  // Check 1: nächste Ganzzahl-Sektion erscheint in 450 Zeichen → TOC
+  if (nrInt) {
+    const naechste = nrInt + 1
+    // z.B. "  7   E" – Leerzeichen, dann 7, dann mind. 2 Spaces, dann Großbuchstabe
+    if (new RegExp('[\\s]' + naechste + '\\s{2,}[A-ZÄÖÜ]').test(blick)) return true
+    // oder am Anfang des Blicks "7   E"
+    if (new RegExp('^' + naechste + '\\s{2,}[A-ZÄÖÜ]').test(blick.trim())) return true
   }
-  return inhalt > 0 && inhalt >= toc
+  // Check 2: Hohe Dichte von Abschnittsnummern (4+) in 450 Zeichen
+  const treffer = (blick.match(/(?:^|\s)\d+(\.\d+)*\s{2,}/gm) || []).length
+  if (treffer >= 4) return true
+  return false
 }
 
 function sucheAbschnittInText(text, abschnitt, titelInhalt) {
   if (!text) return null
 
-  const nr = abschnitt?.match(/[\d.]+/)?.[0] // "6" aus "Abschnitt 6"
+  const nr = abschnitt?.match(/[\d.]+/)?.[0]             // "6" aus "Abschnitt 6"
+  const nrInt = nr && !nr.includes('.') ? parseInt(nr) : null  // 6 als Integer
 
-  // Kandidaten: spezifisch → allgemein
+  // Suchmuster: spezifisch → allgemein
   const kandidaten = []
   if (nr && titelInhalt) {
     kandidaten.push(nr + '   ' + titelInhalt)
@@ -98,12 +105,8 @@ function sucheAbschnittInText(text, abschnitt, titelInhalt) {
     kandidaten.push('\n' + nr + '   ')
     kandidaten.push('\n' + nr + '  ')
   }
-  if (abschnitt) {
-    kandidaten.push(abschnitt)
-  }
-  if (titelInhalt) {
-    kandidaten.push(titelInhalt)
-  }
+  if (abschnitt) kandidaten.push(abschnitt)
+  if (titelInhalt) kandidaten.push(titelInhalt)
 
   for (const k of kandidaten) {
     let von = 0
@@ -111,14 +114,16 @@ function sucheAbschnittInText(text, abschnitt, titelInhalt) {
       const idx = text.toLowerCase().indexOf(k.toLowerCase(), von)
       if (idx === -1) break
 
-      const nachText = text.slice(idx + k.length, idx + k.length + 700)
-
-      if (istEchterAbschnitt(nachText)) {
-        const start = Math.max(0, idx)
+      if (!istInhaltsverzeichnis(text, idx, k.length, nrInt)) {
+        // Echter Abschnitt gefunden – Abschnitt bis zum nächsten Hauptabschnitt extrahieren
+        const start = idx
         const rest = text.slice(idx + k.length)
-        // Nächsten Haupt-Abschnitt auf gleicher Ebene finden (z.B. "  7   " oder "\n7 ")
-        const naechster = rest.search(/(?:\s{2,}|\n)\d+\s{2,}[A-ZÄÖÜ]/)
-        const laenge = naechster > 150 ? naechster : Math.min(rest.length, 2500)
+        const abschnittsEnde = nrInt
+          ? rest.search(new RegExp('(?:\\s{2,}|\\n)' + (nrInt + 1) + '\\s{2,}[A-ZÄÖÜ]'))
+          : rest.search(/(?:\s{2,}|\n)\d+\s{3,}[A-ZÄÖÜ]/)
+        const laenge = (abschnittsEnde > 100 && abschnittsEnde < 3000)
+          ? abschnittsEnde
+          : Math.min(rest.length, 2500)
         return text.slice(start, idx + k.length + laenge).trim()
       }
       von = idx + 1
