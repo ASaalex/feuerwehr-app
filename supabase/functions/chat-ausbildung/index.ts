@@ -29,15 +29,26 @@ serve(async (req) => {
     const sb = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
 
     const body = await req.json();
-    const { nachrichten, szenario, kamerad_id, funktion } = body as {
+    const { nachrichten, szenario, kamerad_id, funktion, modus, frage } = body as {
       nachrichten: Array<{ role: string; content: string }>;
       szenario?: string;
       kamerad_id?: string;
       funktion?: string;
+      modus?: string;   // 'simulation' (default) | 'wissen'
+      frage?: string;   // Nur bei modus='wissen'
     };
 
-    if (!nachrichten || !Array.isArray(nachrichten)) {
-      return json({ error: "nachrichten fehlt oder ungueltig" });
+    // Modus prüfen
+    const istWissensModus = modus === "wissen";
+
+    if (istWissensModus) {
+      if (!frage || typeof frage !== "string" || !frage.trim()) {
+        return json({ error: "frage fehlt oder leer" });
+      }
+    } else {
+      if (!nachrichten || !Array.isArray(nachrichten)) {
+        return json({ error: "nachrichten fehlt oder ungueltig" });
+      }
     }
 
     // ── Guthaben prüfen ──────────────────────────────────────────────────────
@@ -146,54 +157,90 @@ Keine Aufgaben im Innenangriff oder Schlauchmanagement.`,
       ? "\n\n" + funktionAnweisungen[funktion]
       : "";
 
-    // ── Statischer System-Prompt (wird gecacht) ──────────────────────────────
-    const statischerText = [
-      "Du bist ein erfahrener Feuerwehr-Ausbilder der Freiwilligen Feuerwehr Grammetal (Thueringen).",
-      "Fuehre einen Kamerad durch ein taktisches Einsatz-Szenario. Antworte immer auf Deutsch.",
-      "Bleibe ausschliesslich beim Thema Feuerwehr-Ausbildung.",
-      "",
-      regelwerkeGeladen
-        ? "WICHTIG: Bewerte und erklaere AUSSCHLIESSLICH nach den unten bereitgestellten Dienstvorschriften. Erfinde keine Paragraphen, Abschnitte oder Regeln die nicht darin stehen. Wenn etwas nicht in den Vorschriften steht, erwaehne es nicht."
-        : "WICHTIG: Es wurden keine Dienstvorschriften hinterlegt. Teile dem Kamerad mit, dass der Administrator zuerst die offiziellen PDFs (FwDV, ThuerBKG) unter Administration -> Regelwerke hochladen muss, bevor Uebungen bewertet werden koennen.",
-      "",
-      "ABLAUF (ca. 5-8 Schritte):",
-      "1. Alarmierungsmeldung beschreiben (Szenario nutzen)",
-      "2. Konkrete Frage zum naechsten Handlungsschritt stellen – NUR aus Sicht der angegebenen Funktion",
-      "3. Antwort bewerten und naechste Situation beschreiben",
-      "4. Nach letztem Schritt: Gesamtbewertung mit Note",
-      "",
-      "ANTWORTFORMAT (exakt einhalten, Emojis nicht weglassen):",
-      "✅ RICHTIG: [Was korrekt war]",
-      "❌ FEHLT: [Was fehlte oder falsch war]",
-      "📖 VORSCHRIFT: [Exakter Titel des Dokuments aus den Dienstvorschriften]",
-      "▶ SITUATION: [Naechste Einsatzsituation und Frage]",
-      "",
-      "Regeln:",
-      "- Erster Schritt NUR: ▶ SITUATION mit Alarmierung und erster Frage",
-      "- ✅ RICHTIG und ▶ SITUATION sind immer Pflicht",
-      "- ❌ FEHLT und 📖 VORSCHRIFT nur wenn etwas fehlte",
-      "- Letzter Schritt: 🏁 UEBUNG BEENDET: [Note A/B/C/D und Zusammenfassung]",
-      regelwerkeText,
-    ].join("\n");
+    // ── System-Prompt & Messages je nach Modus ──────────────────────────────
+    let systemBlocks: Array<{ type: string; text: string; cache_control?: { type: string } }>;
+    let messages: Array<{ role: string; content: string }>;
+    let maxTokens = 1024;
 
-    // Dynamischer Teil (nicht gecacht): Szenario + Funktion
-    const dynamischerText = [
-      szenario ? "\n\nAKTUELLES SZENARIO:\n" + szenario : "",
-      funktionText,
-    ].join("");
+    if (istWissensModus) {
+      // ── Wissens-Modus: einfache Frage → Antwort aus Dienstvorschriften ──
+      const wissenSystemText = [
+        "Du bist ein Feuerwehr-Experte der Freiwilligen Feuerwehr Grammetal (Thueringen). Antworte immer auf Deutsch.",
+        "Beantworte Fragen zu Feuerwehr-Vorschriften, Taktik und Ausruestung AUSSCHLIESSLICH basierend auf den unten bereitgestellten Dienstvorschriften.",
+        "",
+        regelwerkeGeladen
+          ? "WICHTIG: Zitiere AUSSCHLIESSLICH aus den bereitgestellten Dienstvorschriften. Erfinde keine Regeln. Wenn die Antwort nicht in den Vorschriften steht, sage das klar."
+          : "WICHTIG: Es wurden keine Dienstvorschriften hinterlegt. Bitte den Administrator, die offiziellen PDFs (FwDV, ThuerBKG) unter Administration → Regelwerke hochzuladen.",
+        "",
+        "ANTWORTFORMAT:",
+        "📖 VORSCHRIFT: [Exakter Titel und ggf. Abschnitt aus den Dienstvorschriften]",
+        "✅ ANTWORT: [Klare, direkte Antwort auf die Frage]",
+        "💡 HINWEIS: [Ergaenzende Informationen oder Besonderheiten, falls vorhanden]",
+        "",
+        "Halte die Antwort praezise und praxisorientiert (max. 5-8 Saetze).",
+        regelwerkeText,
+      ].join("\n");
 
-    // ── Nachrichten aufbereiten ──────────────────────────────────────────────
-    const letzteNachrichten = nachrichten
-      .filter(m => !(m.role === "user" && m.content === "Starte das Szenario. Beschreibe die Alarmierungsmeldung."))
-      .slice(-10);
+      systemBlocks = [
+        { type: "text", text: wissenSystemText, cache_control: { type: "ephemeral" } },
+      ];
+      messages = [{ role: "user", content: frage! }];
+      maxTokens = 512;
+    } else {
+      // ── Simulations-Modus ────────────────────────────────────────────────
+      const statischerText = [
+        "Du bist ein erfahrener Feuerwehr-Ausbilder der Freiwilligen Feuerwehr Grammetal (Thueringen).",
+        "Fuehre einen Kamerad durch ein taktisches Einsatz-Szenario. Antworte immer auf Deutsch.",
+        "Bleibe ausschliesslich beim Thema Feuerwehr-Ausbildung.",
+        "",
+        regelwerkeGeladen
+          ? "WICHTIG: Bewerte und erklaere AUSSCHLIESSLICH nach den unten bereitgestellten Dienstvorschriften. Erfinde keine Paragraphen, Abschnitte oder Regeln die nicht darin stehen. Wenn etwas nicht in den Vorschriften steht, erwaehne es nicht."
+          : "WICHTIG: Es wurden keine Dienstvorschriften hinterlegt. Teile dem Kamerad mit, dass der Administrator zuerst die offiziellen PDFs (FwDV, ThuerBKG) unter Administration -> Regelwerke hochladen muss, bevor Uebungen bewertet werden koennen.",
+        "",
+        "ABLAUF (ca. 5-8 Schritte):",
+        "1. Alarmierungsmeldung beschreiben (Szenario nutzen)",
+        "2. Konkrete Frage zum naechsten Handlungsschritt stellen – NUR aus Sicht der angegebenen Funktion",
+        "3. Antwort bewerten und naechste Situation beschreiben",
+        "4. Nach letztem Schritt: Gesamtbewertung mit Note",
+        "",
+        "ANTWORTFORMAT (exakt einhalten, Emojis nicht weglassen):",
+        "✅ RICHTIG: [Was korrekt war]",
+        "❌ FEHLT: [Was fehlte oder falsch war]",
+        "📖 VORSCHRIFT: [Exakter Titel des Dokuments aus den Dienstvorschriften]",
+        "▶ SITUATION: [Naechste Einsatzsituation und Frage]",
+        "",
+        "Regeln:",
+        "- Erster Schritt NUR: ▶ SITUATION mit Alarmierung und erster Frage",
+        "- ✅ RICHTIG und ▶ SITUATION sind immer Pflicht",
+        "- ❌ FEHLT und 📖 VORSCHRIFT nur wenn etwas fehlte",
+        "- Letzter Schritt: 🏁 UEBUNG BEENDET: [Note A/B/C/D und Zusammenfassung]",
+        regelwerkeText,
+      ].join("\n");
 
-    const messages = letzteNachrichten.map(m => ({
-      role: m.role === "assistant" ? "assistant" : "user",
-      content: m.content,
-    }));
+      const dynamischerText = [
+        szenario ? "\n\nAKTUELLES SZENARIO:\n" + szenario : "",
+        funktionText,
+      ].join("");
 
-    if (messages.length === 0 || messages[0].role !== "user") {
-      messages.unshift({ role: "user", content: "Starte das Szenario." });
+      systemBlocks = [
+        { type: "text", text: statischerText, cache_control: { type: "ephemeral" } },
+        ...(dynamischerText.trim()
+          ? [{ type: "text", text: dynamischerText }]
+          : []),
+      ];
+
+      const letzteNachrichten = (nachrichten ?? [])
+        .filter(m => !(m.role === "user" && m.content === "Starte das Szenario. Beschreibe die Alarmierungsmeldung."))
+        .slice(-10);
+
+      messages = letzteNachrichten.map(m => ({
+        role: m.role === "assistant" ? "assistant" : "user",
+        content: m.content,
+      }));
+
+      if (messages.length === 0 || messages[0].role !== "user") {
+        messages.unshift({ role: "user", content: "Starte das Szenario." });
+      }
     }
 
     // ── Anthropic API mit Prompt Caching ─────────────────────────────────────
@@ -207,17 +254,8 @@ Keine Aufgaben im Innenangriff oder Schlauchmanagement.`,
       },
       body: JSON.stringify({
         model: "claude-haiku-4-5",
-        max_tokens: 1024,
-        system: [
-          {
-            type: "text",
-            text: statischerText,
-            cache_control: { type: "ephemeral" }, // Regelwerke werden gecacht
-          },
-          ...(dynamischerText.trim()
-            ? [{ type: "text", text: dynamischerText }]
-            : []),
-        ],
+        max_tokens: maxTokens,
+        system: systemBlocks,
         messages,
       }),
     });
