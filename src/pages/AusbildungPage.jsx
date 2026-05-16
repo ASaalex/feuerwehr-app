@@ -7,6 +7,7 @@ import { de } from 'date-fns/locale'
 import AusbildungsnachweisModal from './AusbildungsnachweisModal'
 import AuslagenerstattungModal from './AuslagenerstattungModal'
 import VerdienstausfallModal from './VerdienstausfallModal'
+import { renderMd, findeVorschriftInRegelwerken } from '../lib/vorschriftSuche'
 
 const KATEGORIEN = [
   { value: 'ausbildung', label: 'Ausbildung' },
@@ -31,8 +32,19 @@ export default function AusbildungPage() {
   const [wissensAntwort, setWissensAntwort] = useState(null)
   const [wissensLoading, setWissensLoading] = useState(false)
   const [wissensFehler, setWissensFehler] = useState('')
+  const [regelwerke, setRegelwerke] = useState([])
+  const [wissensVorschriftModal, setWissensVorschriftModal] = useState(null)
 
-  useEffect(() => { fetchDokumente(); fetchKiGuthaben() }, [])
+  useEffect(() => { fetchDokumente(); fetchKiGuthaben(); ladeRegelwerke() }, [])
+
+  async function ladeRegelwerke() {
+    const { data } = await supabase
+      .from('regelwerke')
+      .select('titel, inhalt_text')
+      .eq('aktiv', true)
+      .not('inhalt_text', 'is', null)
+    setRegelwerke(data ?? [])
+  }
 
   async function fetchKiGuthaben() {
     const { data } = await supabase
@@ -75,6 +87,10 @@ export default function AusbildungPage() {
       setWissensFehler('Verbindungsfehler – bitte erneut versuchen.')
     }
     setWissensLoading(false)
+  }
+
+  function oeffneWissensVorschriftModal(zeile) {
+    setWissensVorschriftModal(findeVorschriftInRegelwerken(zeile, regelwerke))
   }
 
   async function fetchDokumente() {
@@ -298,17 +314,44 @@ export default function AusbildungPage() {
               {wissensAntwort.split('\n').map((zeile, i) => {
                 const trimmed = zeile.trim()
                 if (!trimmed) return <div key={i} style={{ height: 6 }} />
-                const icon =
-                  trimmed.startsWith('📖') ? { bg: 'rgba(255,255,255,0.1)', weight: 600 } :
-                  trimmed.startsWith('✅') ? { bg: 'rgba(134,239,172,0.15)', weight: 500 } :
-                  trimmed.startsWith('💡') ? { bg: 'rgba(253,224,71,0.1)', weight: 400 } : null
-                const parts = trimmed.split(/\*\*(.*?)\*\*/g)
-                const rendered = parts.length === 1 ? trimmed : parts.map((p, j) => j % 2 === 1 ? <strong key={j}>{p}</strong> : p)
-                return icon ? (
-                  <div key={i} style={{ background: icon.bg, borderRadius: 6, padding: '6px 10px', marginBottom: 6, fontWeight: icon.weight }}>{rendered}</div>
-                ) : (
-                  <div key={i} style={{ paddingLeft: 4, marginBottom: 3 }}>{rendered}</div>
-                )
+                if (trimmed.startsWith('📖')) {
+                  const kannNachschlagen = regelwerke.length > 0
+                  return (
+                    <div
+                      key={i}
+                      onClick={() => kannNachschlagen && oeffneWissensVorschriftModal(trimmed)}
+                      style={{
+                        background: 'rgba(255,255,255,0.1)', borderRadius: 6, padding: '6px 10px',
+                        marginBottom: 6, fontWeight: 600,
+                        cursor: kannNachschlagen ? 'pointer' : 'default',
+                        display: 'flex', alignItems: 'flex-start', gap: 6,
+                        transition: 'background 120ms',
+                      }}
+                      onMouseEnter={e => { if (kannNachschlagen) e.currentTarget.style.background = 'rgba(255,255,255,0.18)' }}
+                      onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)' }}
+                      title={kannNachschlagen ? 'Tippen zum Nachschlagen' : undefined}
+                    >
+                      <span style={{ flexShrink: 0 }}>📖</span>
+                      <span style={{ flex: 1 }}>{renderMd(trimmed.replace(/^📖\s*(VORSCHRIFT:?\s*)?/, ''))}</span>
+                      {kannNachschlagen && <span style={{ flexShrink: 0, opacity: 0.7, fontSize: 12 }}>↗</span>}
+                    </div>
+                  )
+                }
+                if (trimmed.startsWith('✅')) {
+                  return (
+                    <div key={i} style={{ background: 'rgba(134,239,172,0.15)', borderRadius: 6, padding: '6px 10px', marginBottom: 6, fontWeight: 500 }}>
+                      {renderMd(trimmed)}
+                    </div>
+                  )
+                }
+                if (trimmed.startsWith('💡')) {
+                  return (
+                    <div key={i} style={{ background: 'rgba(253,224,71,0.1)', borderRadius: 6, padding: '6px 10px', marginBottom: 6 }}>
+                      {renderMd(trimmed)}
+                    </div>
+                  )
+                }
+                return <div key={i} style={{ paddingLeft: 4, marginBottom: 3 }}>{renderMd(trimmed)}</div>
               })}
               <button
                 onClick={() => { setWissensAntwort(null); setWissensFrage('') }}
@@ -453,6 +496,50 @@ export default function AusbildungPage() {
       {ausbildungsModal && <AusbildungsnachweisModal onClose={() => setAusbildungsModal(false)} />}
       {auslagenModal && <AuslagenerstattungModal onClose={() => setAuslagenModal(false)} />}
       {verdienstModal && <VerdienstausfallModal onClose={() => setVerdienstModal(false)} />}
+
+      {/* Vorschrift-Popup (Wissensfrage) */}
+      {wissensVorschriftModal && (
+        <div
+          className="modal-backdrop"
+          onClick={e => e.target === e.currentTarget && setWissensVorschriftModal(null)}
+          style={{ zIndex: 1100 }}
+        >
+          <div className="modal" style={{ maxWidth: 600, maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
+            <div className="modal-header" style={{ flexShrink: 0 }}>
+              <div>
+                <div style={{ fontSize: 11, color: 'var(--gray-400)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2 }}>Dienstvorschrift</div>
+                <h3 style={{ margin: 0, fontSize: 15 }}>📖 {wissensVorschriftModal.dokTitel}</h3>
+                <div style={{ fontSize: 12, color: '#6366F1', fontStyle: 'italic', marginTop: 3 }}>{renderMd(wissensVorschriftModal.referenz)}</div>
+              </div>
+              <button className="btn btn-ghost btn-sm" onClick={() => setWissensVorschriftModal(null)}>✕</button>
+            </div>
+
+            <div style={{ overflowY: 'auto', padding: '16px 20px', flex: 1 }}>
+              {wissensVorschriftModal.abschnittText ? (
+                <div style={{ fontSize: 13, color: 'var(--gray-800)', lineHeight: 1.75, whiteSpace: 'pre-wrap', fontFamily: 'var(--mono, monospace)', background: '#F8FAFC', borderRadius: 8, padding: '12px 16px', border: '1px solid var(--gray-100)' }}>
+                  {wissensVorschriftModal.abschnittText}
+                </div>
+              ) : wissensVorschriftModal.gefunden ? (
+                <div style={{ color: 'var(--gray-500)', fontSize: 13, textAlign: 'center', padding: '24px 0' }}>
+                  <div style={{ fontSize: 28, marginBottom: 10 }}>🔍</div>
+                  <div>Der genaue Abschnitt konnte im Dokument nicht gefunden werden.</div>
+                  <div style={{ fontSize: 12, marginTop: 6, color: 'var(--gray-400)' }}>Das Regelwerk ist hinterlegt – der Abschnitt liegt möglicherweise außerhalb des indexierten Bereichs.</div>
+                </div>
+              ) : (
+                <div style={{ color: 'var(--gray-500)', fontSize: 13, textAlign: 'center', padding: '24px 0' }}>
+                  <div style={{ fontSize: 28, marginBottom: 10 }}>📂</div>
+                  <div>Dieses Regelwerk ist noch nicht hinterlegt.</div>
+                  <div style={{ fontSize: 12, marginTop: 6, color: 'var(--gray-400)' }}>Bitte unter <strong>Administration → Regelwerke</strong> das entsprechende PDF hochladen.</div>
+                </div>
+              )}
+            </div>
+
+            <div style={{ flexShrink: 0, padding: '12px 20px', borderTop: '1px solid var(--gray-100)', display: 'flex', justifyContent: 'flex-end' }}>
+              <button className="btn btn-secondary" onClick={() => setWissensVorschriftModal(null)}>Schließen</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
