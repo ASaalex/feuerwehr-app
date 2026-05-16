@@ -7,7 +7,7 @@ import { de } from 'date-fns/locale'
 import AusbildungsnachweisModal from './AusbildungsnachweisModal'
 import AuslagenerstattungModal from './AuslagenerstattungModal'
 import VerdienstausfallModal from './VerdienstausfallModal'
-import { renderMd, findeVorschriftInRegelwerken } from '../lib/vorschriftSuche'
+import { renderMd, findeVorschriftInRegelwerken } from '../lib/vorschriftSuche.jsx'
 
 const KATEGORIEN = [
   { value: 'ausbildung', label: 'Ausbildung' },
