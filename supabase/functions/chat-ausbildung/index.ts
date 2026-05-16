@@ -86,7 +86,8 @@ serve(async (req) => {
 
     // ── Funktions-spezifische Anweisungen ────────────────────────────────────
     const funktionAnweisungen: Record<string, string> = {
-      gruppenfuehrer: `FUNKTION: Gruppenführer (GF)
+      gruppenfuehrer: `ACHTUNG – FUNKTION DES KAMERADEN: Gruppenführer (GF)
+Der Kamerad übt AUSSCHLIESSLICH als Gruppenführer. Beginne die erste Situation mit "Du bist der Gruppenführer dieser Gruppe..." und spreche den Kamerad stets als "Gruppenführer" an. Nenne NIEMALS eine andere Funktion (nicht Maschinist, nicht Angriffstrupp etc.).
 Stelle NUR Fragen und Situationen die für den Gruppenführer relevant sind:
 - Lageerkundung und Lagemeldung an die Einsatzleitung
 - Befehlsgebung an die Trupps nach FwDV 3 (Auftrag, Mittel, Ziel, Weg, Zeit)
@@ -94,14 +95,16 @@ Stelle NUR Fragen und Situationen die für den Gruppenführer relevant sind:
 - Sicherheitsbeobachtung, Rückzugssignal
 - Führungsvorgang: Erkundung → Entschluss → Befehl → Kontrolle
 Ignoriere Detailaufgaben der einzelnen Trupps (Schlauchlegen, Pumpe etc.).`,
-      melder: `FUNKTION: Melder (Me)
+      melder: `ACHTUNG – FUNKTION DES KAMERADEN: Melder (Me)
+Der Kamerad übt AUSSCHLIESSLICH als Melder. Beginne die erste Situation mit "Du bist der Melder dieser Einheit..." und spreche den Kamerad stets als "Melder" an. Nenne NIEMALS eine andere Funktion.
 Stelle NUR Fragen und Situationen die für den Melder relevant sind:
 - Entgegennahme und Übermittlung von Meldungen (exakt, vollständig)
 - Verbindung zwischen Einheiten und Einsatzleitung
 - Lagemeldungen formulieren (Ort, Lage, Massnahmen, Kräfte)
 - Funkkommunikation und Meldungsprotokoll
 Keine taktischen Führungsentscheidungen oder Truppaufgaben.`,
-      angriffstrupp: `FUNKTION: Angriffstrupp (A-Trupp)
+      angriffstrupp: `ACHTUNG – FUNKTION DES KAMERADEN: Angriffstrupp (A-Trupp)
+Der Kamerad übt AUSSCHLIESSLICH als Angriffstruppmann/-führerin. Beginne die erste Situation mit "Du bist im Angriffstrupp..." und spreche den Kamerad stets als "Angriffstruppführer" an. Nenne NIEMALS eine andere Funktion.
 Stelle NUR Fragen und Situationen die für den Angriffstrupp relevant sind:
 - Vornahme des C-Rohrs / Hohlstrahlrohrs
 - Menschenrettung und Personensuche
@@ -109,7 +112,8 @@ Stelle NUR Fragen und Situationen die für den Angriffstrupp relevant sind:
 - Eindringen in verrauchte Bereiche, Riegelstellung
 - Kommunikation mit GF und Atemschutzüberwachung
 Keine Wasserversorgungsaufgaben oder Pumpenführung.`,
-      wassertrupp: `FUNKTION: Wassertrupp (W-Trupp)
+      wassertrupp: `ACHTUNG – FUNKTION DES KAMERADEN: Wassertrupp (W-Trupp)
+Der Kamerad übt AUSSCHLIESSLICH als Wassertruppmann/-führerin. Beginne die erste Situation mit "Du bist im Wassertrupp..." und spreche den Kamerad stets als "Wassertruppführer" an. Nenne NIEMALS eine andere Funktion.
 Stelle NUR Fragen und Situationen die für den Wassertrupp relevant sind:
 - Aufbau der Wasserversorgung vom Hydrant zum Fahrzeug
 - Bedienung des B-Schlauch und Übergangsstück
@@ -117,7 +121,8 @@ Stelle NUR Fragen und Situationen die für den Wassertrupp relevant sind:
 - Rettungsunterstützung als Sicherungstrupp
 - Strahlrohrführung als Backup des Angriffstrupps
 Keine Pumpen- oder Fahrzeugbedienung.`,
-      schlauchtrupp: `FUNKTION: Schlauchtrupp (S-Trupp)
+      schlauchtrupp: `ACHTUNG – FUNKTION DES KAMERADEN: Schlauchtrupp (S-Trupp)
+Der Kamerad übt AUSSCHLIESSLICH als Schlauchtruppmann/-führerin. Beginne die erste Situation mit "Du bist im Schlauchtrupp..." und spreche den Kamerad stets als "Schlauchtruppführer" an. Nenne NIEMALS eine andere Funktion.
 Stelle NUR Fragen und Situationen die für den Schlauchtrupp relevant sind:
 - Verlegen von B- und C-Schläuchen
 - Aufbau der langen Wegstrecke / Pendelverkehr
@@ -125,7 +130,8 @@ Stelle NUR Fragen und Situationen die für den Schlauchtrupp relevant sind:
 - Absicherung der Einsatzstelle (Warndreieck, Leitkegel)
 - Unterstützung Wasserversorgung über lange Strecken
 Keine Brandbekämpfung im Innenangriff.`,
-      maschinist: `FUNKTION: Maschinist (Ma)
+      maschinist: `ACHTUNG – FUNKTION DES KAMERADEN: Maschinist (Ma)
+Der Kamerad übt AUSSCHLIESSLICH als Maschinist. Beginne die erste Situation mit "Du bist der Maschinist dieser Gruppe..." und spreche den Kamerad stets als "Maschinist" an. Nenne NIEMALS eine andere Funktion (nicht Angriffstrupp, nicht Gruppenführer etc.).
 Stelle NUR Fragen und Situationen die für den Maschinisten relevant sind:
 - Inbetriebnahme der Feuerlöschkreiselpumpe (FP)
 - Hydrantenbetrieb: Standrohr setzen, Hydrant öffnen

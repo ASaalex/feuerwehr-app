@@ -98,12 +98,19 @@ function NachrichtBlase({ msg }) {
   )
 }
 
+// Markdown-Fettschrift **text** → <strong>
+function renderMd(text) {
+  const parts = text.split(/\*\*(.*?)\*\*/g)
+  if (parts.length === 1) return text
+  return parts.map((part, i) => i % 2 === 1 ? <strong key={i}>{part}</strong> : part)
+}
+
 function ZeileFormatiert({ zeile }) {
   if (zeile.startsWith('✅')) {
     return (
       <div style={{ padding: '8px 14px', background: '#F0FDF4', borderLeft: '3px solid #16A34A', display: 'flex', gap: 6, alignItems: 'flex-start' }}>
         <span style={{ flexShrink: 0, marginTop: 1 }}>✅</span>
-        <span style={{ fontSize: 13, color: '#15803D', lineHeight: 1.5 }}>{zeile.replace(/^✅\s*(RICHTIG:?\s*)?/, '')}</span>
+        <span style={{ fontSize: 13, color: '#15803D', lineHeight: 1.5 }}>{renderMd(zeile.replace(/^✅\s*(RICHTIG:?\s*)?/, ''))}</span>
       </div>
     )
   }
@@ -111,7 +118,7 @@ function ZeileFormatiert({ zeile }) {
     return (
       <div style={{ padding: '8px 14px', background: '#FFF1F2', borderLeft: '3px solid #E11D48', display: 'flex', gap: 6, alignItems: 'flex-start' }}>
         <span style={{ flexShrink: 0, marginTop: 1 }}>❌</span>
-        <span style={{ fontSize: 13, color: '#BE123C', lineHeight: 1.5 }}>{zeile.replace(/^❌\s*(FEHLT:?\s*)?/, '')}</span>
+        <span style={{ fontSize: 13, color: '#BE123C', lineHeight: 1.5 }}>{renderMd(zeile.replace(/^❌\s*(FEHLT:?\s*)?/, ''))}</span>
       </div>
     )
   }
@@ -127,7 +134,7 @@ function ZeileFormatiert({ zeile }) {
     return (
       <div style={{ padding: '10px 14px', background: '#F8FAFC', borderLeft: '3px solid #475569', display: 'flex', gap: 6, alignItems: 'flex-start' }}>
         <span style={{ flexShrink: 0, marginTop: 1 }}>▶</span>
-        <span style={{ fontSize: 13, color: '#1E293B', fontWeight: 500, lineHeight: 1.5 }}>{zeile.replace(/^▶\s*(SITUATION:?\s*)?/, '')}</span>
+        <span style={{ fontSize: 13, color: '#1E293B', fontWeight: 500, lineHeight: 1.5 }}>{renderMd(zeile.replace(/^▶\s*(SITUATION:?\s*)?/, ''))}</span>
       </div>
     )
   }
@@ -135,14 +142,15 @@ function ZeileFormatiert({ zeile }) {
     return (
       <div style={{ padding: '12px 14px', background: '#ECFDF5', borderLeft: '4px solid #059669', display: 'flex', gap: 8, alignItems: 'flex-start' }}>
         <span style={{ flexShrink: 0, marginTop: 1, fontSize: 18 }}>🏁</span>
-        <span style={{ fontSize: 14, color: '#065F46', fontWeight: 600, lineHeight: 1.5 }}>{zeile.replace(/^🏁\s*(ÜBUNG BEENDET:?\s*)?/, '')}</span>
+        <span style={{ fontSize: 14, color: '#065F46', fontWeight: 600, lineHeight: 1.5 }}>{renderMd(zeile.replace(/^🏁\s*(ÜBUNG BEENDET:?\s*)?/, ''))}</span>
       </div>
     )
   }
-  // Normale Zeile
+  // Normale Zeile (z.B. Trennlinie --- oder freier Text)
+  if (zeile === '---') return <hr style={{ border: 'none', borderTop: '1px solid var(--gray-100)', margin: '4px 14px' }} />
   return (
     <div style={{ padding: '4px 14px', fontSize: 13, color: 'var(--gray-700)', lineHeight: 1.5 }}>
-      {zeile}
+      {renderMd(zeile)}
     </div>
   )
 }
