@@ -71,6 +71,69 @@ serve(async (req) => {
       }
     }
 
+    // ── Hilfsfunktion: relevante Abschnitte per Keyword-Suche extrahieren ──────
+    // Durchsucht den VOLLSTAENDIGEN Text und gibt die Stellen mit hoechster
+    // Keyword-Dichte zurueck (statt blind die ersten 6000 Zeichen).
+    function extrahiereRelevanteStellen(volltext: string, suchanfrage: string, maxChars = 9000): string {
+      if (!volltext || !suchanfrage) return volltext.slice(0, maxChars);
+
+      // Stoppwoerter herausfiltern, relevante Keywords sammeln
+      const stop = new Set(["die","der","das","den","dem","des","ein","eine","einer","einem","einen",
+        "und","oder","aber","ist","sind","war","wurde","werden","hat","haben","ich","wir",
+        "mir","uns","sich","im","in","an","auf","bei","von","zu","mit","fuer","was","wie",
+        "wer","auch","dass","nicht","aus","nach","als","zum","zur","am","um"]);
+      const keywords = suchanfrage.toLowerCase()
+        .replace(/[^\wäöüß\s]/gi, " ")
+        .split(/\s+/)
+        .filter(w => w.length > 3 && !stop.has(w));
+
+      if (!keywords.length) return volltext.slice(0, maxChars);
+
+      // Alle Fundpositionen sammeln
+      const positionen: number[] = [];
+      for (const kw of keywords) {
+        let pos = 0;
+        while (true) {
+          const idx = volltext.toLowerCase().indexOf(kw, pos);
+          if (idx === -1) break;
+          positionen.push(idx);
+          pos = idx + 1;
+        }
+      }
+      if (!positionen.length) return volltext.slice(0, maxChars);
+      positionen.sort((a, b) => a - b);
+
+      // Fenster (2000 Zeichen) mit hoechster Keyword-Dichte finden
+      const fenster = 2000;
+      const fensterDichte: Array<{ pos: number; anzahl: number }> = [];
+      for (let i = 0; i < positionen.length; i++) {
+        const start = positionen[i];
+        const anzahl = positionen.filter(p => p >= start && p < start + fenster).length;
+        fensterDichte.push({ pos: start, anzahl });
+      }
+      fensterDichte.sort((a, b) => b.anzahl - a.anzahl);
+
+      // Bis zu 3 nicht-ueberlappende Fenster auswaehlen
+      const ausgewaehlt: Array<{ start: number; ende: number }> = [];
+      for (const { pos } of fensterDichte) {
+        const start = Math.max(0, pos - 300);
+        const ende = Math.min(volltext.length, pos + fenster);
+        // Ueberlappung mit bereits ausgewaehlten Fenstern pruefen
+        const ueberschneidung = ausgewaehlt.some(a => start < a.ende && ende > a.start);
+        if (!ueberschneidung) {
+          ausgewaehlt.push({ start, ende });
+          if (ausgewaehlt.reduce((s, a) => s + a.ende - a.start, 0) >= maxChars) break;
+        }
+      }
+
+      if (!ausgewaehlt.length) return volltext.slice(0, maxChars);
+      ausgewaehlt.sort((a, b) => a.start - b.start);
+
+      return ausgewaehlt
+        .map(({ start, ende }) => (start > 0 ? "[...]\n" : "") + volltext.slice(start, ende))
+        .join("\n\n[...]\n\n");
+    }
+
     // ── Regelwerke aus Supabase laden ────────────────────────────────────────
     let regelwerkeText = "";
     let regelwerkeGeladen = false;
@@ -85,7 +148,12 @@ serve(async (req) => {
           regelwerkeGeladen = true;
           regelwerkeText = "\n\n=== DIENSTVORSCHRIFTEN (einzige Grundlage fuer Bewertung) ===\n";
           for (const r of rw) {
-            const text = (r.inhalt_text ?? "").slice(0, 6000);
+            const volltext = r.inhalt_text ?? "";
+            // Wissens-Modus: relevante Stellen per Keyword-Suche (voller Text)
+            // Simulations-Modus: erste 6000 Zeichen (fuer Prompt-Caching optimiert)
+            const text = istWissensModus
+              ? extrahiereRelevanteStellen(volltext, frage ?? "", 9000)
+              : volltext.slice(0, 6000);
             regelwerkeText += "\n--- " + r.titel + " ---\n" + text + "\n";
           }
           regelwerkeText += "\n=== ENDE DIENSTVORSCHRIFTEN ===\n";
@@ -169,15 +237,22 @@ Keine Aufgaben im Innenangriff oder Schlauchmanagement.`,
         "Beantworte Fragen zu Feuerwehr-Vorschriften, Taktik und Ausruestung AUSSCHLIESSLICH basierend auf den unten bereitgestellten Dienstvorschriften.",
         "",
         regelwerkeGeladen
-          ? "WICHTIG: Zitiere AUSSCHLIESSLICH aus den bereitgestellten Dienstvorschriften. Erfinde keine Regeln. Wenn die Antwort nicht in den Vorschriften steht, sage das klar."
+          ? [
+              "WICHTIG: Lies den gesamten bereitgestellten Vorschriftentext sorgfaeltig durch.",
+              "Die gesuchten Informationen koennen in verschiedenen Abschnitten stehen (z.B. 5.5.1, 5.5.2, 5.5.3 usw.).",
+              "Fasse ALLE relevanten Abschnitte zusammen, die die Frage beantworten.",
+              "Nenne JEDEN relevanten Abschnitt mit exakter Nummer (z.B. 'Abschnitt 5.5.1') im Format-Feld VORSCHRIFT.",
+              "Zitiere wortgetreu aus der Vorschrift wenn moeglich.",
+              "Erfinde KEINE Informationen die nicht im Text stehen.",
+            ].join(" ")
           : "WICHTIG: Es wurden keine Dienstvorschriften hinterlegt. Bitte den Administrator, die offiziellen PDFs (FwDV, ThuerBKG) unter Administration → Regelwerke hochzuladen.",
         "",
-        "ANTWORTFORMAT:",
-        "📖 VORSCHRIFT: [Exakter Titel und ggf. Abschnitt aus den Dienstvorschriften]",
-        "✅ ANTWORT: [Klare, direkte Antwort auf die Frage]",
-        "💡 HINWEIS: [Ergaenzende Informationen oder Besonderheiten, falls vorhanden]",
+        "ANTWORTFORMAT (alle Felder ausfullen):",
+        "📖 VORSCHRIFT: [Exakter Titel + alle relevanten Abschnittsnummern, z.B. 'FwDV 3 Abschnitt 5.5.1, 5.5.2, 5.5.3']",
+        "✅ ANTWORT: [Vollstaendige Antwort mit den Aufgaben aus ALLEN relevanten Abschnitten, als Aufzaehlung]",
+        "💡 HINWEIS: [Ergaenzende Informationen, falls vorhanden]",
         "",
-        "Halte die Antwort praezise und praxisorientiert (max. 5-8 Saetze).",
+        "Halte die Antwort praxisorientiert. Wenn mehrere Abschnitte relevant sind, liste alle auf.",
         regelwerkeText,
       ].join("\n");
 
@@ -185,7 +260,7 @@ Keine Aufgaben im Innenangriff oder Schlauchmanagement.`,
         { type: "text", text: wissenSystemText, cache_control: { type: "ephemeral" } },
       ];
       messages = [{ role: "user", content: frage! }];
-      maxTokens = 512;
+      maxTokens = 900;
     } else {
       // ── Simulations-Modus ────────────────────────────────────────────────
       const statischerText = [
