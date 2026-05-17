@@ -204,6 +204,8 @@ export default function AusbildungChatPage() {
   const [kiGuthaben, setKiGuthaben] = useState(null) // null = noch nicht geladen
   const [regelwerke, setRegelwerke] = useState([])   // { titel, inhalt_text }[]
   const [vorschriftModal, setVorschriftModal] = useState(null) // null | { referenz, dokTitel, abschnittText, gefunden }
+  const [hoert, setHoert] = useState(false)          // Spracheingabe aktiv
+  const erkennungRef = useRef(null)
 
   useEffect(() => { ladeDaten(); ladeGuthaben(); ladeRegelwerke() }, [])
 
@@ -227,6 +229,37 @@ export default function AusbildungChatPage() {
 
   function oeffneVorschriftModal(zeile) {
     setVorschriftModal(findeVorschriftInRegelwerken(zeile, regelwerke))
+  }
+
+  // Spracheingabe mit Web Speech API (Chrome/Edge)
+  function toggleSprache() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) {
+      alert('Spracheingabe wird von diesem Browser nicht unterstützt.\nBitte Chrome oder Edge verwenden.')
+      return
+    }
+
+    if (hoert) {
+      erkennungRef.current?.stop()
+      setHoert(false)
+      return
+    }
+
+    const erkennung = new SR()
+    erkennungRef.current = erkennung
+    erkennung.lang = 'de-DE'
+    erkennung.interimResults = false
+    erkennung.maxAlternatives = 1
+
+    erkennung.onresult = e => {
+      const text = e.results[0][0].transcript
+      setEingabe(prev => (prev ? prev + ' ' : '') + text)
+    }
+    erkennung.onend = () => setHoert(false)
+    erkennung.onerror = () => setHoert(false)
+
+    erkennung.start()
+    setHoert(true)
   }
 
   // Cooldown-Timer: zählt sekündlich runter
@@ -892,11 +925,31 @@ export default function AusbildungChatPage() {
             value={eingabe}
             onChange={e => setEingabe(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendeNachricht() } }}
-            placeholder={cooldown > 0 ? `Bitte ${cooldown} Sek. warten…` : 'Deine Antwort… (Enter zum Senden, Shift+Enter für neue Zeile)'}
+            placeholder={hoert ? '🎤 Spreche jetzt…' : cooldown > 0 ? `Bitte ${cooldown} Sek. warten…` : 'Deine Antwort… (Enter zum Senden, Shift+Enter für neue Zeile)'}
             rows={2}
             disabled={ladend || cooldown > 0}
-            style={{ flex: 1, resize: 'none', borderRadius: 10, padding: '8px 12px', fontSize: 13, border: `1.5px solid ${cooldown > 0 ? 'var(--gray-200)' : 'var(--gray-200)'}`, lineHeight: 1.4, opacity: cooldown > 0 ? 0.6 : 1 }}
+            style={{ flex: 1, resize: 'none', borderRadius: 10, padding: '8px 12px', fontSize: 13, border: `1.5px solid ${hoert ? '#EF4444' : 'var(--gray-200)'}`, lineHeight: 1.4, opacity: cooldown > 0 ? 0.6 : 1, transition: 'border-color 200ms' }}
           />
+          {/* Mikrofon-Button */}
+          <button
+            type="button"
+            onClick={toggleSprache}
+            disabled={ladend || cooldown > 0}
+            title={hoert ? 'Aufnahme stoppen' : 'Spracheingabe starten'}
+            style={{
+              alignSelf: 'flex-end', flexShrink: 0,
+              width: 40, height: 40, borderRadius: 10, border: 'none',
+              background: hoert ? '#EF4444' : 'var(--gray-100)',
+              color: hoert ? 'white' : 'var(--gray-500)',
+              cursor: ladend || cooldown > 0 ? 'not-allowed' : 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 18, transition: 'all 200ms',
+              opacity: ladend || cooldown > 0 ? 0.4 : 1,
+              boxShadow: hoert ? '0 0 0 3px rgba(239,68,68,0.25)' : 'none',
+            }}
+          >
+            {hoert ? '⏹' : '🎤'}
+          </button>
           <button type="submit" className="btn btn-primary" disabled={!eingabe.trim() || ladend || cooldown > 0}
             style={{ alignSelf: 'flex-end', padding: '8px 16px', flexShrink: 0, minWidth: 44 }}>
             {ladend ? '…' : cooldown > 0 ? `${cooldown}s` : '→'}
