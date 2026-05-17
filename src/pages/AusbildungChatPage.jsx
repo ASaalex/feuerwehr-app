@@ -58,7 +58,7 @@ function extrahiereNote(nachrichten) {
 }
 
 // ── Nachricht-Renderer: parst das strukturierte Feedback-Format ──────────────
-function NachrichtBlase({ msg, onVorschriftClick }) {
+function NachrichtBlase({ msg, onVorschriftClick, onVorlesen }) {
   const istUser = msg.role === 'user'
 
   if (istUser) {
@@ -102,7 +102,7 @@ function NachrichtBlase({ msg, onVorschriftClick }) {
         <div style={{ background: 'white', border: '1px solid var(--gray-100)', borderRadius: '4px 16px 16px 16px', overflow: 'hidden' }}>
           {zeilen.map((zeile, i) => {
             if (!zeile.trim()) return <div key={i} style={{ height: 6 }} />
-            return <ZeileFormatiert key={i} zeile={zeile} onVorschriftClick={onVorschriftClick} />
+            return <ZeileFormatiert key={i} zeile={zeile} onVorschriftClick={onVorschriftClick} onVorlesen={onVorlesen} />
           })}
         </div>
       </div>
@@ -110,7 +110,7 @@ function NachrichtBlase({ msg, onVorschriftClick }) {
   )
 }
 
-function ZeileFormatiert({ zeile, onVorschriftClick }) {
+function ZeileFormatiert({ zeile, onVorschriftClick, onVorlesen }) {
   if (zeile.startsWith('✅')) {
     return (
       <div style={{ padding: '8px 14px', background: '#F0FDF4', borderLeft: '3px solid #16A34A', display: 'flex', gap: 6, alignItems: 'flex-start' }}>
@@ -153,10 +153,21 @@ function ZeileFormatiert({ zeile, onVorschriftClick }) {
     )
   }
   if (zeile.startsWith('▶')) {
+    const situationsText = zeile.replace(/^▶\s*(SITUATION:?\s*)?/, '').trim()
     return (
       <div style={{ padding: '10px 14px', background: '#F8FAFC', borderLeft: '3px solid #475569', display: 'flex', gap: 6, alignItems: 'flex-start' }}>
         <span style={{ flexShrink: 0, marginTop: 1 }}>▶</span>
-        <span style={{ fontSize: 13, color: '#1E293B', fontWeight: 500, lineHeight: 1.5 }}>{renderMd(zeile.replace(/^▶\s*(SITUATION:?\s*)?/, ''))}</span>
+        <span style={{ fontSize: 13, color: '#1E293B', fontWeight: 500, lineHeight: 1.5, flex: 1 }}>{renderMd(situationsText)}</span>
+        {onVorlesen && (
+          <button
+            type="button"
+            onClick={() => onVorlesen(situationsText)}
+            title="Vorlesen"
+            style={{ flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, opacity: 0.5, padding: '0 2px', marginTop: 1, lineHeight: 1 }}
+            onMouseEnter={e => e.currentTarget.style.opacity = '1'}
+            onMouseLeave={e => e.currentTarget.style.opacity = '0.5'}
+          >🔊</button>
+        )}
       </div>
     )
   }
@@ -206,6 +217,8 @@ export default function AusbildungChatPage() {
   const [vorschriftModal, setVorschriftModal] = useState(null) // null | { referenz, dokTitel, abschnittText, gefunden }
   const [hoert, setHoert] = useState(false)          // Spracheingabe aktiv
   const erkennungRef = useRef(null)
+  const [vorlesenAktiv, setVorlesenAktiv] = useState(false) // TTS-Toggle
+  const [sprichtGerade, setSprichtGerade] = useState(false)
 
   useEffect(() => { ladeDaten(); ladeGuthaben(); ladeRegelwerke() }, [])
 
@@ -230,6 +243,43 @@ export default function AusbildungChatPage() {
   function oeffneVorschriftModal(zeile) {
     setVorschriftModal(findeVorschriftInRegelwerken(zeile, regelwerke))
   }
+
+  // Text-to-Speech: liest eine ▶ SITUATION vor
+  function sprich(text) {
+    if (!window.speechSynthesis) return
+    window.speechSynthesis.cancel()
+    const u = new SpeechSynthesisUtterance(text)
+    u.lang = 'de-DE'
+    u.rate = 1.0
+    u.onstart = () => setSprichtGerade(true)
+    u.onend = () => setSprichtGerade(false)
+    u.onerror = () => setSprichtGerade(false)
+    window.speechSynthesis.speak(u)
+  }
+
+  function stoppVorlesen() {
+    window.speechSynthesis?.cancel()
+    setSprichtGerade(false)
+  }
+
+  function toggleVorlesen() {
+    if (sprichtGerade) { stoppVorlesen(); return }
+    setVorlesenAktiv(v => !v)
+  }
+
+  // Wenn neue KI-Nachricht ankommt und Vorlesen aktiv → ▶ SITUATION sprechen
+  useEffect(() => {
+    if (!vorlesenAktiv || nachrichten.length === 0) return
+    const letzte = nachrichten[nachrichten.length - 1]
+    if (letzte?.role !== 'assistant') return
+    const situationsZeile = letzte.content.split('\n').find(z => z.startsWith('▶'))
+    if (!situationsZeile) return
+    const text = situationsZeile.replace(/^▶\s*(SITUATION:?\s*)?/, '').trim()
+    if (text) sprich(text)
+  }, [nachrichten])
+
+  // Vorlesen stoppen wenn Session endet oder Komponente verlassen wird
+  useEffect(() => () => window.speechSynthesis?.cancel(), [])
 
   // Spracheingabe mit Web Speech API (Chrome, Edge, Opera)
   // Firefox: kein natives Support → Fehlermeldung
@@ -835,6 +885,24 @@ export default function AusbildungChatPage() {
             💳 {(kiGuthaben / 100).toFixed(2)} €
           </div>
         )}
+        {/* Vorlesen-Toggle */}
+        <button
+          type="button"
+          onClick={toggleVorlesen}
+          title={sprichtGerade ? 'Vorlesen stoppen' : vorlesenAktiv ? 'Vorlesen deaktivieren' : 'Aufgaben automatisch vorlesen'}
+          style={{
+            flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5,
+            padding: '4px 10px', borderRadius: 8, border: 'none', fontSize: 12, cursor: 'pointer',
+            background: vorlesenAktiv || sprichtGerade ? '#EFF6FF' : 'var(--gray-100)',
+            color: vorlesenAktiv || sprichtGerade ? '#2563EB' : 'var(--gray-500)',
+            fontWeight: vorlesenAktiv ? 600 : 400,
+            boxShadow: sprichtGerade ? '0 0 0 2px rgba(37,99,235,0.3)' : 'none',
+            transition: 'all 200ms',
+          }}
+        >
+          <span style={{ fontSize: 15 }}>{sprichtGerade ? '🔊' : vorlesenAktiv ? '🔔' : '🔇'}</span>
+          {sprichtGerade ? 'Stopp' : vorlesenAktiv ? 'Vorlesen an' : 'Vorlesen'}
+        </button>
         {!istVerlauf && !abgeschlossen && (
           <button className="btn btn-secondary btn-sm" onClick={beendeSession} style={{ flexShrink: 0, fontSize: 12 }}>
             Übung beenden
@@ -862,7 +930,7 @@ export default function AusbildungChatPage() {
         )}
 
         {nachrichten.map((msg, i) => (
-          <NachrichtBlase key={i} msg={msg} onVorschriftClick={regelwerke.length > 0 ? oeffneVorschriftModal : null} />
+          <NachrichtBlase key={i} msg={msg} onVorschriftClick={regelwerke.length > 0 ? oeffneVorschriftModal : null} onVorlesen={sprich} />
         ))}
 
         {ladend && nachrichten.length > 0 && (
