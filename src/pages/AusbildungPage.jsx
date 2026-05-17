@@ -311,7 +311,20 @@ export default function AusbildungPage() {
           )}
           {wissensAntwort && (
             <div style={{ marginTop: 12, background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 8, padding: '12px 16px', fontSize: 14, color: 'white', lineHeight: 1.65 }}>
-              {wissensAntwort.split('\n').map((zeile, i) => {
+              {(() => {
+                // Robustheit: "📖 VORSCHRIFT:\nFwDV 3..." → zusammenführen
+                const rohe = wissensAntwort.split('\n')
+                const zusammen = []
+                for (let i = 0; i < rohe.length; i++) {
+                  if (/^📖\s*(VORSCHRIFT:?\s*)$/.test(rohe[i].trim()) && i + 1 < rohe.length) {
+                    zusammen.push(rohe[i].trimEnd() + ' ' + rohe[i + 1].trim())
+                    i++
+                  } else {
+                    zusammen.push(rohe[i])
+                  }
+                }
+                return zusammen
+              })().map((zeile, i) => {
                 const trimmed = zeile.trim()
                 if (!trimmed) return <div key={i} style={{ height: 6 }} />
                 if (trimmed.startsWith('📖')) {

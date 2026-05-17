@@ -76,7 +76,18 @@ function NachrichtBlase({ msg, onVorschriftClick }) {
   }
 
   // KI-Nachricht: Zeilen parsen und farblich markieren
-  const zeilen = msg.content.split('\n')
+  // Robustheit: "📖 VORSCHRIFT:\nFwDV 3 ..." → zusammenführen
+  const roheZeilen = msg.content.split('\n')
+  const zeilen = []
+  for (let i = 0; i < roheZeilen.length; i++) {
+    const z = roheZeilen[i]
+    if (/^📖\s*(VORSCHRIFT:?\s*)$/.test(z.trim()) && i + 1 < roheZeilen.length) {
+      zeilen.push(z.trimEnd() + ' ' + roheZeilen[i + 1].trim())
+      i++ // nächste Zeile überspringen
+    } else {
+      zeilen.push(z)
+    }
+  }
   return (
     <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 12 }}>
       <div style={{ maxWidth: '90%', display: 'flex', flexDirection: 'column', gap: 4 }}>
