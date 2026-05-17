@@ -231,35 +231,46 @@ export default function AusbildungChatPage() {
     setVorschriftModal(findeVorschriftInRegelwerken(zeile, regelwerke))
   }
 
-  // Spracheingabe mit Web Speech API (Chrome/Edge)
+  // Spracheingabe mit Web Speech API (Chrome, Edge, Opera)
+  // Firefox: kein natives Support → Fehlermeldung
+  const spracheVerfuegbar = !!(window.SpeechRecognition || window.webkitSpeechRecognition)
+
   function toggleSprache() {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SR) {
-      alert('Spracheingabe wird von diesem Browser nicht unterstützt.\nBitte Chrome oder Edge verwenden.')
+    if (!spracheVerfuegbar) {
+      alert('Spracheingabe wird von Firefox nicht unterstützt.\nBitte Chrome, Edge oder Opera verwenden.')
       return
     }
 
     if (hoert) {
       erkennungRef.current?.stop()
-      setHoert(false)
+      // hoert → false wird durch onend gesetzt
       return
     }
 
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
     const erkennung = new SR()
     erkennungRef.current = erkennung
     erkennung.lang = 'de-DE'
-    erkennung.interimResults = false
+    erkennung.continuous = true      // Hört weiter bis explizit gestoppt
+    erkennung.interimResults = false // Nur finale Ergebnisse
     erkennung.maxAlternatives = 1
 
+    erkennung.onstart = () => setHoert(true)   // Erst hier → nach Mic-Freigabe
     erkennung.onresult = e => {
-      const text = e.results[0][0].transcript
-      setEingabe(prev => (prev ? prev + ' ' : '') + text)
+      // Alle neu finalisierten Segmente zusammensetzen
+      let neu = ''
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) neu += e.results[i][0].transcript + ' '
+      }
+      if (neu.trim()) setEingabe(prev => (prev ? prev.trimEnd() + ' ' : '') + neu.trimEnd())
     }
     erkennung.onend = () => setHoert(false)
-    erkennung.onerror = () => setHoert(false)
+    erkennung.onerror = err => {
+      console.warn('Spracherkennung:', err.error)
+      setHoert(false)
+    }
 
     erkennung.start()
-    setHoert(true)
   }
 
   // Cooldown-Timer: zählt sekündlich runter
@@ -935,16 +946,16 @@ export default function AusbildungChatPage() {
             type="button"
             onClick={toggleSprache}
             disabled={ladend || cooldown > 0}
-            title={hoert ? 'Aufnahme stoppen' : 'Spracheingabe starten'}
+            title={!spracheVerfuegbar ? 'Spracheingabe nicht verfügbar (Firefox)' : hoert ? 'Aufnahme stoppen' : 'Spracheingabe starten'}
             style={{
               alignSelf: 'flex-end', flexShrink: 0,
               width: 40, height: 40, borderRadius: 10, border: 'none',
               background: hoert ? '#EF4444' : 'var(--gray-100)',
-              color: hoert ? 'white' : 'var(--gray-500)',
-              cursor: ladend || cooldown > 0 ? 'not-allowed' : 'pointer',
+              color: hoert ? 'white' : !spracheVerfuegbar ? 'var(--gray-300)' : 'var(--gray-500)',
+              cursor: !spracheVerfuegbar || ladend || cooldown > 0 ? 'not-allowed' : 'pointer',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               fontSize: 18, transition: 'all 200ms',
-              opacity: ladend || cooldown > 0 ? 0.4 : 1,
+              opacity: !spracheVerfuegbar || ladend || cooldown > 0 ? 0.4 : 1,
               boxShadow: hoert ? '0 0 0 3px rgba(239,68,68,0.25)' : 'none',
             }}
           >
