@@ -218,6 +218,7 @@ export default function AusbildungChatPage() {
   const [hoert, setHoert] = useState(false)          // Spracheingabe aktiv
   const erkennungRef = useRef(null)
   const [vorlesenAktiv, setVorlesenAktiv] = useState(false) // TTS-Toggle
+  const vorlesenAktivRef = useRef(false)                   // Ref für den Effect
   const [sprichtGerade, setSprichtGerade] = useState(false)
 
   useEffect(() => { ladeDaten(); ladeGuthaben(); ladeRegelwerke() }, [])
@@ -244,13 +245,37 @@ export default function AusbildungChatPage() {
     setVorschriftModal(findeVorschriftInRegelwerken(zeile, regelwerke))
   }
 
+  // Ref mit State synchron halten (für Effects ohne Re-Register)
+  useEffect(() => { vorlesenAktivRef.current = vorlesenAktiv }, [vorlesenAktiv])
+
+  // Beste verfügbare deutsche Stimme ermitteln (einmalig nach Laden)
+  const deutscheStimmeRef = useRef(null)
+  useEffect(() => {
+    function ladeStimme() {
+      const stimmen = window.speechSynthesis?.getVoices() ?? []
+      // Priorität: Online-Stimmen (natürlicher) → lokale Stimmen
+      const prio = [
+        stimmen.find(v => v.lang === 'de-DE' && /katja|hedda|stefan|clara/i.test(v.name) && !v.localService),
+        stimmen.find(v => v.lang === 'de-DE' && !v.localService),
+        stimmen.find(v => v.lang === 'de-DE' && v.localService),
+        stimmen.find(v => v.lang.startsWith('de')),
+      ]
+      deutscheStimmeRef.current = prio.find(Boolean) ?? null
+    }
+    ladeStimme()
+    window.speechSynthesis?.addEventListener('voiceschanged', ladeStimme)
+    return () => window.speechSynthesis?.removeEventListener('voiceschanged', ladeStimme)
+  }, [])
+
   // Text-to-Speech: liest eine ▶ SITUATION vor
   function sprich(text) {
     if (!window.speechSynthesis) return
     window.speechSynthesis.cancel()
     const u = new SpeechSynthesisUtterance(text)
     u.lang = 'de-DE'
-    u.rate = 1.0
+    u.rate = 0.92   // etwas langsamer = angenehmer
+    u.pitch = 1.0
+    if (deutscheStimmeRef.current) u.voice = deutscheStimmeRef.current
     u.onstart = () => setSprichtGerade(true)
     u.onend = () => setSprichtGerade(false)
     u.onerror = () => setSprichtGerade(false)
@@ -269,7 +294,7 @@ export default function AusbildungChatPage() {
 
   // Wenn neue KI-Nachricht ankommt und Vorlesen aktiv → ▶ SITUATION sprechen
   useEffect(() => {
-    if (!vorlesenAktiv || nachrichten.length === 0) return
+    if (!vorlesenAktivRef.current || nachrichten.length === 0) return
     const letzte = nachrichten[nachrichten.length - 1]
     if (letzte?.role !== 'assistant') return
     const situationsZeile = letzte.content.split('\n').find(z => z.startsWith('▶'))
@@ -302,17 +327,23 @@ export default function AusbildungChatPage() {
     erkennungRef.current = erkennung
     erkennung.lang = 'de-DE'
     erkennung.continuous = true      // Hört weiter bis explizit gestoppt
-    erkennung.interimResults = false // Nur finale Ergebnisse
+    erkennung.interimResults = true  // Zwischenergebnisse sofort anzeigen
     erkennung.maxAlternatives = 1
+
+    // Basis-Text vor der aktuellen Aufnahme merken
+    const basisText = eingabe.trimEnd()
 
     erkennung.onstart = () => setHoert(true)   // Erst hier → nach Mic-Freigabe
     erkennung.onresult = e => {
-      // Alle neu finalisierten Segmente zusammensetzen
-      let neu = ''
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        if (e.results[i].isFinal) neu += e.results[i][0].transcript + ' '
+      // Alle Ergebnisse aufbauen: finale + aktuelles Interim
+      let finalisiert = ''
+      let interim = ''
+      for (let i = 0; i < e.results.length; i++) {
+        if (e.results[i].isFinal) finalisiert += e.results[i][0].transcript + ' '
+        else interim = e.results[i][0].transcript
       }
-      if (neu.trim()) setEingabe(prev => (prev ? prev.trimEnd() + ' ' : '') + neu.trimEnd())
+      const gesamt = (basisText ? basisText + ' ' : '') + finalisiert + interim
+      setEingabe(gesamt.trimEnd())
     }
     erkennung.onend = () => setHoert(false)
     erkennung.onerror = err => {
