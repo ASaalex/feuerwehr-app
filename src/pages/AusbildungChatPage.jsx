@@ -216,7 +216,9 @@ export default function AusbildungChatPage() {
   const [regelwerke, setRegelwerke] = useState([])   // { titel, inhalt_text }[]
   const [vorschriftModal, setVorschriftModal] = useState(null) // null | { referenz, dokTitel, abschnittText, gefunden }
   const [hoert, setHoert] = useState(false)          // Spracheingabe aktiv
+  const hoertRef = useRef(false)                     // Für Closures in SR-Callbacks
   const erkennungRef = useRef(null)
+  const eingabeBaseRef = useRef('')                  // Bestätigter Text vor aktuellem SR-Lauf
   const [vorlesenAktiv, setVorlesenAktiv] = useState(false) // TTS-Toggle
   const vorlesenAktivRef = useRef(false)                   // Ref für den Effect
   const [sprichtGerade, setSprichtGerade] = useState(false)
@@ -310,48 +312,71 @@ export default function AusbildungChatPage() {
   // Firefox: kein natives Support → Fehlermeldung
   const spracheVerfuegbar = !!(window.SpeechRecognition || window.webkitSpeechRecognition)
 
-  function toggleSprache() {
-    if (!spracheVerfuegbar) {
-      alert('Spracheingabe wird von Firefox nicht unterstützt.\nBitte Chrome, Edge oder Opera verwenden.')
-      return
-    }
-
-    if (hoert) {
-      erkennungRef.current?.stop()
-      // hoert → false wird durch onend gesetzt
-      return
-    }
-
+  // Startet einen einzelnen SR-Lauf; ruft sich nach onend selbst neu auf
+  // solange hoertRef.current === true (Auto-Restart statt continuous:true)
+  function starteErkennung() {
+    if (!hoertRef.current) return
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition
     const erkennung = new SR()
     erkennungRef.current = erkennung
     erkennung.lang = 'de-DE'
-    erkennung.continuous = true      // Hört weiter bis explizit gestoppt
-    erkennung.interimResults = true  // Zwischenergebnisse sofort anzeigen
+    erkennung.continuous = false    // Einzellauf; Neustart via onend
+    erkennung.interimResults = true // Wörter sofort während des Sprechens
     erkennung.maxAlternatives = 1
 
-    // Basis-Text vor der aktuellen Aufnahme merken
-    const basisText = eingabe.trimEnd()
-
-    erkennung.onstart = () => setHoert(true)   // Erst hier → nach Mic-Freigabe
     erkennung.onresult = e => {
-      // Alle Ergebnisse aufbauen: finale + aktuelles Interim
       let finalisiert = ''
       let interim = ''
       for (let i = 0; i < e.results.length; i++) {
         if (e.results[i].isFinal) finalisiert += e.results[i][0].transcript + ' '
         else interim = e.results[i][0].transcript
       }
-      const gesamt = (basisText ? basisText + ' ' : '') + finalisiert + interim
-      setEingabe(gesamt.trimEnd())
+      const base = eingabeBaseRef.current
+      setEingabe(((base ? base + ' ' : '') + finalisiert + interim).trimEnd())
+      // Finalisierten Text als neue Basis speichern
+      if (finalisiert) {
+        eingabeBaseRef.current = ((base ? base + ' ' : '') + finalisiert).trimEnd()
+      }
     }
-    erkennung.onend = () => setHoert(false)
+
+    erkennung.onend = () => {
+      if (hoertRef.current) {
+        // Sofort neu starten → fühlt sich wie Daueraufnahme an
+        setTimeout(starteErkennung, 100)
+      } else {
+        setHoert(false)
+      }
+    }
+
     erkennung.onerror = err => {
-      console.warn('Spracherkennung:', err.error)
+      // 'no-speech' und 'aborted' sind normal → weiter neu starten
+      if (err.error === 'no-speech' || err.error === 'aborted') return
+      console.warn('Spracherkennung Fehler:', err.error)
+      hoertRef.current = false
       setHoert(false)
     }
 
-    erkennung.start()
+    try { erkennung.start() } catch { hoertRef.current = false; setHoert(false) }
+  }
+
+  function toggleSprache() {
+    if (!spracheVerfuegbar) {
+      alert('Spracheingabe wird von Firefox nicht unterstützt.\nBitte Chrome, Edge oder Opera verwenden.')
+      return
+    }
+    if (hoertRef.current) {
+      // Stopp: laufenden Lauf abbrechen, kein Neustart mehr
+      hoertRef.current = false
+      setHoert(false)
+      erkennungRef.current?.abort()
+      eingabeBaseRef.current = ''
+    } else {
+      // Start: aktuellen Textarea-Inhalt als Basis merken
+      eingabeBaseRef.current = eingabe.trimEnd()
+      hoertRef.current = true
+      setHoert(true)
+      starteErkennung()
+    }
   }
 
   // Cooldown-Timer: zählt sekündlich runter
