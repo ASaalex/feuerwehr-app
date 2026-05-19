@@ -406,7 +406,7 @@ export function auslagenerstattungPdf(form, gesamt) {
           i + 1,
           z.firma || '',
           z.gegenstand || '',
-          preis > 0 ? preis.toLocaleString('de-DE', { minimumFractionDigits: 2 }) + ' €' : '',
+          preis !== 0 ? preis.toLocaleString('de-DE', { minimumFractionDigits: 2 }) + ' €' : '',
         ]
       }),
       [
