@@ -73,9 +73,21 @@ serve(async (req) => {
           return json({ success: false, error: "Nur Nutzer der eigenen Wache können gelöscht werden" });
         }
       }
-      await adminClient.from("profiles").delete().eq("id", user_id);
+      // Abhängige Daten zuerst löschen (FK-Constraints vermeiden)
+      await adminClient.from("uebungs_sessions").delete().eq("kamerad_id", user_id);
+      await adminClient.from("ki_transaktionen").delete().eq("kamerad_id", user_id);
+      await adminClient.from("ki_transaktionen").delete().eq("erstellt_von", user_id);
+      await adminClient.from("kamerad_lehrgaenge").delete().eq("kamerad_id", user_id);
+      await adminClient.from("kamerad_wehren").delete().eq("kamerad_id", user_id);
+
+      // Profil löschen
+      const { error: profileErr } = await adminClient.from("profiles").delete().eq("id", user_id);
+      if (profileErr) return json({ success: false, error: "Profil konnte nicht gelöscht werden: " + profileErr.message });
+
+      // Auth-User löschen
       const { error: authErr } = await adminClient.auth.admin.deleteUser(user_id);
-      if (authErr) console.warn("Auth-Delete fehlgeschlagen:", authErr.message);
+      if (authErr) return json({ success: false, error: "Auth-User konnte nicht gelöscht werden: " + authErr.message });
+
       return json({ success: true });
     }
 
