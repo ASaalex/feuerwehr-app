@@ -293,7 +293,7 @@ export default function ProfilPage() {
           </div>
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-          <button type="button" className="btn btn-secondary" onClick={handleSave} disabled={saving}>
+          <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving}>
             {saving ? 'Speichern...' : 'Bankdaten speichern'}
           </button>
         </div>
@@ -333,7 +333,7 @@ export default function ProfilPage() {
             />
           </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <button type="submit" className="btn btn-secondary">
+            <button type="submit" className="btn btn-primary">
               Passwort aendern
             </button>
           </div>
