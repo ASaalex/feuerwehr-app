@@ -190,6 +190,26 @@ export default function KameradenPage() {
     await fetchKameraden()
   }
 
+  async function setzePasswort() {
+    if (pwNeu.length < 6) { setPwMsg({ typ: 'fehler', text: 'Passwort muss mind. 6 Zeichen haben' }); return }
+    if (pwNeu !== pwNeuWdh) { setPwMsg({ typ: 'fehler', text: 'Passwörter stimmen nicht überein' }); return }
+    setPwLoading(true)
+    const { data: sessionData } = await supabase.auth.getSession()
+    const token = sessionData?.session?.access_token
+    const { data, error } = await supabase.functions.invoke('create-user', {
+      body: { action: 'set-password', user_id: editModal.id, new_password: pwNeu },
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (error || !data?.success) {
+      setPwMsg({ typ: 'fehler', text: data?.error || error?.message || 'Unbekannter Fehler' })
+    } else {
+      setPwMsg({ typ: 'ok', text: 'Passwort wurde erfolgreich gesetzt ✓' })
+      setPwNeu(''); setPwNeuWdh('')
+    }
+    setPwLoading(false)
+    setTimeout(() => setPwMsg(null), 6000)
+  }
+
   async function sendeResetMail() {
     if (!editModal?.email) return
     setPwLoading(true)
@@ -205,26 +225,6 @@ export default function KameradenPage() {
     setTimeout(() => setPwMsg(null), 6000)
   }
 
-  async function setzePasswort() {
-    if (pwNeu.length < 6) { setPwMsg({ typ: 'fehler', text: 'Passwort muss mind. 6 Zeichen haben' }); return }
-    if (pwNeu !== pwNeuWdh) { setPwMsg({ typ: 'fehler', text: 'Passwörter stimmen nicht überein' }); return }
-    setPwLoading(true)
-    const { data: sessionData } = await supabase.auth.getSession()
-    const token = sessionData?.session?.access_token
-    const { data, error } = await supabase.functions.invoke('admin-set-password', {
-      body: { user_id: editModal.id, new_password: pwNeu },
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    })
-    if (error || !data?.success) {
-      setPwMsg({ typ: 'fehler', text: data?.error || error?.message || 'Unbekannter Fehler' })
-    } else {
-      setPwMsg({ typ: 'ok', text: 'Passwort wurde erfolgreich gesetzt ✓' })
-      setPwNeu(''); setPwNeuWdh('')
-    }
-    setPwLoading(false)
-    setTimeout(() => setPwMsg(null), 6000)
-  }
-
   async function statusAendern(id, status) {
     await supabase.from('profiles').update({ status }).eq('id', id)
     await fetchKameraden()
@@ -234,8 +234,8 @@ export default function KameradenPage() {
     if (!confirm(`Kamerad ${k.vorname} ${k.nachname} wirklich löschen?\nDiese Aktion kann nicht rückgängig gemacht werden.`)) return
     const { data: sessionData } = await supabase.auth.getSession()
     const token = sessionData?.session?.access_token
-    const { data, error } = await supabase.functions.invoke('admin-delete-user', {
-      body: { user_id: k.id },
+    const { data, error } = await supabase.functions.invoke('create-user', {
+      body: { action: 'delete-user', user_id: k.id },
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
     if (error || !data?.success) {
