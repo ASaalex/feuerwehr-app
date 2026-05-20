@@ -48,6 +48,10 @@ export default function KameradenPage() {
   const [aufladeLoading, setAufladeLoading] = useState(false)
   const [kiTransaktionen, setKiTransaktionen] = useState([])
   const [kiTransLoading, setKiTransLoading] = useState(false)
+  const [pwNeu, setPwNeu] = useState('')
+  const [pwNeuWdh, setPwNeuWdh] = useState('')
+  const [pwLoading, setPwLoading] = useState(false)
+  const [pwMsg, setPwMsg] = useState(null) // null | { typ: 'ok'|'fehler', text: string }
 
   const isGemeinde = myProfile?.rolle === 'gemeindebrandmeister'
   const isWehrleiter = myProfile?.rolle === 'wehrleiter'
@@ -184,6 +188,41 @@ export default function KameradenPage() {
     setEditModal(m => ({ ...m, ki_guthaben_cent: 0 }))
     await ladeKiTransaktionen(editModal.id)
     await fetchKameraden()
+  }
+
+  async function sendeResetMail() {
+    if (!editModal?.email) return
+    setPwLoading(true)
+    const { error } = await supabase.auth.resetPasswordForEmail(editModal.email, {
+      redirectTo: window.location.origin + '/passwort-aendern',
+    })
+    if (error) {
+      setPwMsg({ typ: 'fehler', text: error.message })
+    } else {
+      setPwMsg({ typ: 'ok', text: `Reset-E-Mail an ${editModal.email} gesendet ✓` })
+    }
+    setPwLoading(false)
+    setTimeout(() => setPwMsg(null), 6000)
+  }
+
+  async function setzePasswort() {
+    if (pwNeu.length < 6) { setPwMsg({ typ: 'fehler', text: 'Passwort muss mind. 6 Zeichen haben' }); return }
+    if (pwNeu !== pwNeuWdh) { setPwMsg({ typ: 'fehler', text: 'Passwörter stimmen nicht überein' }); return }
+    setPwLoading(true)
+    const { data: sessionData } = await supabase.auth.getSession()
+    const token = sessionData?.session?.access_token
+    const { data, error } = await supabase.functions.invoke('admin-set-password', {
+      body: { user_id: editModal.id, new_password: pwNeu },
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (error || !data?.success) {
+      setPwMsg({ typ: 'fehler', text: data?.error || error?.message || 'Unbekannter Fehler' })
+    } else {
+      setPwMsg({ typ: 'ok', text: 'Passwort wurde erfolgreich gesetzt ✓' })
+      setPwNeu(''); setPwNeuWdh('')
+    }
+    setPwLoading(false)
+    setTimeout(() => setPwMsg(null), 6000)
   }
 
   async function statusAendern(id, status) {
@@ -371,15 +410,17 @@ export default function KameradenPage() {
             </div>
 
             {/* Tabs */}
-            <div style={{ display: 'flex', borderBottom: '1px solid var(--gray-100)', marginBottom: 20 }}>
+            <div style={{ display: 'flex', borderBottom: '1px solid var(--gray-100)', marginBottom: 20, flexWrap: 'wrap' }}>
               {[
                 { key: 'profil', label: 'Profil' },
                 { key: 'rolle', label: 'Rolle & Rechte' },
                 { key: 'ki_guthaben', label: '💳 KI-Guthaben' },
+                { key: 'passwort', label: '🔐 Passwort' },
               ].map(tab => (
                 <button key={tab.key} onClick={() => {
                   setEditTab(tab.key)
                   if (tab.key === 'ki_guthaben') ladeKiTransaktionen(editModal.id)
+                  if (tab.key === 'passwort') { setPwNeu(''); setPwNeuWdh(''); setPwMsg(null) }
                 }} style={{
                   padding: '8px 18px', border: 'none', background: 'none', cursor: 'pointer',
                   fontSize: 14, fontWeight: editTab === tab.key ? 500 : 400,
@@ -699,9 +740,86 @@ export default function KameradenPage() {
               </div>
             )}
 
+            {editTab === 'passwort' && (
+              <div>
+                {/* Reset-E-Mail */}
+                <div style={{ marginBottom: 28, padding: '16px 20px', background: 'var(--gray-50)', borderRadius: 10, border: '1px solid var(--gray-100)' }}>
+                  <div style={{ fontWeight: 500, fontSize: 14, marginBottom: 6 }}>Reset-E-Mail senden</div>
+                  <div style={{ fontSize: 13, color: 'var(--gray-500)', marginBottom: 12 }}>
+                    Sendet dem Kameraden eine E-Mail mit einem Link zum selbständigen Zurücksetzen des Passworts.
+                    {editModal.email && <> Empfänger: <strong>{editModal.email}</strong></>}
+                  </div>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={sendeResetMail}
+                    disabled={!editModal.email || pwLoading}
+                  >
+                    {pwLoading ? 'Senden…' : (
+                      <>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6 }}>
+                          <rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="22,7 12,13 2,7"/>
+                        </svg>
+                        Reset-E-Mail senden
+                      </>
+                    )}
+                  </button>
+                  {!editModal.email && (
+                    <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 6 }}>Keine E-Mail-Adresse hinterlegt.</div>
+                  )}
+                </div>
+
+                {/* Passwort direkt setzen */}
+                <div style={{ padding: '16px 20px', background: 'var(--gray-50)', borderRadius: 10, border: '1px solid var(--gray-100)' }}>
+                  <div style={{ fontWeight: 500, fontSize: 14, marginBottom: 6 }}>Neues Passwort direkt vergeben</div>
+                  <div style={{ fontSize: 13, color: 'var(--gray-500)', marginBottom: 14 }}>
+                    Setzt sofort ein neues Passwort. Der Kamerad muss danach <strong>nicht</strong> seinen E-Mail-Posteingang prüfen.
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 12 }}>
+                    <label>Neues Passwort</label>
+                    <input
+                      type="password"
+                      value={pwNeu}
+                      onChange={e => setPwNeu(e.target.value)}
+                      placeholder="Mind. 6 Zeichen"
+                      autoComplete="new-password"
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 16 }}>
+                    <label>Passwort wiederholen</label>
+                    <input
+                      type="password"
+                      value={pwNeuWdh}
+                      onChange={e => setPwNeuWdh(e.target.value)}
+                      placeholder="Passwort bestätigen"
+                      autoComplete="new-password"
+                    />
+                    {pwNeuWdh && pwNeu !== pwNeuWdh && (
+                      <div style={{ fontSize: 12, color: '#BE123C', marginTop: 4 }}>Passwörter stimmen nicht überein</div>
+                    )}
+                    {pwNeuWdh && pwNeu === pwNeuWdh && pwNeu.length >= 6 && (
+                      <div style={{ fontSize: 12, color: '#15803D', marginTop: 4 }}>✓ Passwörter stimmen überein</div>
+                    )}
+                  </div>
+                  <button
+                    className="btn btn-primary"
+                    onClick={setzePasswort}
+                    disabled={pwLoading || pwNeu.length < 6 || pwNeu !== pwNeuWdh}
+                  >
+                    {pwLoading ? 'Wird gesetzt…' : '🔐 Passwort setzen'}
+                  </button>
+                </div>
+
+                {pwMsg && (
+                  <div className={`alert alert-${pwMsg.typ === 'ok' ? 'success' : 'error'}`} style={{ marginTop: 14 }}>
+                    {pwMsg.text}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--gray-100)' }}>
               <button className="btn btn-secondary" onClick={() => setEditModal(null)}>Abbrechen</button>
-              {editTab !== 'ki_guthaben' && (
+              {editTab !== 'ki_guthaben' && editTab !== 'passwort' && (
                 <button className="btn btn-primary" onClick={saveEdit} disabled={saving}>
                   {saving ? 'Speichern...' : 'Speichern'}
                 </button>
