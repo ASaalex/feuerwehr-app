@@ -79,8 +79,9 @@ serve(async (req) => {
       await adminClient.from("ki_transaktionen").delete().eq("erstellt_von", user_id);
       await adminClient.from("kamerad_lehrgaenge").delete().eq("kamerad_id", user_id);
       await adminClient.from("kamerad_wehren").delete().eq("kamerad_id", user_id);
-      // Dokumente: hochgeladen_von auf NULL setzen (Dokumente bleiben erhalten)
+      // Dokumente & Prüfungen: erstellt_von auf NULL setzen (Inhalte bleiben erhalten)
       await adminClient.from("dokumente").update({ hochgeladen_von: null }).eq("hochgeladen_von", user_id);
+      await adminClient.from("pruefungen").update({ erstellt_von: null }).eq("erstellt_von", user_id);
 
       // Profil löschen
       const { error: profileErr } = await adminClient.from("profiles").delete().eq("id", user_id);
