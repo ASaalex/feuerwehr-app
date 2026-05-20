@@ -21,26 +21,30 @@ serve(async (req) => {
   try {
     const body = await req.json();
 
+    // Hilfsfunktion: Aufrufer-Profil über JWT laden (zuverlässig ohne RLS-Probleme)
+    async function getCallerProfile(adminClient: ReturnType<typeof createClient>, token: string) {
+      const { data: { user }, error } = await adminClient.auth.getUser(token);
+      if (error || !user) return null;
+      const { data } = await adminClient.from("profiles").select("id,rolle,wehr_id").eq("id", user.id).single();
+      return data;
+    }
+
+    const adminClient = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      { auth: { autoRefreshToken: false, persistSession: false } }
+    );
+    const callerToken = req.headers.get("authorization")?.replace("Bearer ", "") ?? "";
+
     // ── Passwort setzen ───────────────────────────────────────────────────────
     if (body.action === "set-password") {
       const { user_id, new_password } = body;
       if (!user_id || !new_password) return json({ success: false, error: "user_id und new_password erforderlich" });
       if (new_password.length < 6) return json({ success: false, error: "Passwort mind. 6 Zeichen" });
-      const callerToken = req.headers.get("authorization")?.replace("Bearer ", "") ?? "";
-      const callerClient = createClient(
-        Deno.env.get("SUPABASE_URL")!,
-        Deno.env.get("SUPABASE_ANON_KEY")!,
-        { global: { headers: { Authorization: `Bearer ${callerToken}` } } }
-      );
-      const { data: callerProfile } = await callerClient.from("profiles").select("rolle").single();
-      if (!["gemeindebrandmeister", "wehrleiter", "ausbilder"].includes(callerProfile?.rolle)) {
+      const caller = await getCallerProfile(adminClient, callerToken);
+      if (!["gemeindebrandmeister", "wehrleiter", "ausbilder"].includes(caller?.rolle)) {
         return json({ success: false, error: "Keine Berechtigung" });
       }
-      const adminClient = createClient(
-        Deno.env.get("SUPABASE_URL")!,
-        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-        { auth: { autoRefreshToken: false, persistSession: false } }
-      );
       const { error } = await adminClient.auth.admin.updateUserById(user_id, { password: new_password });
       if (error) return json({ success: false, error: error.message });
       return json({ success: true });
@@ -50,21 +54,10 @@ serve(async (req) => {
     if (body.action === "delete-user") {
       const { user_id } = body;
       if (!user_id) return json({ success: false, error: "user_id erforderlich" });
-      const callerToken = req.headers.get("authorization")?.replace("Bearer ", "") ?? "";
-      const callerClient = createClient(
-        Deno.env.get("SUPABASE_URL")!,
-        Deno.env.get("SUPABASE_ANON_KEY")!,
-        { global: { headers: { Authorization: `Bearer ${callerToken}` } } }
-      );
-      const { data: caller } = await callerClient.from("profiles").select("id,rolle,wehr_id").single();
+      const caller = await getCallerProfile(adminClient, callerToken);
       if (!["gemeindebrandmeister", "wehrleiter"].includes(caller?.rolle)) {
-        return json({ success: false, error: "Keine Berechtigung" });
+        return json({ success: false, error: "Keine Berechtigung (Rolle: " + (caller?.rolle ?? "unbekannt") + ")" });
       }
-      const adminClient = createClient(
-        Deno.env.get("SUPABASE_URL")!,
-        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-        { auth: { autoRefreshToken: false, persistSession: false } }
-      );
       const { data: ziel } = await adminClient.from("profiles").select("id,rolle,wehr_id").eq("id", user_id).single();
       if (!ziel) return json({ success: false, error: "Nutzer nicht gefunden" });
       // Wehrleiter darf nur Nutzer seiner eigenen Wache löschen
@@ -103,15 +96,8 @@ serve(async (req) => {
 
     if (!email || !password) throw new Error("E-Mail und Passwort sind erforderlich");
 
-    // Admin-Client mit Service Role Key (umgeht RLS)
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-      { auth: { autoRefreshToken: false, persistSession: false } }
-    );
-
     // 1. Nutzer in Auth anlegen (kein automatisches Login)
-    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+    const { data: authData, error: authError } = await adminClient.auth.admin.createUser({
       email,
       password,
       email_confirm: true, // direkt bestätigt, kein E-Mail-Versand nötig
@@ -124,7 +110,7 @@ serve(async (req) => {
     const userId = authData.user.id;
 
     // 2. Profil aktualisieren (service role umgeht RLS)
-    const { error: profileError } = await supabase.from("profiles").update({
+    const { error: profileError } = await adminClient.from("profiles").update({
       vorname: vorname ?? "Fahrzeug",
       nachname: nachname ?? "Tablet",
       nutzername: nutzername ?? email.split("@")[0],
@@ -138,7 +124,7 @@ serve(async (req) => {
 
     if (profileError) {
       // Nutzer wieder löschen wenn Profil-Update fehlschlägt
-      await supabase.auth.admin.deleteUser(userId);
+      await adminClient.auth.admin.deleteUser(userId);
       throw new Error("Profil-Fehler: " + profileError.message);
     }
 
