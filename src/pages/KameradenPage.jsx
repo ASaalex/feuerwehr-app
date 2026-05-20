@@ -231,10 +231,21 @@ export default function KameradenPage() {
   }
 
   async function handleLoeschen(k) {
-    if (!confirm(`Kamerad ${k.vorname} ${k.nachname} wirklich loeschen? Diese Aktion kann nicht rueckgaengig gemacht werden.`)) return
-    // Profil loeschen (Auth-User bleibt, kann sich nicht mehr einloggen da kein Profil)
-    await supabase.from('profiles').delete().eq('id', k.id)
+    if (!confirm(`Kamerad ${k.vorname} ${k.nachname} wirklich löschen?\nDiese Aktion kann nicht rückgängig gemacht werden.`)) return
+    const { data: sessionData } = await supabase.auth.getSession()
+    const token = sessionData?.session?.access_token
+    const { data, error } = await supabase.functions.invoke('admin-delete-user', {
+      body: { user_id: k.id },
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (error || !data?.success) {
+      const errText = data?.error || error?.message || 'Unbekannter Fehler'
+      alert(`Löschen fehlgeschlagen: ${errText}`)
+      return
+    }
     await fetchKameraden()
+    setMsg(`${k.vorname} ${k.nachname} wurde gelöscht.`)
+    setTimeout(() => setMsg(''), 4000)
   }
 
   const gefiltert = kameraden.filter(k => {
