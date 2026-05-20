@@ -85,13 +85,6 @@ export default function LoginPage() {
             </button>
           </form>
 
-          <div style={{ marginTop: 20, padding: '14px 16px', background: 'var(--gray-50)', borderRadius: 10, border: '1px solid var(--gray-100)' }}>
-            <div style={{ fontSize: 12, color: 'var(--gray-400)', marginBottom: 2 }}>Startpasswort</div>
-            <div style={{ fontSize: 13, color: 'var(--gray-600)' }}>
-              <code style={{ fontFamily: 'var(--mono)', background: 'var(--gray-100)', padding: '1px 6px', borderRadius: 4 }}>Feuerwehr123</code>
-              &nbsp;— bitte nach erstem Login im Profil aendern
-            </div>
-          </div>
         </div>
       </div>
 
