@@ -201,6 +201,7 @@ export default function AusbildungChatPage() {
   const [auswertungSessions, setAuswertungSessions] = useState([])
   const [auswertungLoading, setAuswertungLoading] = useState(false)
   const [funktionModal, setFunktionModal] = useState(null) // { szenario, fortsetzen? }
+  const [auswertungsDetail, setAuswertungsDetail] = useState(null) // Session für Detail-Modal
 
   const istAdmin = ['wehrleiter', 'gemeindebrandmeister', 'ausbilder'].includes(profile?.rolle)
 
@@ -401,7 +402,7 @@ export default function AusbildungChatPage() {
   async function ladeDaten() {
     const [{ data: sz }, { data: sess }] = await Promise.all([
       supabase.from('szenarien').select('*').eq('aktiv', true).order('kategorie').order('titel'),
-      supabase.from('uebungs_sessions').select('id,szenario_id,szenario_titel,erstellt_am,abgeschlossen,nachrichten').eq('kamerad_id', profile.id).order('erstellt_am', { ascending: false }).limit(20),
+      supabase.from('uebungs_sessions').select('id,szenario_id,szenario_titel,funktion,erstellt_am,abgeschlossen,nachrichten').eq('kamerad_id', profile.id).order('erstellt_am', { ascending: false }).limit(20),
     ])
     setSzenarien(sz ?? [])
     setVergSessions(sess ?? [])
@@ -412,7 +413,7 @@ export default function AusbildungChatPage() {
     setAuswertungLoading(true)
     let q = supabase
       .from('uebungs_sessions')
-      .select('id, szenario_titel, erstellt_am, abgeschlossen, nachrichten, kamerad:profiles!kamerad_id(vorname, nachname)')
+      .select('id, szenario_titel, funktion, erstellt_am, abgeschlossen, nachrichten, kamerad:profiles!kamerad_id(vorname, nachname)')
       .order('erstellt_am', { ascending: false })
       .limit(200)
     if (profile?.rolle === 'wehrleiter' && profile?.wehr_id) {
@@ -442,6 +443,7 @@ export default function AusbildungChatPage() {
       kamerad_id: profile.id,
       szenario_id: szenario.id,
       szenario_titel: szenario.titel,
+      funktion: funktion ?? null,
       nachrichten: [],
     }).select().single()
 
@@ -574,8 +576,9 @@ export default function AusbildungChatPage() {
   async function waehlesFunktionUndStarte(funktion) {
     const { szenario, fortsetzen } = funktionModal
     if (fortsetzen) {
-      // Bestehende Session fortsetzen
+      // Bestehende Session fortsetzen + Funktion in DB speichern
       setFunktionModal(null)
+      supabase.from('uebungs_sessions').update({ funktion }).eq('id', fortsetzen.id).then(() => {})
       setAktSession({ ...fortsetzen, szenario, funktion })
       setPhase('chat')
     } else {
@@ -851,25 +854,38 @@ export default function AusbildungChatPage() {
                     <tr>
                       <th>Kamerad</th>
                       <th>Szenario</th>
+                      <th>Funktion</th>
                       <th>Datum</th>
                       <th>Note</th>
                       <th>Status</th>
+                      <th></th>
                     </tr>
                   </thead>
                   <tbody>
                     {auswertungSessions.length === 0 ? (
-                      <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--gray-400)', padding: 32 }}>Noch keine Übungen abgelegt</td></tr>
+                      <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--gray-400)', padding: 32 }}>Noch keine Übungen abgelegt</td></tr>
                     ) : auswertungSessions.map(sess => {
                       const note = extrahiereNote(sess.nachrichten)
                       const noteMeta = note ? NOTE_META[note] : null
                       const antworten = (sess.nachrichten ?? []).filter(m => m.role === 'user').length
+                      const funkMeta = sess.funktion ? FUNKTION_META.find(f => f.key === sess.funktion) : null
                       return (
-                        <tr key={sess.id}>
+                        <tr key={sess.id} style={{ cursor: 'pointer' }}
+                          onClick={() => setAuswertungsDetail(sess)}
+                          onMouseEnter={e => e.currentTarget.style.background = 'var(--gray-50)'}
+                          onMouseLeave={e => e.currentTarget.style.background = ''}>
                           <td style={{ fontWeight: 500 }}>
                             {sess.kamerad ? `${sess.kamerad.vorname} ${sess.kamerad.nachname}` : '–'}
                           </td>
-                          <td style={{ fontSize: 13, color: 'var(--gray-600)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <td style={{ fontSize: 13, color: 'var(--gray-600)', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {sess.szenario_titel ?? '–'}
+                          </td>
+                          <td>
+                            {funkMeta ? (
+                              <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 8, background: `${funkMeta.farbe}15`, color: funkMeta.farbe, fontWeight: 600, whiteSpace: 'nowrap' }}>
+                                {funkMeta.icon} {funkMeta.kuerzel}
+                              </span>
+                            ) : <span style={{ color: 'var(--gray-300)', fontSize: 12 }}>–</span>}
                           </td>
                           <td style={{ fontSize: 12, color: 'var(--gray-400)', whiteSpace: 'nowrap' }}>
                             {format(new Date(sess.erstellt_am), 'dd.MM.yy HH:mm', { locale: de })}
@@ -888,6 +904,7 @@ export default function AusbildungChatPage() {
                               {sess.abgeschlossen ? `✓ ${antworten} Antworten` : `⏸ ${antworten} Antworten`}
                             </span>
                           </td>
+                          <td style={{ color: 'var(--gray-400)', fontSize: 13 }}>👁</td>
                         </tr>
                       )
                     })}
@@ -895,6 +912,54 @@ export default function AusbildungChatPage() {
                 </table>
               </div>
             </div>
+
+            {/* Detail-Modal: Chatverlauf eines Kameraden */}
+            {auswertungsDetail && (() => {
+              const d = auswertungsDetail
+              const funkMeta = d.funktion ? FUNKTION_META.find(f => f.key === d.funktion) : null
+              const note = extrahiereNote(d.nachrichten)
+              const noteMeta = note ? NOTE_META[note] : null
+              return (
+                <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && setAuswertungsDetail(null)} style={{ zIndex: 1100 }}>
+                  <div className="modal" style={{ maxWidth: 680, maxHeight: '88vh', display: 'flex', flexDirection: 'column' }}>
+                    <div className="modal-header" style={{ flexShrink: 0 }}>
+                      <div>
+                        <div style={{ fontSize: 11, color: 'var(--gray-400)', marginBottom: 2 }}>
+                          {d.kamerad ? `${d.kamerad.vorname} ${d.kamerad.nachname}` : ''} · {format(new Date(d.erstellt_am), 'dd.MM.yyyy HH:mm', { locale: de })}
+                        </div>
+                        <h3 style={{ margin: 0, fontSize: 15 }}>{d.szenario_titel ?? 'Übung'}</h3>
+                        <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+                          {funkMeta && (
+                            <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 8, background: `${funkMeta.farbe}15`, color: funkMeta.farbe, fontWeight: 600 }}>
+                              {funkMeta.icon} {funkMeta.label}
+                            </span>
+                          )}
+                          {noteMeta && (
+                            <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 8, background: noteMeta.bg, color: noteMeta.text, fontWeight: 700 }}>
+                              {noteMeta.label}
+                            </span>
+                          )}
+                          <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 8, background: d.abgeschlossen ? '#ECFDF5' : '#FFF8E1', color: d.abgeschlossen ? '#065F46' : '#B45309', fontWeight: 500 }}>
+                            {d.abgeschlossen ? '✓ Abgeschlossen' : '⏸ Unterbrochen'}
+                          </span>
+                        </div>
+                      </div>
+                      <button className="btn btn-ghost btn-sm" onClick={() => setAuswertungsDetail(null)}>✕</button>
+                    </div>
+                    <div style={{ overflowY: 'auto', flex: 1, padding: '12px 16px' }}>
+                      {(d.nachrichten ?? []).length === 0 ? (
+                        <p style={{ color: 'var(--gray-400)', textAlign: 'center', padding: 24 }}>Keine Nachrichten vorhanden.</p>
+                      ) : (d.nachrichten ?? []).map((msg, i) => (
+                        <NachrichtBlase key={i} msg={msg} onVorschriftClick={regelwerke.length > 0 ? oeffneVorschriftModal : null} onVorlesen={sprich} />
+                      ))}
+                    </div>
+                    <div style={{ flexShrink: 0, padding: '12px 16px', borderTop: '1px solid var(--gray-100)', display: 'flex', justifyContent: 'flex-end' }}>
+                      <button className="btn btn-secondary" onClick={() => setAuswertungsDetail(null)}>Schließen</button>
+                    </div>
+                  </div>
+                </div>
+              )
+            })()}
           </>
         )}
       </div>
