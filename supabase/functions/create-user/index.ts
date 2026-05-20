@@ -24,8 +24,8 @@ serve(async (req) => {
     // ── Passwort setzen ───────────────────────────────────────────────────────
     if (body.action === "set-password") {
       const { user_id, new_password } = body;
-      if (!user_id || !new_password) throw new Error("user_id und new_password erforderlich");
-      if (new_password.length < 6) throw new Error("Passwort mind. 6 Zeichen");
+      if (!user_id || !new_password) return json({ success: false, error: "user_id und new_password erforderlich" });
+      if (new_password.length < 6) return json({ success: false, error: "Passwort mind. 6 Zeichen" });
       const callerToken = req.headers.get("authorization")?.replace("Bearer ", "") ?? "";
       const callerClient = createClient(
         Deno.env.get("SUPABASE_URL")!,
@@ -34,7 +34,7 @@ serve(async (req) => {
       );
       const { data: callerProfile } = await callerClient.from("profiles").select("rolle").single();
       if (!["gemeindebrandmeister", "wehrleiter", "ausbilder"].includes(callerProfile?.rolle)) {
-        return json({ success: false, error: "Keine Berechtigung" }, 403);
+        return json({ success: false, error: "Keine Berechtigung" });
       }
       const adminClient = createClient(
         Deno.env.get("SUPABASE_URL")!,
@@ -42,14 +42,14 @@ serve(async (req) => {
         { auth: { autoRefreshToken: false, persistSession: false } }
       );
       const { error } = await adminClient.auth.admin.updateUserById(user_id, { password: new_password });
-      if (error) throw new Error(error.message);
+      if (error) return json({ success: false, error: error.message });
       return json({ success: true });
     }
 
     // ── Nutzer löschen ────────────────────────────────────────────────────────
     if (body.action === "delete-user") {
       const { user_id } = body;
-      if (!user_id) throw new Error("user_id erforderlich");
+      if (!user_id) return json({ success: false, error: "user_id erforderlich" });
       const callerToken = req.headers.get("authorization")?.replace("Bearer ", "") ?? "";
       const callerClient = createClient(
         Deno.env.get("SUPABASE_URL")!,
@@ -58,7 +58,7 @@ serve(async (req) => {
       );
       const { data: caller } = await callerClient.from("profiles").select("id,rolle,wehr_id").single();
       if (!["gemeindebrandmeister", "wehrleiter"].includes(caller?.rolle)) {
-        return json({ success: false, error: "Keine Berechtigung" }, 403);
+        return json({ success: false, error: "Keine Berechtigung" });
       }
       const adminClient = createClient(
         Deno.env.get("SUPABASE_URL")!,
@@ -66,13 +66,18 @@ serve(async (req) => {
         { auth: { autoRefreshToken: false, persistSession: false } }
       );
       const { data: ziel } = await adminClient.from("profiles").select("id,rolle,wehr_id").eq("id", user_id).single();
-      if (!ziel) throw new Error("Nutzer nicht gefunden");
+      if (!ziel) return json({ success: false, error: "Nutzer nicht gefunden" });
+      // Wehrleiter darf nur Nutzer seiner eigenen Wache löschen
+      // (aber NICHT den eigenen Account und NICHT den GBM)
       if (caller.rolle === "wehrleiter") {
-        if (["gemeindebrandmeister", "wehrleiter"].includes(ziel.rolle)) {
-          return json({ success: false, error: "Wehrleiter kann keine anderen Wehrleiter löschen" }, 403);
+        if (ziel.rolle === "gemeindebrandmeister") {
+          return json({ success: false, error: "Gemeindebrandmeister kann nicht gelöscht werden" });
+        }
+        if (caller.id === user_id) {
+          return json({ success: false, error: "Eigener Account kann nicht gelöscht werden" });
         }
         if (ziel.wehr_id !== caller.wehr_id) {
-          return json({ success: false, error: "Nur Kameraden der eigenen Wache können gelöscht werden" }, 403);
+          return json({ success: false, error: "Nur Nutzer der eigenen Wache können gelöscht werden" });
         }
       }
       await adminClient.from("profiles").delete().eq("id", user_id);
