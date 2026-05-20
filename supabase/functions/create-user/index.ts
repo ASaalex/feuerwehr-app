@@ -73,15 +73,20 @@ serve(async (req) => {
           return json({ success: false, error: "Nur Nutzer der eigenen Wache können gelöscht werden" });
         }
       }
-      // Abhängige Daten zuerst löschen / entkoppeln (FK-Constraints vermeiden)
+      // Abhängige Daten löschen / entkoppeln (FK-Constraints in der richtigen Reihenfolge)
       await adminClient.from("uebungs_sessions").delete().eq("kamerad_id", user_id);
       await adminClient.from("ki_transaktionen").delete().eq("kamerad_id", user_id);
       await adminClient.from("ki_transaktionen").delete().eq("erstellt_von", user_id);
+      await adminClient.from("pruefungs_ergebnisse").delete().eq("kamerad_id", user_id);
       await adminClient.from("kamerad_lehrgaenge").delete().eq("kamerad_id", user_id);
       await adminClient.from("kamerad_wehren").delete().eq("kamerad_id", user_id);
-      // Dokumente & Prüfungen: erstellt_von auf NULL setzen (Inhalte bleiben erhalten)
+      // Inhalte erhalten, aber Autor-Referenz auf NULL setzen
       await adminClient.from("dokumente").update({ hochgeladen_von: null }).eq("hochgeladen_von", user_id);
       await adminClient.from("pruefungen").update({ erstellt_von: null }).eq("erstellt_von", user_id);
+      await adminClient.from("einsatzberichte").update({ erstellt_von: null }).eq("erstellt_von", user_id);
+      await adminClient.from("aufgaben").update({ erstellt_von: null }).eq("erstellt_von", user_id);
+      await adminClient.from("aufgaben").update({ zugewiesen_an: null }).eq("zugewiesen_an", user_id);
+      await adminClient.from("aufgaben_kommentare").delete().eq("erstellt_von", user_id);
 
       // Profil löschen
       const { error: profileErr } = await adminClient.from("profiles").delete().eq("id", user_id);
