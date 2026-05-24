@@ -232,12 +232,16 @@ function AufnahmeModal({ onClose, onSaved, profile }) {
   const [speichern, setSpeichern] = useState(false)
   const [wakeLockAktiv, setWakeLockAktiv] = useState(false)
   const [aufnahmeZeit, setAufnahmeZeit] = useState(0) // Sekunden
+  const [laufendeSessionId, setLaufendeSessionId] = useState(null) // für Auto-Speichern
+  const [letzterSave, setLetzterSave] = useState(null) // Zeitpunkt letztes Auto-Save
 
   const hoertRef = useRef(false)
   const erkennungRef = useRef(null)
   const transkriptRef = useRef('')
   const wakeLockRef = useRef(null)
   const timerRef = useRef(null)
+  const autoSaveRef = useRef(null)
+  const sessionIdRef = useRef(null)
 
   const sprachVerfuegbar = !!(window.SpeechRecognition || window.webkitSpeechRecognition)
 
@@ -294,14 +298,42 @@ function AufnahmeModal({ onClose, onSaved, profile }) {
     try { e.start() } catch { hoertRef.current = false; setHoert(false); releaseWakeLock() }
   }
 
+  // Auto-Speichern alle 60 Sekunden – schützt vor Datenverlust bei langen Versammlungen
+  async function autoSpeichern() {
+    if (!transkriptRef.current.trim()) return
+    const jetzt = new Date().toISOString()
+    if (sessionIdRef.current) {
+      // Bestehenden Entwurf aktualisieren
+      await supabase.from('versammlungen')
+        .update({ transkript: transkriptRef.current })
+        .eq('id', sessionIdRef.current)
+    } else {
+      // Ersten Entwurf anlegen
+      const { data } = await supabase.from('versammlungen').insert({
+        name: name || 'Laufende Aufnahme',
+        datum,
+        status: 'entwurf',
+        transkript: transkriptRef.current,
+        erstellt_von: profile.id,
+      }).select('id').single()
+      if (data?.id) {
+        sessionIdRef.current = data.id
+        setLaufendeSessionId(data.id)
+      }
+    }
+    setLetzterSave(jetzt)
+  }
+
   async function toggleAufnahme() {
     if (hoertRef.current) {
-      // Stopp
+      // Stopp – einmal manuell speichern
       hoertRef.current = false
       setHoert(false)
       erkennungRef.current?.abort()
       releaseWakeLock()
       clearInterval(timerRef.current)
+      clearInterval(autoSaveRef.current)
+      await autoSpeichern()
     } else {
       // Start
       hoertRef.current = true
@@ -309,6 +341,8 @@ function AufnahmeModal({ onClose, onSaved, profile }) {
       setAufnahmeZeit(0)
       await requestWakeLock()
       timerRef.current = setInterval(() => setAufnahmeZeit(t => t + 1), 1000)
+      // Auto-Speichern alle 60 Sekunden
+      autoSaveRef.current = setInterval(autoSpeichern, 60_000)
       starteErkennung()
     }
   }
@@ -318,6 +352,7 @@ function AufnahmeModal({ onClose, onSaved, profile }) {
     erkennungRef.current?.abort()
     releaseWakeLock()
     clearInterval(timerRef.current)
+    clearInterval(autoSaveRef.current)
   }, [])
 
   function formatZeit(sek) {
@@ -347,14 +382,21 @@ function AufnahmeModal({ onClose, onSaved, profile }) {
 
   async function speichereEntwurf() {
     setSpeichern(true)
-    const { error } = await supabase.from('versammlungen').insert({
-      name,
-      datum,
-      status: 'entwurf',
-      transkript: transkript || null,
-      protokoll_text: protokoll || null,
-      erstellt_von: profile.id,
-    })
+    let error
+    if (sessionIdRef.current) {
+      // Bereits auto-gespeicherter Entwurf → updaten
+      ;({ error } = await supabase.from('versammlungen').update({
+        name, datum, transkript: transkript || null, protokoll_text: protokoll || null,
+      }).eq('id', sessionIdRef.current))
+    } else {
+      // Kein Auto-Save bisher → neu anlegen
+      ;({ error } = await supabase.from('versammlungen').insert({
+        name, datum, status: 'entwurf',
+        transkript: transkript || null,
+        protokoll_text: protokoll || null,
+        erstellt_von: profile.id,
+      }))
+    }
     setSpeichern(false)
     if (error) { setFehler('Fehler: ' + error.message); return }
     onSaved()
@@ -441,12 +483,28 @@ function AufnahmeModal({ onClose, onSaved, profile }) {
                       : '⚠️ Bildschirm-Sperre nicht verfügbar – Handy nicht sperren!'
                     : 'Sprecht in das Mikrofon – Text wird live erkannt'}
                 </div>
+
+                {/* Auto-Save Status */}
+                {hoert && (
+                  <div style={{ marginTop: 4, fontSize: 11, color: 'var(--gray-400)' }}>
+                    💾 Auto-Speichern alle 60 Sek.
+                    {letzterSave && ` · Zuletzt: ${new Date(letzterSave).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`}
+                  </div>
+                )}
               </div>
 
               {transkript && (
                 <div style={{ marginBottom: 16 }}>
                   <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--gray-500)', display: 'block', marginBottom: 6 }}>
-                    TRANSKRIPT ({transkript.split(' ').length} Wörter)
+                    TRANSKRIPT
+                    <span style={{ fontWeight: 400, marginLeft: 6 }}>
+                      {transkript.trim().split(/\s+/).length} Wörter
+                      {transkript.trim().split(/\s+/).length > 8000 && (
+                        <span style={{ color: '#B45309', marginLeft: 6 }}>
+                          · ⚠️ Sehr langes Transkript – KI-Generierung kann einige Minuten dauern
+                        </span>
+                      )}
+                    </span>
                   </label>
                   <textarea
                     value={transkript}
