@@ -50,7 +50,7 @@ Erstelle daraus ein strukturiertes Feuerwehr-Protokoll.`;
 
     const message = await client.messages.create({
       model: "claude-opus-4-5",
-      max_tokens: 2000,
+      max_tokens: 4096,
       system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }],
     });
