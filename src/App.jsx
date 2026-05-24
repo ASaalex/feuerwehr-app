@@ -23,6 +23,7 @@ import ImpressumPage from './pages/ImpressumPage'
 import EinstellungenPage from './pages/EinstellungenPage'
 import EinsatzberichtPage from './pages/EinsatzberichtPage'
 import EinsatzberichtFormular from './pages/EinsatzberichtFormular'
+import VersammlungenPage from './pages/VersammlungenPage'
 import './index.css'
 
 function GbmRoute({ children }) {
@@ -102,6 +103,7 @@ function AppRoutes() {
         <Route path="admin" element={<ProtectedRoute adminOnly><AdminPage /></ProtectedRoute>} />
         <Route path="datenschutz" element={<ProtectedRoute><DatenschutzPage /></ProtectedRoute>} />
         <Route path="dokumente" element={<DokumentePage />} />
+        <Route path="versammlungen" element={<ProtectedRoute><VersammlungenPage /></ProtectedRoute>} />
         <Route path="ausbildung" element={<ProtectedRoute><AusbildungPage /></ProtectedRoute>} />
         <Route path="ausbildung/chat" element={<ProtectedRoute><AusbildungChatPage /></ProtectedRoute>} />
         <Route path="szenarien" element={<ProtectedRoute adminOnly><SzenarienAdminPage /></ProtectedRoute>} />
