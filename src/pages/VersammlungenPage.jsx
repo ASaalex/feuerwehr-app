@@ -230,15 +230,49 @@ function AufnahmeModal({ onClose, onSaved, profile }) {
   const [fehler, setFehler] = useState('')
   const [generieren, setGenerieren] = useState(false)
   const [speichern, setSpeichern] = useState(false)
+  const [wakeLockAktiv, setWakeLockAktiv] = useState(false)
+  const [aufnahmeZeit, setAufnahmeZeit] = useState(0) // Sekunden
 
   const hoertRef = useRef(false)
   const erkennungRef = useRef(null)
   const transkriptRef = useRef('')
+  const wakeLockRef = useRef(null)
+  const timerRef = useRef(null)
+
+  const sprachVerfuegbar = !!(window.SpeechRecognition || window.webkitSpeechRecognition)
+
+  // Wake Lock anfordern – verhindert Bildschirm-Abdunkeln auf Mobilgeräten
+  async function requestWakeLock() {
+    if (!('wakeLock' in navigator)) return
+    try {
+      wakeLockRef.current = await navigator.wakeLock.request('screen')
+      setWakeLockAktiv(true)
+      // Wake Lock neu anfordern wenn Seite wieder sichtbar wird (z.B. nach Tab-Wechsel)
+      wakeLockRef.current.addEventListener('release', () => setWakeLockAktiv(false))
+    } catch (_) { /* Wake Lock nicht verfügbar – kein Fehler */ }
+  }
+
+  function releaseWakeLock() {
+    wakeLockRef.current?.release().catch(() => {})
+    wakeLockRef.current = null
+    setWakeLockAktiv(false)
+  }
+
+  // Seite wieder sichtbar → Wake Lock erneuern
+  useEffect(() => {
+    async function onVisibilityChange() {
+      if (document.visibilityState === 'visible' && hoertRef.current) {
+        await requestWakeLock()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
+  }, [])
 
   function starteErkennung() {
     if (!hoertRef.current) return
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SR) { setFehler('Spracherkennung nicht verfügbar (Chrome/Edge benötigt)'); return }
+    if (!SR) { setFehler('Spracherkennung nicht verfügbar – bitte Chrome oder Edge nutzen'); return }
     const e = new SR()
     erkennungRef.current = e
     e.lang = 'de-DE'
@@ -254,23 +288,43 @@ function AufnahmeModal({ onClose, onSaved, profile }) {
     e.onerror = err => {
       if (err.error === 'no-speech' || err.error === 'aborted') return
       hoertRef.current = false; setHoert(false)
+      releaseWakeLock()
+      clearInterval(timerRef.current)
     }
-    try { e.start() } catch { hoertRef.current = false; setHoert(false) }
+    try { e.start() } catch { hoertRef.current = false; setHoert(false); releaseWakeLock() }
   }
 
-  function toggleAufnahme() {
+  async function toggleAufnahme() {
     if (hoertRef.current) {
+      // Stopp
       hoertRef.current = false
       setHoert(false)
       erkennungRef.current?.abort()
+      releaseWakeLock()
+      clearInterval(timerRef.current)
     } else {
+      // Start
       hoertRef.current = true
       setHoert(true)
+      setAufnahmeZeit(0)
+      await requestWakeLock()
+      timerRef.current = setInterval(() => setAufnahmeZeit(t => t + 1), 1000)
       starteErkennung()
     }
   }
 
-  useEffect(() => () => { hoertRef.current = false; erkennungRef.current?.abort() }, [])
+  useEffect(() => () => {
+    hoertRef.current = false
+    erkennungRef.current?.abort()
+    releaseWakeLock()
+    clearInterval(timerRef.current)
+  }, [])
+
+  function formatZeit(sek) {
+    const m = String(Math.floor(sek / 60)).padStart(2, '0')
+    const s = String(sek % 60).padStart(2, '0')
+    return `${m}:${s}`
+  }
 
   async function generiereProtokoll() {
     if (!transkript.trim()) { setFehler('Bitte zuerst Versammlung aufnehmen'); return }
@@ -348,23 +402,44 @@ function AufnahmeModal({ onClose, onSaved, profile }) {
           {/* Schritt 2: Aufnahme */}
           {schritt === 'aufnahme' && (
             <div>
-              <div style={{ textAlign: 'center', padding: '20px 0 24px' }}>
+              {!sprachVerfuegbar && (
+                <div className="alert alert-error" style={{ marginBottom: 16 }}>
+                  ⚠️ Spracherkennung nicht verfügbar. Bitte <strong>Chrome</strong> oder <strong>Edge</strong> verwenden (kein Firefox/Safari).
+                </div>
+              )}
+
+              <div style={{ textAlign: 'center', padding: '16px 0 20px' }}>
                 <button
                   onClick={toggleAufnahme}
+                  disabled={!sprachVerfuegbar}
                   style={{
-                    width: 80, height: 80, borderRadius: '50%', border: 'none', cursor: 'pointer',
+                    width: 88, height: 88, borderRadius: '50%', border: 'none', cursor: sprachVerfuegbar ? 'pointer' : 'not-allowed',
                     background: hoert ? '#EF4444' : 'var(--red)',
-                    color: 'white', fontSize: 28, transition: 'all 200ms',
-                    boxShadow: hoert ? '0 0 0 8px rgba(239,68,68,0.2), 0 0 0 16px rgba(239,68,68,0.1)' : '0 2px 8px rgba(0,0,0,0.2)',
+                    color: 'white', fontSize: 32, transition: 'all 200ms',
+                    boxShadow: hoert ? '0 0 0 10px rgba(239,68,68,0.2), 0 0 0 20px rgba(239,68,68,0.1)' : '0 2px 8px rgba(0,0,0,0.2)',
+                    animation: hoert ? 'none' : undefined,
                   }}
                 >
                   {hoert ? '⏹' : '🎤'}
                 </button>
-                <div style={{ marginTop: 14, fontSize: 14, fontWeight: 600, color: hoert ? '#EF4444' : 'var(--gray-500)' }}>
+
+                {hoert && (
+                  <div style={{ marginTop: 10, fontFamily: 'var(--mono)', fontSize: 22, fontWeight: 700, color: '#EF4444', letterSpacing: 2 }}>
+                    {formatZeit(aufnahmeZeit)}
+                  </div>
+                )}
+
+                <div style={{ marginTop: 8, fontSize: 14, fontWeight: 600, color: hoert ? '#EF4444' : 'var(--gray-500)' }}>
                   {hoert ? '● Aufnahme läuft...' : 'Aufnahme starten'}
                 </div>
-                <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 4 }}>
-                  Sprecht in das Mikrofon — der Text wird live erkannt
+
+                {/* Wake Lock Status */}
+                <div style={{ marginTop: 6, fontSize: 11, color: hoert ? (wakeLockAktiv ? '#15803D' : '#B45309') : 'var(--gray-400)' }}>
+                  {hoert
+                    ? wakeLockAktiv
+                      ? '🔒 Bildschirm bleibt aktiv'
+                      : '⚠️ Bildschirm-Sperre nicht verfügbar – Handy nicht sperren!'
+                    : 'Sprecht in das Mikrofon – Text wird live erkannt'}
                 </div>
               </div>
 
