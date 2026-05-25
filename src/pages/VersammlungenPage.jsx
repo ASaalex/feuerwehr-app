@@ -95,7 +95,7 @@ export default function VersammlungenPage() {
       </div>
 
       {/* Entwürfe */}
-      {isGbm && entwuerfe.length > 0 && (
+      {kannAufnehmen && entwuerfe.length > 0 && (
         <div style={{ marginBottom: 32 }}>
           <h3 style={{ fontSize: 13, fontWeight: 600, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
             Entwürfe ({entwuerfe.length})
@@ -116,7 +116,7 @@ export default function VersammlungenPage() {
                   <button className="btn btn-sm btn-secondary" onClick={() => setEditModal({ ...v })}>
                     ✏️ Bearbeiten
                   </button>
-                  {v.protokoll_text && (
+                  {isGbm && v.protokoll_text && (
                     <button className="btn btn-sm btn-primary" onClick={() => abschliessen(v)}>
                       ✓ Abschließen
                     </button>
