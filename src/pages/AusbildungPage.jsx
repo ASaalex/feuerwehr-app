@@ -479,12 +479,7 @@ export default function AusbildungPage() {
                 <label>Titel</label>
                 <input value={form.titel} onChange={e => setForm(f => ({ ...f, titel: e.target.value }))} placeholder="z.B. Dienstanweisung Atemschutz" required />
               </div>
-              <div className="form-group">
-                <label>Kategorie</label>
-                <select value={form.kategorie} onChange={e => setForm(f => ({ ...f, kategorie: e.target.value }))}>
-                  {KATEGORIEN.map(k => <option key={k.value} value={k.value}>{k.label}</option>)}
-                </select>
-              </div>
+              {/* Kategorie ist immer 'ausbildung' – kein Select nötig */}
               <div className="form-group">
                 <label>Beschreibung (optional)</label>
                 <textarea value={form.beschreibung} onChange={e => setForm(f => ({ ...f, beschreibung: e.target.value }))} placeholder="Kurze Beschreibung..." rows={3} />
