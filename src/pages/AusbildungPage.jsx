@@ -22,7 +22,7 @@ export default function AusbildungPage() {
   const [uploadModal, setUploadModal] = useState(false)
   const [filter, setFilter] = useState({ kategorie: 'ausbildung', suche: '' })
   const [uploading, setUploading] = useState(false)
-  const [form, setForm] = useState({ titel: '', beschreibung: '', kategorie: 'dienstanweisung', datei: null })
+  const [form, setForm] = useState({ titel: '', beschreibung: '', kategorie: 'ausbildung', datei: null })
   const [msg, setMsg] = useState('')
   const [ausbildungsModal, setAusbildungsModal] = useState(false)
   const [auslagenModal, setAuslagenModal] = useState(false)
@@ -127,7 +127,7 @@ export default function AusbildungPage() {
     if (!dbError) {
       await fetchDokumente()
       setUploadModal(false)
-      setForm({ titel: '', beschreibung: '', kategorie: 'dienstanweisung', datei: null })
+      setForm({ titel: '', beschreibung: '', kategorie: 'ausbildung', datei: null })
       setMsg('Dokument erfolgreich hochgeladen!')
       setTimeout(() => setMsg(''), 3000)
     }
