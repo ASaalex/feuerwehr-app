@@ -68,6 +68,15 @@ export default function EinsatzberichtFormular() {
   const [fotosLaden, setFotosLaden] = useState(false)
   const fotoInputRef = useRef(null)
 
+  // Audio-Aufnahme
+  const [audioBlob, setAudioBlob] = useState(null)
+  const [audioUrl, setAudioUrl] = useState(null)
+  const [aufnahmeAktiv, setAufnahmeAktiv] = useState(false)
+  const [aufnahmeZeit, setAufnahmeZeit] = useState(0)
+  const recorderRef = useRef(null)
+  const audioChunksRef = useRef([])
+  const aufnahmeTimerRef = useRef(null)
+
   const heute = new Date().toISOString().slice(0, 10)
 
   const [form, setForm] = useState({
@@ -179,7 +188,17 @@ export default function EinsatzberichtFormular() {
             fahrzeuge: b.fahrzeuge?.length
               ? b.fahrzeuge.map(f => ({ ...f, mitgefahren: f.mitgefahren ?? !!(f.ab || f.raus || f.an) }))
               : fahrzeugeAusNamen(wehrData?.fahrzeuge),
-            einsatzkraefte: b.einsatzkraefte ?? [],
+            einsatzkraefte: (() => {
+              // Gespeicherte Kräfte behalten + fehlende (Neben-)Kameraden ergänzen
+              const saved = b.einsatzkraefte ?? []
+              const savedIds = new Set(saved.map(k => k.kamerad_id))
+              const ersteFz = wehrData?.fahrzeuge?.[0] || 'HLF 10'
+              const fehlende = alle.filter(k => !savedIds.has(k.id)).map(k => ({
+                kamerad_id: k.id, name: `${k.nachname}, ${k.vorname}`,
+                aktiv: false, funktion: 'BS', fahrzeug: ersteFz, atemschutz: false,
+              }))
+              return [...saved, ...fehlende].sort((a, b_) => a.name.localeCompare(b_.name, 'de'))
+            })(),
             bioversal_l: b.bioversal_l ?? '',
             absodan_kg: b.absodan_kg ?? '',
             loeschwasser_l: b.loeschwasser_l ?? '',
@@ -316,6 +335,50 @@ export default function EinsatzberichtFormular() {
     setFotoVorschau(prev => prev.filter((_, idx) => idx !== i))
   }
 
+  // ── Audio-Aufnahme ────────────────────────────────────────────
+  async function starteAufnahme() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm'
+        : MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : ''
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+      recorderRef.current = recorder
+      audioChunksRef.current = []
+      recorder.ondataavailable = e => { if (e.data.size > 0) audioChunksRef.current.push(e.data) }
+      recorder.onstop = () => {
+        const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' })
+        if (audioUrl) URL.revokeObjectURL(audioUrl)
+        setAudioBlob(blob)
+        setAudioUrl(URL.createObjectURL(blob))
+        stream.getTracks().forEach(t => t.stop())
+      }
+      recorder.start(1000)
+      setAufnahmeAktiv(true)
+      aufnahmeTimerRef.current = setInterval(() => setAufnahmeZeit(t => t + 1), 1000)
+    } catch (err) {
+      alert('Mikrofon nicht verfügbar: ' + err.message)
+    }
+  }
+
+  function stoppeAufnahme() {
+    if (recorderRef.current?.state === 'recording') recorderRef.current.stop()
+    setAufnahmeAktiv(false)
+    clearInterval(aufnahmeTimerRef.current)
+  }
+
+  function loescheAufnahme() {
+    stoppeAufnahme()
+    if (audioUrl) URL.revokeObjectURL(audioUrl)
+    setAudioBlob(null); setAudioUrl(null); setAufnahmeZeit(0)
+    audioChunksRef.current = []
+  }
+
+  function formatAufZeit(sek) {
+    const m = String(Math.floor(sek / 60)).padStart(2, '0')
+    const s = String(sek % 60).padStart(2, '0')
+    return `${m}:${s}`
+  }
+
   // ── Speichern ─────────────────────────────────────────────────
   async function speichern(abschliessen = false) {
     if (!profile?.wehr_id) return alert('Du bist keiner Wache zugeordnet.')
@@ -384,13 +447,29 @@ export default function EinsatzberichtFormular() {
     try {
       const base64 = einsatzberichtPdf({ ...form, fotoDataUrls: fotoVorschau.map(f => f.dataUrl) }, wehrData?.name || '')
       const datumStr = form.datum ? form.datum.replaceAll('-', '') : 'unbekannt'
-      const { data, error } = await supabase.functions.invoke('resend-email', {
+
+      // Audio-Aufnahme als base64 vorbereiten (falls vorhanden)
+      let audioBase64 = null
+      let audioName = null
+      if (audioBlob) {
+        audioBase64 = await new Promise((res, rej) => {
+          const reader = new FileReader()
+          reader.onload = e => res(e.target.result.split(',')[1])
+          reader.onerror = rej
+          reader.readAsDataURL(audioBlob)
+        })
+        const ext = audioBlob.type.includes('mp4') ? 'm4a' : 'webm'
+        audioName = `Einsatzbericht_Audio_${datumStr}.${ext}`
+      }
+
+      const { data, error } = await supabase.functions.invoke('send-document-email', {
         body: {
           wehr_id: profile.wehr_id,
           email_feld: emailFeld,
           datei_inhalt: base64,
           datei_name: `Einsatzbericht_${datumStr}.pdf`,
           titel: `Einsatzbericht ${form.datum || ''} – ${form.einsatzort || ''}`,
+          ...(audioBase64 ? { audio_inhalt: audioBase64, audio_name: audioName } : {}),
         },
       })
       if (error || !data?.success) {
@@ -823,6 +902,50 @@ export default function EinsatzberichtFormular() {
         <SektionHeader nr={6} titel="Kurzbericht & Fotos" fertig={!!berichtAktiv} />
         {offen[6] && (
           <div style={{ padding: 16 }}>
+
+            {/* Audio-Aufnahme */}
+            <div style={{ background: 'var(--gray-50)', border: '1px solid var(--gray-200)', borderRadius: 10, padding: '12px 16px', marginBottom: 20 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--gray-700)' }}>🎙 Sprachaufnahme</div>
+                  <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 2 }}>
+                    Aufnahme kann pausiert und fortgesetzt werden · Wird beim Mail-Versand als Anhang beigefügt
+                  </div>
+                </div>
+                {aufnahmeAktiv && (
+                  <div style={{ fontFamily: 'var(--mono)', fontSize: 18, fontWeight: 700, color: '#EF4444', letterSpacing: 2 }}>
+                    ● {formatAufZeit(aufnahmeZeit)}
+                  </div>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={aufnahmeAktiv ? stoppeAufnahme : starteAufnahme}
+                  style={{
+                    padding: '8px 18px', borderRadius: 8, border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 14,
+                    background: aufnahmeAktiv ? '#EF4444' : 'var(--red)', color: 'white',
+                    display: 'flex', alignItems: 'center', gap: 6,
+                    boxShadow: aufnahmeAktiv ? '0 0 0 4px rgba(239,68,68,0.2)' : 'none',
+                  }}
+                >
+                  {aufnahmeAktiv ? '⏸ Pause' : audioBlob ? '▶ Fortsetzen' : '🎙 Aufnahme starten'}
+                </button>
+                {audioUrl && !aufnahmeAktiv && (
+                  <>
+                    <audio controls src={audioUrl} style={{ flex: 1, minWidth: 200, height: 36 }} />
+                    <button type="button" className="btn btn-sm btn-danger" onClick={loescheAufnahme} title="Aufnahme löschen">🗑</button>
+                  </>
+                )}
+              </div>
+              {audioBlob && !aufnahmeAktiv && (
+                <div style={{ fontSize: 11, color: 'var(--gray-400)', marginTop: 6 }}>
+                  ✓ Aufnahme gespeichert · {(audioBlob.size / 1024 / 1024).toFixed(1)} MB
+                  {' · '}Wird beim Mail-Versand automatisch angehängt
+                </div>
+              )}
+            </div>
+
             <div className="form-group">
               <label>Lage beim Eintreffen</label>
               <textarea rows={4} value={form.lage_eintreffen} onChange={e => setForm(f => ({ ...f, lage_eintreffen: e.target.value }))}

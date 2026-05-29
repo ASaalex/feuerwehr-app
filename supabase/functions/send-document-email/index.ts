@@ -38,7 +38,7 @@ serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { wehr_id, dokument_id, datei_inhalt, datei_name, titel, email_feld } = body;
+    const { wehr_id, dokument_id, datei_inhalt, datei_name, titel, email_feld, audio_inhalt, audio_name } = body;
     // email_feld: 'drucker_email' (Standard) | 'einsatzbericht_email'
     const zielFeld = email_feld === 'einsatzbericht_email' ? 'einsatzbericht_email' : 'drucker_email';
 
@@ -126,18 +126,24 @@ serve(async (req) => {
       },
     });
 
+    const attachments: { filename: string; content: Buffer; contentType: string }[] = [
+      { filename: anhangName, content: anhangBuffer, contentType: mimeType },
+    ];
+
+    // Optionaler Audio-Anhang (Einsatzbericht-Sprachaufnahme)
+    if (audio_inhalt && audio_name) {
+      const audioBuffer = Buffer.from(audio_inhalt, "base64");
+      const audioExt = (audio_name as string).split(".").pop()?.toLowerCase();
+      const audioMime = audioExt === "m4a" ? "audio/mp4" : "audio/webm";
+      attachments.push({ filename: audio_name, content: audioBuffer, contentType: audioMime });
+    }
+
     await transporter.sendMail({
       from: `Feuerwehr App <${cfg.smtp_user}>`,
       to: zielEmail,
       subject: betreff,
       text: `Dokument zum Drucken: ${betreff}\n\nGesendet von der Feuerwehr-App.`,
-      attachments: [
-        {
-          filename: anhangName,
-          content: anhangBuffer,
-          contentType: mimeType,
-        },
-      ],
+      attachments,
     });
 
     return json({ success: true, message: `Gesendet an ${zielEmail}` });
