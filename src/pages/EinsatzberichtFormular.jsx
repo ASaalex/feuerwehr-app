@@ -366,9 +366,9 @@ export default function EinsatzberichtFormular() {
       })
       if (error || !data?.success) {
         const msg = data?.error || error?.message || 'Transkription fehlgeschlagen.'
-        const istKeyFehler = msg.includes('OPENAI_API_KEY') || msg.includes('non-2xx') || msg.includes('401')
+        const istKeyFehler = msg.includes('GROQ_API_KEY') || msg.includes('OPENAI_API_KEY') || msg.includes('non-2xx') || msg.includes('401')
         setTranskriptionFehler(istKeyFehler
-          ? 'OpenAI API Key fehlt – bitte in Supabase Edge Functions → Secrets als OPENAI_API_KEY hinterlegen.'
+          ? 'Groq API Key fehlt – bitte in Supabase Edge Functions → Secrets als GROQ_API_KEY hinterlegen.'
           : msg)
       } else {
         const transkriptText = `\n\n---\nText aus Aufnahme:\n${data.text}`

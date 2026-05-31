@@ -19,8 +19,8 @@ serve(async (req) => {
   }
 
   try {
-    const apiKey = Deno.env.get("OPENAI_API_KEY");
-    if (!apiKey) throw new Error("OPENAI_API_KEY nicht konfiguriert.");
+    const apiKey = Deno.env.get("GROQ_API_KEY");
+    if (!apiKey) throw new Error("GROQ_API_KEY nicht konfiguriert. Bitte in Supabase Edge Functions → Secrets hinterlegen.");
 
     const { audio_inhalt, audio_name } = await req.json();
     if (!audio_inhalt) throw new Error("audio_inhalt fehlt.");
@@ -30,15 +30,15 @@ serve(async (req) => {
     const ext = (audio_name ?? "audio.webm").split(".").pop()?.toLowerCase() ?? "webm";
     const mimeType = ext === "m4a" ? "audio/mp4" : "audio/webm";
 
-    // Multipart-Form für Whisper API aufbauen
+    // Multipart-Form für Whisper API aufbauen (Groq-kompatibel)
     const formData = new FormData();
     const blob = new Blob([audioBuffer], { type: mimeType });
     formData.append("file", blob, audio_name ?? `audio.${ext}`);
-    formData.append("model", "whisper-1");
+    formData.append("model", "whisper-large-v3-turbo");
     formData.append("language", "de");
     formData.append("prompt", "Feuerwehr, Einsatzbericht, Atemschutz, Brandbekämpfung, Menschenrettung, Technische Hilfeleistung, Löscheinsatz, Einsatzleiter, Gruppenführer");
 
-    const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    const response = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}` },
       body: formData,
