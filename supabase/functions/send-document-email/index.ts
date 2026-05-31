@@ -38,12 +38,12 @@ serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { wehr_id, dokument_id, datei_inhalt, datei_name, titel, email_feld, audio_inhalt, audio_name } = body;
+    const { wehr_id, dokument_id, datei_inhalt, datei_name, titel, email_feld, audio_inhalt, audio_name, html_body, text_body } = body;
     // email_feld: 'drucker_email' (Standard) | 'einsatzbericht_email'
     const zielFeld = email_feld === 'einsatzbericht_email' ? 'einsatzbericht_email' : 'drucker_email';
 
     if (!wehr_id) throw new Error("wehr_id ist erforderlich");
-    if (!dokument_id && !datei_inhalt) throw new Error("dokument_id oder datei_inhalt ist erforderlich");
+    if (!dokument_id && !datei_inhalt && !html_body) throw new Error("dokument_id, datei_inhalt oder html_body ist erforderlich");
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -75,44 +75,55 @@ serve(async (req) => {
     const feldLabel = zielFeld === 'einsatzbericht_email' ? 'Einsatzbericht-E-Mail' : 'Drucker-E-Mail';
     if (!zielEmail) throw new Error(`Keine ${feldLabel} fuer Wache "${wehr.name}". Bitte in Wachen-Verwaltung eintragen.`);
 
-    // Anhang ermitteln
-    let anhangBuffer: Buffer;
-    let anhangName: string;
-    let betreff: string;
-    let mimeType: string;
+    const betreff = titel ? `${titel}` : `Druck: ${datei_name ?? 'Dokument'}`;
 
-    if (dokument_id) {
-      const { data: dok, error: dErr } = await supabase
-        .from("dokumente")
-        .select("titel, datei_pfad, datei_name")
-        .eq("id", dokument_id)
-        .single();
+    const attachments: { filename: string; content: Buffer; contentType: string }[] = [];
 
-      if (dErr || !dok) throw new Error("Dokument nicht gefunden");
+    if (!html_body) {
+      // Anhang ermitteln (Dokument-Druck oder Einsatzbericht)
+      let anhangBuffer: Buffer;
+      let anhangName: string;
+      let mimeType: string;
 
-      const { data: fileBlob, error: fErr } = await supabase.storage
-        .from("dokumente")
-        .download(dok.datei_pfad);
+      if (dokument_id) {
+        const { data: dok, error: dErr } = await supabase
+          .from("dokumente")
+          .select("titel, datei_pfad, datei_name")
+          .eq("id", dokument_id)
+          .single();
 
-      if (fErr || !fileBlob) throw new Error("Datei nicht ladbar: " + fErr?.message);
+        if (dErr || !dok) throw new Error("Dokument nicht gefunden");
 
-      anhangBuffer = Buffer.from(await fileBlob.arrayBuffer());
-      anhangName = dok.datei_name;
-      betreff = `Druck: ${dok.titel}`;
-      const ext = dok.datei_name.split(".").pop()?.toLowerCase();
-      mimeType = ext === "pdf" ? "application/pdf" : "application/octet-stream";
-    } else {
-      // base64 → echte Bytes (kein Re-Encoding)
-      anhangBuffer = Buffer.from(datei_inhalt, "base64");
-      anhangName = datei_name ?? "Dokument.pdf";
-      betreff = `Druck: ${titel ?? anhangName}`;
-      const ext = anhangName.split(".").pop()?.toLowerCase();
-      mimeType = ext === "pdf" ? "application/pdf" : "text/html";
+        const { data: fileBlob, error: fErr } = await supabase.storage
+          .from("dokumente")
+          .download(dok.datei_pfad);
+
+        if (fErr || !fileBlob) throw new Error("Datei nicht ladbar: " + fErr?.message);
+
+        anhangBuffer = Buffer.from(await fileBlob.arrayBuffer());
+        anhangName = dok.datei_name;
+        const ext = dok.datei_name.split(".").pop()?.toLowerCase();
+        mimeType = ext === "pdf" ? "application/pdf" : "application/octet-stream";
+      } else {
+        anhangBuffer = Buffer.from(datei_inhalt, "base64");
+        anhangName = datei_name ?? "Dokument.pdf";
+        const ext = anhangName.split(".").pop()?.toLowerCase();
+        mimeType = ext === "pdf" ? "application/pdf" : "text/html";
+      }
+
+      if (mimeType === "application/pdf") {
+        anhangBuffer = await addDuplexPreference(anhangBuffer);
+      }
+
+      attachments.push({ filename: anhangName, content: anhangBuffer, contentType: mimeType });
     }
 
-    // Duplex-Präferenz in PDF einbetten (nur bei PDF-Dateien)
-    if (mimeType === "application/pdf") {
-      anhangBuffer = await addDuplexPreference(anhangBuffer);
+    // Optionaler Audio-Anhang (Einsatzbericht-Sprachaufnahme)
+    if (audio_inhalt && audio_name) {
+      const audioBuffer = Buffer.from(audio_inhalt, "base64");
+      const audioExt = (audio_name as string).split(".").pop()?.toLowerCase();
+      const audioMime = audioExt === "m4a" ? "audio/mp4" : "audio/webm";
+      attachments.push({ filename: audio_name, content: audioBuffer, contentType: audioMime });
     }
 
     // Gmail SMTP via nodemailer (Port 465, SSL)
@@ -126,23 +137,14 @@ serve(async (req) => {
       },
     });
 
-    const attachments: { filename: string; content: Buffer; contentType: string }[] = [
-      { filename: anhangName, content: anhangBuffer, contentType: mimeType },
-    ];
-
-    // Optionaler Audio-Anhang (Einsatzbericht-Sprachaufnahme)
-    if (audio_inhalt && audio_name) {
-      const audioBuffer = Buffer.from(audio_inhalt, "base64");
-      const audioExt = (audio_name as string).split(".").pop()?.toLowerCase();
-      const audioMime = audioExt === "m4a" ? "audio/mp4" : "audio/webm";
-      attachments.push({ filename: audio_name, content: audioBuffer, contentType: audioMime });
-    }
-
     await transporter.sendMail({
       from: `Feuerwehr App <${cfg.smtp_user}>`,
       to: zielEmail,
       subject: betreff,
-      text: `Dokument zum Drucken: ${betreff}\n\nGesendet von der Feuerwehr-App.`,
+      ...(html_body
+        ? { html: html_body, text: text_body ?? '' }
+        : { text: `Dokument zum Drucken: ${betreff}\n\nGesendet von der Feuerwehr-App.` }
+      ),
       attachments,
     });
 

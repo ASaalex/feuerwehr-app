@@ -96,6 +96,7 @@ export default function KameradenPage() {
       eintrittsdatum: editModal.eintrittsdatum || null,
       fuehrerschein: editModal.fuehrerschein,
       atemschutz: editModal.atemschutz,
+      geraetewart: editModal.geraetewart,
       rolle: editModal.rolle,
       status: editModal.status,
       wehr_id: editModal.wehr_id || null,
@@ -537,6 +538,12 @@ export default function KameradenPage() {
                   <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                     <input type="checkbox" checked={editModal.atemschutz} onChange={e => setEditModal(m => ({ ...m, atemschutz: e.target.checked }))} style={{ width: 'auto' }} />
                     Atemschutztraeger
+                  </label>
+                </div>
+                <div className="form-group">
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={editModal.geraetewart ?? false} onChange={e => setEditModal(m => ({ ...m, geraetewart: e.target.checked }))} style={{ width: 'auto' }} />
+                    Geraetewart
                   </label>
                 </div>
 

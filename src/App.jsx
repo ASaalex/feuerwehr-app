@@ -24,6 +24,8 @@ import EinstellungenPage from './pages/EinstellungenPage'
 import EinsatzberichtPage from './pages/EinsatzberichtPage'
 import EinsatzberichtFormular from './pages/EinsatzberichtFormular'
 import VersammlungenPage from './pages/VersammlungenPage'
+import GeraetewartPage from './pages/GeraetewartPage'
+import PruefungsartenPage from './pages/PruefungsartenPage'
 import './index.css'
 
 function GbmRoute({ children }) {
@@ -37,6 +39,13 @@ function AufgabenRoute({ children }) {
   const { aufgabenAktiv, loading } = useAuth()
   if (loading) return <div className="loading-page"><div className="spinner"></div></div>
   if (!aufgabenAktiv) return <Navigate to="/" replace />
+  return children
+}
+
+function GeraetewartRoute({ children }) {
+  const { profile, loading } = useAuth()
+  if (loading) return <div className="loading-page"><div className="spinner"></div></div>
+  if (!profile?.geraetewart) return <Navigate to="/" replace />
   return children
 }
 
@@ -115,6 +124,8 @@ function AppRoutes() {
         <Route path="profil" element={<ProfilPage />} />
         <Route path="einsatzbericht" element={<EinsatzberichtRoute><EinsatzberichtPage /></EinsatzberichtRoute>} />
         <Route path="einsatzbericht/:id" element={<EinsatzberichtRoute><EinsatzberichtFormular /></EinsatzberichtRoute>} />
+        <Route path="geraetewart" element={<GeraetewartRoute><GeraetewartPage /></GeraetewartRoute>} />
+        <Route path="pruefungsarten" element={<GbmRoute><PruefungsartenPage /></GbmRoute>} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

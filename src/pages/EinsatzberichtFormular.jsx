@@ -73,6 +73,9 @@ export default function EinsatzberichtFormular() {
   const [audioUrl, setAudioUrl] = useState(null)
   const [aufnahmeAktiv, setAufnahmeAktiv] = useState(false)
   const [aufnahmeZeit, setAufnahmeZeit] = useState(0)
+  const [transkribiert, setTranskribiert] = useState(false)
+  const [transkriptionLaeuft, setTranskriptionLaeuft] = useState(false)
+  const [transkriptionFehler, setTranskriptionFehler] = useState('')
   const recorderRef = useRef(null)
   const audioChunksRef = useRef([])
   const aufnahmeTimerRef = useRef(null)
@@ -114,40 +117,27 @@ export default function EinsatzberichtFormular() {
   // ── Daten laden ──────────────────────────────────────────────
   useEffect(() => {
     async function laden() {
-      // Kameraden laden (Haupt + Neben)
       if (profile?.wehr_id) {
-        // Schritt 1: Hauptwache-Mitglieder
-        const { data: haupt } = await supabase
-          .from('profiles')
-          .select('id,vorname,nachname')
-          .eq('status', 'aktiv')
-          .eq('wehr_id', profile.wehr_id)
-          .neq('rolle', 'tablet')
-          .order('nachname')
+        // Schritt 1+2 parallel: Hauptwache-Mitglieder + Nebenwache-IDs + Bericht gleichzeitig
+        const [hauptRes, nebenIdsRes, berichtRes] = await Promise.all([
+          supabase.from('profiles').select('id,vorname,nachname')
+            .eq('status', 'aktiv').eq('wehr_id', profile.wehr_id)
+            .neq('rolle', 'tablet').order('nachname'),
+          supabase.from('kamerad_wehren').select('kamerad_id').eq('wehr_id', profile.wehr_id),
+          !istNeu ? supabase.from('einsatzberichte').select('*').eq('id', id).single() : Promise.resolve({ data: null, error: null }),
+        ])
 
-        const alle = [...(haupt ?? [])]
+        const alle = [...(hauptRes.data ?? [])]
         const ids = new Set(alle.map(k => k.id))
 
-        // Schritt 2: Nebenwache-IDs holen
-        const { data: nebenIds } = await supabase
-          .from('kamerad_wehren')
-          .select('kamerad_id')
-          .eq('wehr_id', profile.wehr_id)
-
-        // Schritt 3: Profile der Nebenwachen-Kameraden laden (aktiv, kein Tablet)
-        if (nebenIds?.length) {
-          const fremdIds = nebenIds.map(n => n.kamerad_id).filter(id => !ids.has(id))
-          if (fremdIds.length > 0) {
-            const { data: nebenProfile } = await supabase
-              .from('profiles')
-              .select('id,vorname,nachname')
-              .eq('status', 'aktiv')
-              .neq('rolle', 'tablet')
-              .in('id', fremdIds)
-              .order('nachname')
-            for (const k of (nebenProfile ?? [])) {
-              if (!ids.has(k.id)) { alle.push(k); ids.add(k.id) }
-            }
+        // Schritt 3: Nebenwachen-Profile (braucht IDs aus Schritt 2)
+        const fremdIds = (nebenIdsRes.data ?? []).map(n => n.kamerad_id).filter(fid => !ids.has(fid))
+        if (fremdIds.length > 0) {
+          const { data: nebenProfile } = await supabase
+            .from('profiles').select('id,vorname,nachname')
+            .eq('status', 'aktiv').neq('rolle', 'tablet').in('id', fremdIds).order('nachname')
+          for (const k of (nebenProfile ?? [])) {
+            if (!ids.has(k.id)) { alle.push(k); ids.add(k.id) }
           }
         }
 
@@ -168,17 +158,19 @@ export default function EinsatzberichtFormular() {
             }))
           }))
         }
-      }
 
-      // Bestehenden Bericht laden
-      if (!istNeu) {
-        const { data: b } = await supabase
-          .from('einsatzberichte')
-          .select('*')
-          .eq('id', id)
-          .single()
+        // Bericht aus dem parallelen Promise.all verwenden
+        const b = berichtRes.data
+        if (berichtRes.error) console.error('Einsatzbericht laden Fehler:', berichtRes.error.message)
 
-        if (b) {
+        if (!istNeu && b) {
+          const saved = b.einsatzkraefte ?? []
+          const savedIds = new Set(saved.map(k => k.kamerad_id))
+          const ersteFz = wehrData?.fahrzeuge?.[0] || 'HLF 10'
+          const fehlende = alle.filter(k => !savedIds.has(k.id)).map(k => ({
+            kamerad_id: k.id, name: `${k.nachname}, ${k.vorname}`,
+            aktiv: false, funktion: 'BS', fahrzeug: ersteFz, atemschutz: false,
+          }))
           setForm({
             datum: b.datum ?? heute,
             alarmzeit: b.alarmzeit ?? '',
@@ -188,26 +180,13 @@ export default function EinsatzberichtFormular() {
             fahrzeuge: b.fahrzeuge?.length
               ? b.fahrzeuge.map(f => ({ ...f, mitgefahren: f.mitgefahren ?? !!(f.ab || f.raus || f.an) }))
               : fahrzeugeAusNamen(wehrData?.fahrzeuge),
-            einsatzkraefte: (() => {
-              // Gespeicherte Kräfte behalten + fehlende (Neben-)Kameraden ergänzen
-              const saved = b.einsatzkraefte ?? []
-              const savedIds = new Set(saved.map(k => k.kamerad_id))
-              const ersteFz = wehrData?.fahrzeuge?.[0] || 'HLF 10'
-              const fehlende = alle.filter(k => !savedIds.has(k.id)).map(k => ({
-                kamerad_id: k.id, name: `${k.nachname}, ${k.vorname}`,
-                aktiv: false, funktion: 'BS', fahrzeug: ersteFz, atemschutz: false,
-              }))
-              return [...saved, ...fehlende].sort((a, b_) => a.name.localeCompare(b_.name, 'de'))
-            })(),
+            einsatzkraefte: [...saved, ...fehlende].sort((a, b_) => a.name.localeCompare(b_.name, 'de')),
             bioversal_l: b.bioversal_l ?? '',
             absodan_kg: b.absodan_kg ?? '',
             loeschwasser_l: b.loeschwasser_l ?? '',
             schaummittel_l: b.schaummittel_l ?? '',
             mittel_sonstiges: b.mittel_sonstiges ?? '',
-            organisationen: b.organisationen ?? {
-              feuerwehren: [], polizei: {}, rettungsdienste: [],
-              einsatzleitung: {}, uebergabe: {}, betroffene: [],
-            },
+            organisationen: b.organisationen ?? { feuerwehren: [], polizei: {}, rettungsdienste: [], einsatzleitung: {}, uebergabe: {}, betroffene: [] },
             lage_eintreffen: b.lage_eintreffen ?? '',
             taetigkeiten: b.taetigkeiten ?? '',
             erlaeuterung: b.erlaeuterung ?? '',
@@ -215,34 +194,27 @@ export default function EinsatzberichtFormular() {
             abgeschlossen: b.abgeschlossen ?? false,
           })
 
-          // Gespeicherte Fotos laden und als Vorschau anzeigen
+          // Fotos parallel laden
           if (b.foto_pfade?.length) {
             setFotosLaden(true)
-            ;(async () => {
-              const previews = []
-              for (const pfad of b.foto_pfade) {
+            Promise.all(
+              b.foto_pfade.map(async pfad => {
                 try {
-                  const { data: blob, error: dlErr } = await supabase.storage
-                    .from('einsatz-fotos')
-                    .download(pfad)
-                  if (dlErr || !blob) {
-                    console.warn('Foto download Fehler:', pfad, dlErr?.message)
-                    continue
-                  }
+                  const { data: blob, error: dlErr } = await supabase.storage.from('einsatz-fotos').download(pfad)
+                  if (dlErr || !blob) return null
                   const dataUrl = await new Promise((resolve, reject) => {
                     const reader = new FileReader()
                     reader.onload = e => resolve(e.target.result)
                     reader.onerror = reject
                     reader.readAsDataURL(blob)
                   })
-                  previews.push({ pfad, dataUrl })
-                } catch (e) {
-                  console.warn('Foto konnte nicht geladen werden:', pfad, e)
-                }
-              }
-              setFotoVorschau(previews)
+                  return { pfad, dataUrl }
+                } catch { return null }
+              })
+            ).then(results => {
+              setFotoVorschau(results.filter(Boolean))
               setFotosLaden(false)
-            })()
+            })
           }
         }
       }
@@ -350,6 +322,7 @@ export default function EinsatzberichtFormular() {
         if (audioUrl) URL.revokeObjectURL(audioUrl)
         setAudioBlob(blob)
         setAudioUrl(URL.createObjectURL(blob))
+        transkribiere(blob)
         stream.getTracks().forEach(t => t.stop())
       }
       recorder.start(1000)
@@ -370,7 +343,37 @@ export default function EinsatzberichtFormular() {
     stoppeAufnahme()
     if (audioUrl) URL.revokeObjectURL(audioUrl)
     setAudioBlob(null); setAudioUrl(null); setAufnahmeZeit(0)
+    setTranskribiert(false); setTranskriptionFehler('')
     audioChunksRef.current = []
+  }
+
+  async function transkribiere(blob) {
+    setTranskriptionLaeuft(true)
+    setTranskriptionFehler('')
+    setTranskribiert(false)
+    try {
+      const base64 = await new Promise((res, rej) => {
+        const reader = new FileReader()
+        reader.onload = e => res(e.target.result.split(',')[1])
+        reader.onerror = rej
+        reader.readAsDataURL(blob)
+      })
+      const ext = blob.type.includes('mp4') ? 'm4a' : 'webm'
+      const { data, error } = await supabase.functions.invoke('transcribe-audio', {
+        body: { audio_inhalt: base64, audio_name: `aufnahme.${ext}` },
+      })
+      if (error || !data?.success) {
+        setTranskriptionFehler(data?.error || error?.message || 'Transkription fehlgeschlagen.')
+      } else {
+        const transkriptText = `\n\n---\nText aus Aufnahme:\n${data.text}`
+        setForm(f => ({ ...f, taetigkeiten: (f.taetigkeiten || '') + transkriptText }))
+        setTranskribiert(true)
+      }
+    } catch (e) {
+      setTranskriptionFehler('Fehler: ' + e.message)
+    } finally {
+      setTranskriptionLaeuft(false)
+    }
   }
 
   function formatAufZeit(sek) {
@@ -384,22 +387,25 @@ export default function EinsatzberichtFormular() {
     if (!profile?.wehr_id) return alert('Du bist keiner Wache zugeordnet.')
     setSaving(true)
 
-    // Fotos: bestehende Pfade behalten + neue hochladen
+    // Fotos: bestehende Pfade behalten + neue parallel hochladen
     const vorhandenePfade = fotoVorschau.filter(f => f.pfad).map(f => f.pfad)
     const neueFotos = fotoVorschau.filter(f => f.file)
-    const neuePfade = []
-    for (const { file } of neueFotos) {
-      const ext = file.name.split('.').pop() || 'jpg'
-      const pfad = `${profile.wehr_id}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
-      const { error: upErr } = await supabase.storage.from('einsatz-fotos').upload(pfad, file, { contentType: file.type })
-      if (upErr) {
-        setSaving(false)
-        alert(`Foto-Upload fehlgeschlagen: ${upErr.message}\n\nBitte prüfe ob der Bucket "einsatz-fotos" in Supabase angelegt ist und die Storage-Policies gesetzt sind (SQL-Skript erneut ausführen).`)
-        return
-      }
-      neuePfade.push(pfad)
+    const uploadErgebnisse = await Promise.all(
+      neueFotos.map(async ({ file }) => {
+        const ext = file.name.split('.').pop() || 'jpg'
+        const pfad = `${profile.wehr_id}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
+        const { error: upErr } = await supabase.storage.from('einsatz-fotos').upload(pfad, file, { contentType: file.type })
+        if (upErr) return { pfad: null, fehler: upErr.message }
+        return { pfad, fehler: null }
+      })
+    )
+    const fehlgeschlagen = uploadErgebnisse.find(e => e.fehler)
+    if (fehlgeschlagen) {
+      setSaving(false)
+      alert(`Foto-Upload fehlgeschlagen: ${fehlgeschlagen.fehler}\n\nBitte prüfe ob der Bucket "einsatz-fotos" in Supabase angelegt ist.`)
+      return
     }
-    const alleFotoPfade = [...vorhandenePfade, ...neuePfade]
+    const alleFotoPfade = [...vorhandenePfade, ...uploadErgebnisse.map(e => e.pfad)]
 
     const payload = {
       wehr_id: profile.wehr_id,
@@ -944,6 +950,22 @@ export default function EinsatzberichtFormular() {
                   {' · '}Wird beim Mail-Versand automatisch angehängt
                 </div>
               )}
+              {transkriptionLaeuft && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, fontSize: 13, color: 'var(--gray-500)' }}>
+                  <div className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} />
+                  Transkribiere Aufnahme mit Whisper AI…
+                </div>
+              )}
+              {transkribiert && !transkriptionLaeuft && (
+                <div style={{ marginTop: 8, fontSize: 13, color: '#16a34a', fontWeight: 500 }}>
+                  ✓ Text wurde in „Tätigkeiten" übertragen
+                </div>
+              )}
+              {transkriptionFehler && (
+                <div style={{ marginTop: 8, fontSize: 12, color: 'var(--red)' }}>
+                  ⚠ Transkription: {transkriptionFehler}
+                </div>
+              )}
             </div>
 
             <div className="form-group">
@@ -977,7 +999,6 @@ export default function EinsatzberichtFormular() {
                 ref={fotoInputRef}
                 type="file"
                 accept="image/*"
-                capture="environment"
                 multiple
                 onChange={handleFotoAuswahl}
                 style={{ display: 'none' }}
