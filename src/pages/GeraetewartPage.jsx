@@ -31,6 +31,18 @@ export default function GeraetewartPage() {
   const readerRef = useRef(null)
   const streamRef = useRef(null)
 
+  // Sprachsteuerung
+  const [sprachAktiv, setSprachAktiv] = useState(false)
+  const [sprachStatus, setSprachStatus] = useState('bereit') // bereit | seriennummer | pruefung
+  const [sprachInfo, setSprachInfo] = useState('')
+  const [sprachSn, setSprachSn] = useState('')
+  const srRef = useRef(null)
+  const pruefungsartenRef = useRef([])
+  const artIdRef = useRef('')
+
+  useEffect(() => { pruefungsartenRef.current = pruefungsarten }, [pruefungsarten])
+  useEffect(() => { artIdRef.current = artId }, [artId])
+
   useEffect(() => {
     supabase.from('pruefungsarten').select('*').order('reihenfolge').order('name').then(({ data }) => {
       setPruefungsarten(data ?? [])
@@ -133,6 +145,136 @@ export default function GeraetewartPage() {
     setListe(prev => [...prev, eintrag])
     setSeriennummer('')
     setNotiz('')
+  }
+
+  // ── Sprachsteuerung ──────────────────────────────────────────
+  function spreche(text) {
+    window.speechSynthesis.cancel()
+    const u = new SpeechSynthesisUtterance(text)
+    u.lang = 'de-DE'
+    u.rate = 1.05
+    window.speechSynthesis.speak(u)
+  }
+
+  function pruefungErkennen(text) {
+    const norm = t => t.toLowerCase().replace(/[äöü]/g, c => ({ä:'ae',ö:'oe',ü:'ue'}[c])).replace(/[^a-z0-9]/g, '')
+    const input = norm(text)
+    const arten = pruefungsartenRef.current
+    // Exakter Treffer zuerst
+    let treffer = arten.find(a => norm(a.name) === input)
+    // Dann Teilstring-Treffer
+    if (!treffer) treffer = arten.find(a => input.includes(norm(a.name)) || norm(a.name).includes(input))
+    // Dann einzelne Wörter
+    if (!treffer) {
+      const woerter = input.split(/\s+/)
+      treffer = arten.find(a => woerter.some(w => w.length > 3 && norm(a.name).includes(w)))
+    }
+    return treffer ?? null
+  }
+
+  function starteSprache() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) { alert('Spracherkennung wird von diesem Browser nicht unterstützt. Bitte Chrome verwenden.'); return }
+
+    const sr = new SR()
+    sr.lang = 'de-DE'
+    sr.continuous = false
+    sr.interimResults = false
+    srRef.current = sr
+    setSprachAktiv(true)
+
+    let status = 'bereit'
+    let tempSn = ''
+
+    function hoere(naechsterStatus, onResult) {
+      sr.onresult = null
+      sr.onerror = null
+      sr.onend = null
+      sr.abort()
+
+      const neu = new SR()
+      neu.lang = 'de-DE'
+      neu.continuous = false
+      neu.interimResults = false
+      srRef.current = neu
+
+      neu.onresult = e => {
+        const text = e.results[0][0].transcript.trim()
+        onResult(text)
+      }
+      neu.onerror = e => {
+        if (e.error === 'no-speech') {
+          hoere(naechsterStatus, onResult)
+        } else {
+          setSprachInfo('Fehler: ' + e.error)
+        }
+      }
+      neu.onend = () => {}
+      setSprachStatus(naechsterStatus)
+      neu.start()
+    }
+
+    function warteAufTrigger() {
+      setSprachStatus('bereit')
+      setSprachInfo('Sage „Prüfung" um ein Gerät zu erfassen')
+      hoere('bereit', text => {
+        if (text.toLowerCase().includes('prüfung') || text.toLowerCase().includes('pruefung')) {
+          spreche('Seriennummer bitte')
+          setSprachInfo('Seriennummer sprechen…')
+          warteAufSeriennummer()
+        } else {
+          warteAufTrigger()
+        }
+      })
+    }
+
+    function warteAufSeriennummer() {
+      setSprachStatus('seriennummer')
+      hoere('seriennummer', text => {
+        // Normalisieren: Leerzeichen entfernen, Buchstaben groß
+        const sn = text.toUpperCase().replace(/\s+/g, '').replace(/[.,!?]/g, '')
+        tempSn = sn
+        setSprachSn(sn)
+        setSeriennummer(sn)
+        spreche(`Seriennummer ${sn}. Welche Prüfung?`)
+        setSprachInfo(`Seriennummer: ${sn} — Prüfungsart sprechen…`)
+        warteAufPruefung(sn)
+      })
+    }
+
+    function warteAufPruefung(sn) {
+      setSprachStatus('pruefung')
+      hoere('pruefung', text => {
+        const art = pruefungErkennen(text)
+        if (art) {
+          const uhrzeit = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
+          const eintrag = { id: Date.now(), seriennummer: sn, artId: art.id, artName: art.name, notiz: '', uhrzeit, datum: new Date().toLocaleDateString('de-DE') }
+          setListe(prev => [...prev, eintrag])
+          setArtId(art.id)
+          setSeriennummer('')
+          setSprachSn('')
+          spreche(`${art.name} für ${sn} eingetragen. Sage Prüfung für das nächste Gerät.`)
+          setSprachInfo('Eingetragen ✓ — Sage „Prüfung" für das nächste Gerät')
+          setTimeout(warteAufTrigger, 500)
+        } else {
+          const verfuegbar = pruefungsartenRef.current.map(a => a.name).join(', ')
+          spreche(`Nicht erkannt. Verfügbare Prüfungen: ${verfuegbar}. Bitte wiederholen.`)
+          setSprachInfo(`Nicht erkannt. Verfügbar: ${verfuegbar}`)
+          warteAufPruefung(sn)
+        }
+      })
+    }
+
+    warteAufTrigger()
+  }
+
+  function stoppeSprache() {
+    srRef.current?.abort()
+    window.speechSynthesis.cancel()
+    setSprachAktiv(false)
+    setSprachStatus('bereit')
+    setSprachInfo('')
+    setSprachSn('')
   }
 
   function loeschen(id) {
@@ -240,6 +382,46 @@ export default function GeraetewartPage() {
       <p style={{ color: 'var(--gray-400)', fontSize: 14, marginBottom: 24 }}>
         Geraete erfassen, Pruefung dokumentieren und als E-Mail versenden.
       </p>
+
+      {/* Sprachsteuerung */}
+      <div style={{
+        background: sprachAktiv ? (sprachStatus === 'seriennummer' ? '#eff6ff' : sprachStatus === 'pruefung' ? '#f0fdf4' : '#fefce8') : 'var(--white)',
+        border: `1px solid ${sprachAktiv ? (sprachStatus === 'seriennummer' ? '#93c5fd' : sprachStatus === 'pruefung' ? '#86efac' : '#fde047') : 'var(--gray-200)'}`,
+        borderRadius: 10, padding: 16, marginBottom: 16,
+        transition: 'all 300ms',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 14 }}>🎤 Sprachsteuerung</div>
+            <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 2 }}>
+              {sprachAktiv ? sprachInfo : 'Freihändige Erfassung per Sprache'}
+            </div>
+          </div>
+          <button
+            onClick={sprachAktiv ? stoppeSprache : starteSprache}
+            className="btn btn-sm"
+            style={{
+              background: sprachAktiv ? '#ef4444' : 'var(--red)', color: 'white', border: 'none',
+              borderRadius: 8, padding: '8px 16px', fontWeight: 600, cursor: 'pointer', flexShrink: 0,
+              boxShadow: sprachAktiv ? '0 0 0 4px rgba(239,68,68,0.2)' : 'none',
+            }}
+          >
+            {sprachAktiv ? '⏹ Stopp' : '🎤 Starten'}
+          </button>
+        </div>
+        {sprachAktiv && (
+          <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{
+              padding: '4px 12px', borderRadius: 20, fontSize: 12, fontWeight: 600,
+              background: sprachStatus === 'bereit' ? '#fef08a' : sprachStatus === 'seriennummer' ? '#bfdbfe' : '#bbf7d0',
+              color: '#374151',
+            }}>
+              {sprachStatus === 'bereit' ? '👂 Warte auf „Prüfung"' : sprachStatus === 'seriennummer' ? '🔢 Seriennummer sprechen' : '📋 Prüfungsart sprechen'}
+            </div>
+            {sprachSn && <div style={{ fontSize: 13, fontFamily: 'monospace', fontWeight: 700, color: '#1d4ed8' }}>{sprachSn}</div>}
+          </div>
+        )}
+      </div>
 
       {/* Erfassungsformular */}
       <div style={{ background: 'var(--white)', border: '1px solid var(--gray-200)', borderRadius: 10, padding: 20, marginBottom: 24 }}>
