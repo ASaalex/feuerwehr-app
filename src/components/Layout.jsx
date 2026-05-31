@@ -174,6 +174,18 @@ export default function Layout() {
               <span style={{ fontSize: 10, fontWeight: 500, whiteSpace: 'nowrap' }}>{item.label}</span>
             </NavLink>
           ))}
+          {profile?.geraetewart && (
+            <NavLink to="/geraetewart" style={({ isActive }) => ({
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+              padding: '8px 14px', borderRadius: 10, textDecoration: 'none', minWidth: 66,
+              color: isActive ? 'white' : 'rgba(255,255,255,0.45)',
+              background: isActive ? 'rgba(192,57,43,0.3)' : 'transparent',
+              flexShrink: 0,
+            })}>
+              <IconGeraetewart size={22} />
+              <span style={{ fontSize: 10, fontWeight: 500, whiteSpace: 'nowrap' }}>Geraetewart</span>
+            </NavLink>
+          )}
           {showAdmin && (
             <NavLink to="/admin"
               style={({ isActive }) => ({

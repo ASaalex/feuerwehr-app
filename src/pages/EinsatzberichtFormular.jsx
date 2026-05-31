@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { einsatzberichtPdf } from '../lib/einsatzberichtPdf'
+import { useWakeLock } from '../hooks/useWakeLock'
 
 const FUNKTIONEN = ['EL', 'GF', 'MA', 'BS']
 const FAHRZEUGE_FALLBACK = ['HLF 10', 'MTW']
@@ -55,6 +56,7 @@ function leerePerson() { return { vorname: '', nachname: '', geboren: '', adress
 export default function EinsatzberichtFormular() {
   const { id } = useParams()
   const istNeu = id === 'neu'
+  useWakeLock()
   const navigate = useNavigate()
   const { profile } = useAuth()
   const wehrData = Array.isArray(profile?.wehr) ? profile?.wehr?.[0] : profile?.wehr
@@ -363,7 +365,11 @@ export default function EinsatzberichtFormular() {
         body: { audio_inhalt: base64, audio_name: `aufnahme.${ext}` },
       })
       if (error || !data?.success) {
-        setTranskriptionFehler(data?.error || error?.message || 'Transkription fehlgeschlagen.')
+        const msg = data?.error || error?.message || 'Transkription fehlgeschlagen.'
+        const istKeyFehler = msg.includes('OPENAI_API_KEY') || msg.includes('non-2xx') || msg.includes('401')
+        setTranskriptionFehler(istKeyFehler
+          ? 'OpenAI API Key fehlt – bitte in Supabase Edge Functions → Secrets als OPENAI_API_KEY hinterlegen.'
+          : msg)
       } else {
         const transkriptText = `\n\n---\nText aus Aufnahme:\n${data.text}`
         setForm(f => ({ ...f, taetigkeiten: (f.taetigkeiten || '') + transkriptText }))

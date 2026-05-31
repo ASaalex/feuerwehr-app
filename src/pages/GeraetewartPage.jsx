@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { BrowserMultiFormatReader, NotFoundException, BarcodeFormat, DecodeHintType } from '@zxing/library'
+import { useWakeLock } from '../hooks/useWakeLock'
 
 const LS_KEY = 'geraetewart_liste'
 
@@ -14,6 +15,7 @@ function speichereListe(liste) {
 
 export default function GeraetewartPage() {
   const { profile } = useAuth()
+  useWakeLock()
   const [pruefungsarten, setPruefungsarten] = useState([])
   const [liste, setListe] = useState(ladeListe)
   const [seriennummer, setSeriennummer] = useState('')
