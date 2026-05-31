@@ -313,9 +313,15 @@ export default function EinsatzberichtFormular() {
   async function starteAufnahme() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm'
-        : MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : ''
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+      // Opus-Codec bevorzugen: sehr effizient für Sprache (~16 kbps ≈ 120 KB/min)
+      const mimeType =
+        MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' :
+        MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' :
+        MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : ''
+      const recorder = new MediaRecorder(stream, {
+        ...(mimeType ? { mimeType } : {}),
+        audioBitsPerSecond: 16000,
+      })
       recorderRef.current = recorder
       audioChunksRef.current = []
       recorder.ondataavailable = e => { if (e.data.size > 0) audioChunksRef.current.push(e.data) }
