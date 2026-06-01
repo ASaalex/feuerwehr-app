@@ -315,6 +315,25 @@ export default function GeraetewartPage() {
           await spreche('Seriennummer bitte')
           setSprachInfo('Seriennummer sprechen…')
           warteAufSeriennummer()
+        } else if (istKorrekturBemerkung(t)) {
+          // Letzten Eintrag nachträglich korrigieren
+          await spreche('Neue Bemerkung für den letzten Eintrag bitte.')
+          setSprachInfo('Neue Bemerkung sprechen oder „weiter" für keine…')
+          hoere('bemerkung', async neueBemerkung => {
+            const keineB = ['weiter','keine','nein','skip'].some(w => neueBemerkung.toLowerCase().includes(w))
+            const b = keineB ? '' : neueBemerkung
+            setListe(prev => {
+              if (prev.length === 0) return prev
+              const neu = [...prev]
+              neu[neu.length - 1] = { ...neu[neu.length - 1], notiz: b }
+              return neu
+            })
+            const msg = b ? `Bemerkung geändert auf: ${b}.` : 'Bemerkung geleert.'
+            await spreche(msg)
+            setSprachInfo('Bemerkung aktualisiert ✓')
+            warteAufTrigger()
+          }, null)
+          return
         } else if (t.includes('info')) {
           const gerätName = text.replace(/info/gi, '').trim()
           if (gerätName) {

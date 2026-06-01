@@ -19,7 +19,7 @@ export const PRUEFINTERVALLE = [
   { name: 'Feuerschutzhaube', aliases: ['brandhaube','schutzhaube','haube'], kategorie: 'Schutzkleidung', sichtpruefung: 'vor Übung und nach Benutzung', regelmaessig: 'alle 12 Monate', belastung: null, norm: 'DIN EN 13911', pdfSeite: 49 },
   { name: 'Schnittschutzkleidung', aliases: ['schnittschutz','schnittschutzjacke','schnittschutzhose'], kategorie: 'Schutzkleidung', sichtpruefung: 'vor Übung und nach Benutzung', regelmaessig: 'alle 12 Monate', belastung: null, norm: 'DIN EN 381', pdfSeite: 50 },
   { name: 'Warnkleidung', aliases: ['warnweste','signalweste','warnkleiding'], kategorie: 'Schutzkleidung', sichtpruefung: 'vor Übung und nach Benutzung', regelmaessig: 'alle 12 Monate', belastung: null, norm: 'DIN EN ISO 20471', pdfSeite: 49 },
-  { name: 'Feuerwehrbeil', aliases: ['beil','axt'], kategorie: 'Schutzkleidung', sichtpruefung: 'vor Übung und nach Benutzung', regelmaessig: 'alle 12 Monate', belastung: null, norm: 'DIN 14924', pdfSeite: 51 },
+  { name: 'Feuerwehrbeil', aliases: ['beil','axt'], kategorie: 'Schutzkleidung', sichtpruefung: 'vor Übung und nach Benutzung', regelmaessig: 'alle 12 Monate', belastung: null, norm: 'DIN 14924', pdfSeite: 50 },
 
   // ── ATEMSCHUTZ ────────────────────────────────────────────────
   { name: 'Atemanschluss', aliases: ['vollmaske','maske','atemmaske','atemschutzmaske'], kategorie: 'Atemschutz', sichtpruefung: 'vor Übung und nach Benutzung', regelmaessig: 'halbjährlich', belastung: null, norm: 'DIN EN 136', hinweis: 'Nach Gebrauch reinigen und desinfizieren. DGUV Regel 112-190, FwDV 7.', pdfSeite: 61 },
