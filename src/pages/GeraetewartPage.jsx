@@ -44,6 +44,7 @@ export default function GeraetewartPage() {
   const [sprachTippen, setSprachTippen] = useState(null) // iOS: Callback für manuelles Starten
   const [infoModal, setInfoModal] = useState(null) // { geraet, sprachCallback }
   const srRef = useRef(null)
+  const sprachLaeuftRef = useRef(false) // Abbruch-Flag für async-Kette
   const pruefungsartenRef = useRef([])
   const artIdRef = useRef('')
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream
@@ -184,16 +185,18 @@ export default function GeraetewartPage() {
     } catch {}
   }
 
-  // spreche: gibt Promise zurück das resolved wenn Ansage fertig ist + Beep
+  // spreche: resolved nur wenn Sprachsteuerung noch aktiv ist
   function spreche(text) {
     return new Promise(resolve => {
       window.speechSynthesis.cancel()
+      if (!sprachLaeuftRef.current) { resolve(); return }
       const u = new SpeechSynthesisUtterance(text)
       u.lang = 'de-DE'
       u.rate = 1.05
       u.onend = () => {
+        if (!sprachLaeuftRef.current) { resolve(); return }
         beep()
-        setTimeout(resolve, 400) // Puffer nach Beep
+        setTimeout(resolve, 400)
       }
       u.onerror = () => resolve()
       window.speechSynthesis.speak(u)
@@ -246,14 +249,16 @@ export default function GeraetewartPage() {
   function starteSprache() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SR) { alert('Spracherkennung nicht unterstützt. Bitte Chrome oder Safari verwenden.'); return }
+    sprachLaeuftRef.current = true
     setSprachAktiv(true)
 
     function hoere(naechsterStatus, onResult, wiederholen) {
+      if (!sprachLaeuftRef.current) return  // Abgebrochen → nichts tun
       srRef.current?.abort()
       setSprachStatus(naechsterStatus)
 
-      // Kleines Delay verhindert das "hängen" nach dem vorherigen Schritt
       setTimeout(() => {
+        if (!sprachLaeuftRef.current) return  // nochmal prüfen nach Delay
         const neu = new SR()
         neu.lang = 'de-DE'
         neu.continuous = false
@@ -404,6 +409,7 @@ export default function GeraetewartPage() {
   }
 
   function stoppeSprache() {
+    sprachLaeuftRef.current = false  // Stoppt alle laufenden async-Ketten
     srRef.current?.abort()
     window.speechSynthesis.cancel()
     setSprachAktiv(false)
