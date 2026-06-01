@@ -158,15 +158,23 @@ export default function GeraetewartPage() {
     window.speechSynthesis.speak(u)
   }
 
+  // Prüfungsart per Name oder Nummer erkennen
   function pruefungErkennen(text) {
-    const norm = t => t.toLowerCase().replace(/[äöü]/g, c => ({ä:'ae',ö:'oe',ü:'ue'}[c])).replace(/[^a-z0-9]/g, '')
+    const norm = t => t.toLowerCase().replace(/[äöü]/g, c => ({ä:'ae',ö:'oe',ü:'ue'}[c])).replace(/[^a-z0-9 ]/g, '').trim()
     const input = norm(text)
     const arten = pruefungsartenRef.current
-    // Exakter Treffer zuerst
+
+    // Per Nummer erkennen ("1", "zwei", "drei" etc.)
+    const zahlwoerter = { 'eins':1,'ein':1,'eine':1,'zwei':2,'drei':3,'vier':4,'fünf':5,'fuenf':5,'sechs':6,'sieben':7,'acht':8,'neun':9,'zehn':10 }
+    const nummerMatch = input.match(/\b(\d+|eins?|eine?|zwei|drei|vier|f[uü]nf|sechs|sieben|acht|neun|zehn)\b/)
+    if (nummerMatch) {
+      const nr = parseInt(nummerMatch[1]) || zahlwoerter[nummerMatch[1]] || 0
+      if (nr >= 1 && nr <= arten.length) return arten[nr - 1]
+    }
+
+    // Per Name erkennen
     let treffer = arten.find(a => norm(a.name) === input)
-    // Dann Teilstring-Treffer
     if (!treffer) treffer = arten.find(a => input.includes(norm(a.name)) || norm(a.name).includes(input))
-    // Dann einzelne Wörter
     if (!treffer) {
       const woerter = input.split(/\s+/)
       treffer = arten.find(a => woerter.some(w => w.length > 3 && norm(a.name).includes(w)))
@@ -174,41 +182,67 @@ export default function GeraetewartPage() {
     return treffer ?? null
   }
 
+  const ABBRUCH_WORTE = ['abbrechen', 'abbruch', 'stopp', 'stop', 'zurück', 'zurueck', 'neustart']
+  const WIEDERHOLEN_WORTE = ['nochmal', 'wiederholen', 'wiederholung', 'nocheinmal', 'neu']
+
+  function istAbbruch(text) { return ABBRUCH_WORTE.some(w => text.toLowerCase().includes(w)) }
+  function istWiederholen(text) { return WIEDERHOLEN_WORTE.some(w => text.toLowerCase().includes(w)) }
+
   function starteSprache() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SR) { alert('Spracherkennung nicht unterstützt. Bitte Chrome oder Safari verwenden.'); return }
     setSprachAktiv(true)
 
-    function hoere(naechsterStatus, onResult) {
+    function hoere(naechsterStatus, onResult, wiederholen) {
       srRef.current?.abort()
-      const neu = new SR()
-      neu.lang = 'de-DE'
-      neu.continuous = false
-      neu.interimResults = false
-      srRef.current = neu
+      setSprachStatus(naechsterStatus)
 
-      function starte() {
-        neu.onresult = e => {
-          setSprachTippen(null)
-          const text = e.results[0][0].transcript.trim()
-          onResult(text)
-        }
-        neu.onerror = e => {
-          setSprachTippen(null)
-          if (e.error === 'no-speech') hoere(naechsterStatus, onResult)
-          else setSprachInfo('Mikrofon-Fehler: ' + e.error)
-        }
-        neu.onend = () => {}
-        setSprachStatus(naechsterStatus)
-        try { neu.start() } catch {}
-      }
+      // Kleines Delay verhindert das "hängen" nach dem vorherigen Schritt
+      setTimeout(() => {
+        const neu = new SR()
+        neu.lang = 'de-DE'
+        neu.continuous = false
+        neu.interimResults = false
+        srRef.current = neu
 
-      if (isIOS) {
-        // iOS: jede Erkennung braucht eine Nutzer-Geste → Button anzeigen
-        setSprachTippen(() => starte)
-      } else {
-        starte()
-      }
+        function starte() {
+          let ergebnis = false
+          neu.onresult = e => {
+            ergebnis = true
+            setSprachTippen(null)
+            const text = e.results[0][0].transcript.trim()
+            if (istAbbruch(text)) {
+              spreche('Abgebrochen. Sage Prüfung für ein neues Gerät.')
+              setSprachSn('')
+              setSprachInfo('Abgebrochen — Sage „Prüfung" für ein neues Gerät')
+              warteAufTrigger()
+              return
+            }
+            if (istWiederholen(text) && wiederholen) {
+              spreche('Okay, nochmal.')
+              wiederholen()
+              return
+            }
+            onResult(text)
+          }
+          neu.onerror = e => {
+            setSprachTippen(null)
+            if (e.error === 'no-speech') hoere(naechsterStatus, onResult, wiederholen)
+            else setSprachInfo('Mikrofon-Fehler: ' + e.error)
+          }
+          neu.onend = () => {
+            // Falls kein Ergebnis und kein Fehler kam → nochmal hören
+            if (!ergebnis) setTimeout(() => hoere(naechsterStatus, onResult, wiederholen), 200)
+          }
+          try { neu.start() } catch {}
+        }
+
+        if (isIOS) {
+          setSprachTippen(() => starte)
+        } else {
+          starte()
+        }
+      }, 300)
     }
 
     function warteAufTrigger() {
@@ -222,7 +256,7 @@ export default function GeraetewartPage() {
         } else {
           warteAufTrigger()
         }
-      })
+      }, null)
     }
 
     function warteAufSeriennummer() {
@@ -231,10 +265,11 @@ export default function GeraetewartPage() {
         const sn = text.toUpperCase().replace(/\s+/g, '').replace(/[.,!?]/g, '')
         setSprachSn(sn)
         setSeriennummer(sn)
-        spreche(`Seriennummer ${sn}. Welche Prüfung?`)
-        setSprachInfo(`Seriennummer: ${sn} — Prüfungsart sprechen…`)
+        const pruefListe = pruefungsartenRef.current.map((a, i) => `${i + 1} ${a.name}`).join(', ')
+        spreche(`Seriennummer ${sn}. Welche Prüfung? ${pruefListe}`)
+        setSprachInfo(`Seriennummer: ${sn} — Prüfungsart als Name oder Nummer sprechen`)
         warteAufPruefung(sn)
-      })
+      }, () => warteAufSeriennummer())
     }
 
     function warteAufPruefung(sn) {
@@ -246,12 +281,12 @@ export default function GeraetewartPage() {
           setSprachInfo(`Prüfung: ${art.name} — Bemerkung sprechen oder „weiter"`)
           warteAufBemerkung(sn, art)
         } else {
-          const verfuegbar = pruefungsartenRef.current.map(a => a.name).join(', ')
-          spreche(`Nicht erkannt. Verfügbar: ${verfuegbar}. Bitte wiederholen.`)
-          setSprachInfo(`Nicht erkannt. Verfügbar: ${verfuegbar}`)
+          const pruefListe = pruefungsartenRef.current.map((a, i) => `${i + 1} ${a.name}`).join(', ')
+          spreche(`Nicht erkannt. Sage eine Nummer oder den Namen. ${pruefListe}`)
+          setSprachInfo('Nicht erkannt — Name oder Nummer sprechen')
           warteAufPruefung(sn)
         }
-      })
+      }, () => warteAufPruefung(sn))
     }
 
     function warteAufBemerkung(sn, art) {
@@ -269,8 +304,8 @@ export default function GeraetewartPage() {
         const msg = bemerkung ? `Eingetragen mit Bemerkung: ${bemerkung}.` : 'Eingetragen.'
         spreche(`${msg} Sage Prüfung für das nächste Gerät.`)
         setSprachInfo('Eingetragen ✓ — Sage „Prüfung" für das nächste Gerät')
-        setTimeout(warteAufTrigger, 500)
-      })
+        setTimeout(warteAufTrigger, 400)
+      }, () => warteAufBemerkung(sn, art))
     }
 
     warteAufTrigger()
@@ -420,6 +455,7 @@ export default function GeraetewartPage() {
         </div>
         {sprachAktiv && (
           <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {/* Status-Badge + Seriennummer */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <div style={{
                 padding: '4px 12px', borderRadius: 20, fontSize: 12, fontWeight: 600,
@@ -428,21 +464,44 @@ export default function GeraetewartPage() {
               }}>
                 {sprachStatus === 'bereit' ? '👂 Warte auf „Prüfung"'
                   : sprachStatus === 'seriennummer' ? '🔢 Seriennummer sprechen'
-                  : sprachStatus === 'pruefung' ? '📋 Prüfungsart sprechen'
+                  : sprachStatus === 'pruefung' ? '📋 Prüfungsart sprechen (Name oder Nummer)'
                   : '💬 Bemerkung sprechen oder „weiter"'}
               </div>
               {sprachSn && <div style={{ fontSize: 13, fontFamily: 'monospace', fontWeight: 700, color: '#1d4ed8' }}>{sprachSn}</div>}
             </div>
+
+            {/* Prüfungsarten-Tabelle mit Nummern */}
+            {pruefungsarten.length > 0 && (
+              <div style={{ background: 'rgba(0,0,0,0.04)', borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(0,0,0,0.08)' }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--gray-400)', padding: '5px 10px', textTransform: 'uppercase', letterSpacing: '0.07em', borderBottom: '1px solid rgba(0,0,0,0.06)' }}>
+                  Verfügbare Prüfungen
+                </div>
+                {pruefungsarten.map((a, i) => (
+                  <div key={a.id} style={{
+                    display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px',
+                    borderBottom: i < pruefungsarten.length - 1 ? '1px solid rgba(0,0,0,0.04)' : 'none',
+                    background: sprachStatus === 'pruefung' ? 'rgba(34,197,94,0.06)' : 'transparent',
+                  }}>
+                    <div style={{ width: 22, height: 22, borderRadius: 6, background: 'var(--red)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, flexShrink: 0 }}>
+                      {i + 1}
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 500 }}>{a.name}</div>
+                  </div>
+                ))}
+                <div style={{ padding: '5px 10px', fontSize: 11, color: 'var(--gray-400)', borderTop: '1px solid rgba(0,0,0,0.06)' }}>
+                  Schlagwörter: <strong>abbrechen</strong> · <strong>nochmal</strong> · <strong>weiter</strong> (Bemerkung überspringen)
+                </div>
+              </div>
+            )}
+
+            {/* iOS: Tippen-Button */}
             {sprachTippen && (
-              <button
-                onClick={sprachTippen}
-                style={{
-                  padding: '10px 16px', borderRadius: 8, border: 'none', cursor: 'pointer',
-                  background: '#1d4ed8', color: 'white', fontWeight: 600, fontSize: 14,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                  boxShadow: '0 0 0 4px rgba(29,78,216,0.2)',
-                }}
-              >
+              <button onClick={sprachTippen} style={{
+                padding: '10px 16px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                background: '#1d4ed8', color: 'white', fontWeight: 600, fontSize: 14,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                boxShadow: '0 0 0 4px rgba(29,78,216,0.2)',
+              }}>
                 🎤 Tippen zum Sprechen
               </button>
             )}
