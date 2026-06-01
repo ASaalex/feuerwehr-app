@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
-import { BrowserMultiFormatReader, NotFoundException, BarcodeFormat, DecodeHintType } from '@zxing/library'
+import { MultiFormatReader, BinaryBitmap, HTMLCanvasElementLuminanceSource, HybridBinarizer, BarcodeFormat, DecodeHintType } from '@zxing/library'
 import { useWakeLock } from '../hooks/useWakeLock'
 import { geraetSuchen, pruefInfoSprechen } from '../data/pruefintervalle'
 import * as pdfjsLib from 'pdfjs-dist'
@@ -70,6 +70,7 @@ export default function GeraetewartPage() {
     setHasTorch(false)
     setScanning(true)
 
+    // MultiFormatReader direkt (zuverlässiger auf Mobile)
     const hints = new Map()
     hints.set(DecodeHintType.POSSIBLE_FORMATS, [
       BarcodeFormat.CODE_128, BarcodeFormat.CODE_39,
@@ -79,8 +80,8 @@ export default function GeraetewartPage() {
     ])
     hints.set(DecodeHintType.TRY_HARDER, true)
 
-    const reader = new BrowserMultiFormatReader(hints)
-    readerRef.current = reader
+    const zxingReader = new MultiFormatReader()
+    zxingReader.setHints(hints)
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -89,36 +90,36 @@ export default function GeraetewartPage() {
       streamRef.current = stream
       videoRef.current.srcObject = stream
 
-      // Torch prüfen
       const track = stream.getVideoTracks()[0]
       if (track?.getCapabilities?.()?.torch) setHasTorch(true)
 
-      // Warten bis Video Daten liefert
       await new Promise(res => {
         videoRef.current.onloadeddata = res
         videoRef.current.play()
       })
 
-      // Canvas-basiertes Scanning: zuverlässiger als decodeFromVideoElement
       const canvas = document.createElement('canvas')
       const ctx = canvas.getContext('2d', { willReadFrequently: true })
       let aktiv = true
 
-      scanIntervalRef.current = setInterval(async () => {
+      scanIntervalRef.current = setInterval(() => {
         const vid = videoRef.current
         if (!vid || !aktiv || vid.readyState < 2 || vid.videoWidth === 0) return
         canvas.width = vid.videoWidth
         canvas.height = vid.videoHeight
         ctx.drawImage(vid, 0, 0)
         try {
-          const result = reader.decode(canvas)
+          const luminance = new HTMLCanvasElementLuminanceSource(canvas)
+          const bitmap = new BinaryBitmap(new HybridBinarizer(luminance))
+          const result = zxingReader.decode(bitmap)
           if (result && aktiv) {
             aktiv = false
             setSeriennummer(result.getText())
             stopScanner()
           }
-        } catch { /* NotFoundException = normal */ }
-      }, 200)
+        } catch { /* NotFoundException ist normal */ }
+      }, 150)
+
       readerRef.current = { reset: () => { aktiv = false; clearInterval(scanIntervalRef.current) } }
     } catch (e) {
       setScanError('Kamera konnte nicht gestartet werden: ' + e.message)
@@ -167,14 +168,33 @@ export default function GeraetewartPage() {
   }
 
   // ── Sprachsteuerung ──────────────────────────────────────────
-  // spreche: gibt Promise zurück das resolved wenn Ansage fertig ist
+  function beep() {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)()
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      osc.type = 'sine'
+      osc.frequency.value = 880
+      gain.gain.setValueAtTime(0.08, ctx.currentTime)
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12)
+      osc.start(ctx.currentTime)
+      osc.stop(ctx.currentTime + 0.12)
+    } catch {}
+  }
+
+  // spreche: gibt Promise zurück das resolved wenn Ansage fertig ist + Beep
   function spreche(text) {
     return new Promise(resolve => {
       window.speechSynthesis.cancel()
       const u = new SpeechSynthesisUtterance(text)
       u.lang = 'de-DE'
       u.rate = 1.05
-      u.onend = () => setTimeout(resolve, 350) // 350ms Puffer nach Ansage
+      u.onend = () => {
+        beep()
+        setTimeout(resolve, 400) // Puffer nach Beep
+      }
       u.onerror = () => resolve()
       window.speechSynthesis.speak(u)
     })
