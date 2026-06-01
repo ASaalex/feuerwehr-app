@@ -4,6 +4,9 @@ import { useAuth } from '../context/AuthContext'
 import { BrowserMultiFormatReader, NotFoundException, BarcodeFormat, DecodeHintType } from '@zxing/library'
 import { useWakeLock } from '../hooks/useWakeLock'
 import { geraetSuchen, pruefInfoSprechen } from '../data/pruefintervalle'
+import * as pdfjsLib from 'pdfjs-dist'
+import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
 
 const LS_KEY = 'geraetewart_liste'
 
@@ -148,12 +151,17 @@ export default function GeraetewartPage() {
   }
 
   // ── Sprachsteuerung ──────────────────────────────────────────
+  // spreche: gibt Promise zurück das resolved wenn Ansage fertig ist
   function spreche(text) {
-    window.speechSynthesis.cancel()
-    const u = new SpeechSynthesisUtterance(text)
-    u.lang = 'de-DE'
-    u.rate = 1.05
-    window.speechSynthesis.speak(u)
+    return new Promise(resolve => {
+      window.speechSynthesis.cancel()
+      const u = new SpeechSynthesisUtterance(text)
+      u.lang = 'de-DE'
+      u.rate = 1.05
+      u.onend = () => setTimeout(resolve, 350) // 350ms Puffer nach Ansage
+      u.onerror = () => resolve()
+      window.speechSynthesis.speak(u)
+    })
   }
 
   // Prüfungsart per Name oder Nummer erkennen
@@ -162,13 +170,12 @@ export default function GeraetewartPage() {
     const input = norm(text)
     const arten = pruefungsartenRef.current
 
-    // Per Nummer erkennen ("1", "zwei", "drei" etc.)
-    const zahlwoerter = { 'eins':1,'ein':1,'eine':1,'zwei':2,'drei':3,'vier':4,'fünf':5,'fuenf':5,'sechs':6,'sieben':7,'acht':8,'neun':9,'zehn':10 }
-    const nummerMatch = input.match(/\b(\d+|eins?|eine?|zwei|drei|vier|f[uü]nf|sechs|sieben|acht|neun|zehn)\b/)
-    if (nummerMatch) {
-      const nr = parseInt(nummerMatch[1]) || zahlwoerter[nummerMatch[1]] || 0
-      if (nr >= 1 && nr <= arten.length) return arten[nr - 1]
-    }
+    // Per Nummer erkennen — nach norm() sind Umlaute bereits ersetzt
+    const zahlwoerter = { 'eins':1,'ein':1,'eine':1,'zwei':2,'drei':3,'vier':4,
+      'fuenf':5,'sechs':6,'sieben':7,'acht':8,'neun':9,'zehn':10 }
+    const nurZahl = input.trim()
+    const alsNr = parseInt(nurZahl) || zahlwoerter[nurZahl] || 0
+    if (alsNr >= 1 && alsNr <= arten.length) return arten[alsNr - 1]
 
     // Per Name erkennen
     let treffer = arten.find(a => norm(a.name) === input)
@@ -246,19 +253,18 @@ export default function GeraetewartPage() {
     function warteAufTrigger() {
       setSprachStatus('bereit')
       setSprachInfo('Sage „Prüfung" um zu erfassen, oder „Info" für Prüfintervalle')
-      hoere('bereit', text => {
+      hoere('bereit', async text => {
         const t = text.toLowerCase()
         if (t.includes('prüfung') || t.includes('pruefung')) {
-          spreche('Seriennummer bitte')
+          await spreche('Seriennummer bitte')
           setSprachInfo('Seriennummer sprechen…')
           warteAufSeriennummer()
         } else if (t.includes('info')) {
-          // Gerätename aus dem Rest des Satzes extrahieren (z.B. "Info Wathose")
           const gerätName = text.replace(/info/gi, '').trim()
           if (gerätName) {
             zeigeInfo(gerätName)
           } else {
-            spreche('Welches Gerät?')
+            await spreche('Welches Gerät?')
             setSprachInfo('Gerätename sprechen…')
             hoere('bereit', geraetText => zeigeInfo(geraetText), null)
           }
@@ -268,31 +274,30 @@ export default function GeraetewartPage() {
       }, null)
     }
 
-    function zeigeInfo(gerätName) {
+    async function zeigeInfo(gerätName) {
       const geraet = geraetSuchen(gerätName)
       if (geraet) {
         const infoText = pruefInfoSprechen(geraet)
-        spreche(`${geraet.name}: ${infoText} Prüfanweisung anzeigen? Ja oder Nein.`)
+        await spreche(`${geraet.name}: ${infoText} Prüfanweisung anzeigen? Ja oder Nein.`)
         setSprachInfo(`Info: ${geraet.name}`)
         setInfoModal({ geraet, offen: true })
-        // Auf Ja/Nein warten
-        hoere('bereit', antwort => {
+        hoere('bereit', async antwort => {
           const a = antwort.toLowerCase()
           if (a.includes('ja') || a.includes('anzeigen') || a.includes('zeigen') || a.includes('öffnen')) {
             if (geraet.pdfSeite) {
-              window.open(`/305-002.pdf#page=${geraet.pdfSeite}`, '_blank')
-              spreche(`Prüfanweisung wird auf Seite ${geraet.pdfSeite} geöffnet.`)
+              setInfoModal(prev => ({ ...prev, zeigePdf: true }))
+              await spreche(`Seite ${geraet.pdfSeite} wird angezeigt.`)
             } else {
-              spreche('Keine Prüfanweisung verfügbar.')
+              await spreche('Keine Prüfanweisung verfügbar.')
             }
           } else {
             setInfoModal(null)
-            spreche('Okay. Sage Prüfung für ein Gerät.')
+            await spreche('Okay. Sage Prüfung für ein Gerät.')
           }
           warteAufTrigger()
         }, null)
       } else {
-        spreche(`${gerätName} nicht gefunden. Sage Prüfung für ein Gerät.`)
+        await spreche(`${gerätName} nicht gefunden. Sage Prüfung für ein Gerät.`)
         setSprachInfo(`"${gerätName}" nicht in Datenbank`)
         warteAufTrigger()
       }
@@ -300,11 +305,11 @@ export default function GeraetewartPage() {
 
     function warteAufSeriennummer() {
       setSprachStatus('seriennummer')
-      hoere('seriennummer', text => {
+      hoere('seriennummer', async text => {
         const sn = text.toUpperCase().replace(/\s+/g, '').replace(/[.,!?]/g, '')
         setSprachSn(sn)
         setSeriennummer(sn)
-        spreche(`Seriennummer ${sn}. Welche Prüfung?`)
+        await spreche(`Seriennummer ${sn}. Welche Prüfung?`)
         setSprachInfo(`Seriennummer: ${sn} — Prüfungsart als Name oder Nummer sprechen`)
         warteAufPruefung(sn)
       }, () => warteAufSeriennummer())
@@ -312,14 +317,14 @@ export default function GeraetewartPage() {
 
     function warteAufPruefung(sn) {
       setSprachStatus('pruefung')
-      hoere('pruefung', text => {
+      hoere('pruefung', async text => {
         const art = pruefungErkennen(text)
         if (art) {
-          spreche(`${art.name} erkannt. Bemerkung sprechen, oder sage weiter.`)
+          await spreche(`${art.name} erkannt. Bemerkung sprechen, oder sage weiter.`)
           setSprachInfo(`Prüfung: ${art.name} — Bemerkung sprechen oder „weiter"`)
           warteAufBemerkung(sn, art)
         } else {
-          spreche('Nicht erkannt. Bitte nochmal sprechen oder Nummer sagen.')
+          await spreche('Nicht erkannt. Nochmal sprechen oder Nummer sagen.')
           setSprachInfo('Nicht erkannt — Name oder Nummer sprechen')
           warteAufPruefung(sn)
         }
@@ -328,7 +333,7 @@ export default function GeraetewartPage() {
 
     function warteAufBemerkung(sn, art) {
       setSprachStatus('bemerkung')
-      hoere('bemerkung', text => {
+      hoere('bemerkung', async text => {
         const keineBemerkung = ['weiter', 'keine', 'nein', 'skip', 'überspringen', 'ueberspringen'].some(w => text.toLowerCase().includes(w))
         const bemerkung = keineBemerkung ? '' : text
         const uhrzeit = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
@@ -339,9 +344,9 @@ export default function GeraetewartPage() {
         setSeriennummer('')
         setSprachSn('')
         const msg = bemerkung ? `Eingetragen mit Bemerkung: ${bemerkung}.` : 'Eingetragen.'
-        spreche(`${msg} Sage Prüfung für das nächste Gerät.`)
+        await spreche(`${msg} Sage Prüfung für das nächste Gerät.`)
         setSprachInfo('Eingetragen ✓ — Sage „Prüfung" für das nächste Gerät')
-        setTimeout(warteAufTrigger, 400)
+        warteAufTrigger()
       }, () => warteAufBemerkung(sn, art))
     }
 
@@ -506,16 +511,19 @@ export default function GeraetewartPage() {
           </div>
           {infoModal.geraet.pdfSeite ? (
             <button
-              onClick={() => window.open(`/305-002.pdf#page=${infoModal.geraet.pdfSeite}`, '_blank')}
+              onClick={() => setInfoModal(prev => ({ ...prev, zeigePdf: true }))}
               className="btn btn-sm btn-secondary"
               style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 6 }}
             >
-              📄 Prüfanweisung öffnen (Seite {infoModal.geraet.pdfSeite})
+              📄 Prüfanweisung anzeigen (Seite {infoModal.geraet.pdfSeite})
             </button>
           ) : (
             <div style={{ marginTop: 12, fontSize: 12, color: 'var(--gray-400)' }}>
               Keine Prüfanweisung im Dokument verfügbar.
             </div>
+          )}
+          {infoModal.zeigePdf && (
+            <PdfViewer seite={infoModal.geraet.pdfSeite} onClose={() => setInfoModal(prev => ({ ...prev, zeigePdf: false }))} />
           )}
         </div>
       )}
@@ -825,6 +833,56 @@ function EintragZeile({ eintrag, onDelete, onUpdate, isLast, pruefungsarten }) {
         style={{ padding: '4px 8px', flexShrink: 0, color: 'var(--gray-400)' }} title="Bearbeiten">✎</button>
       <button onClick={onDelete} className="btn btn-ghost btn-sm"
         style={{ color: 'var(--red)', padding: '4px 8px', flexShrink: 0 }}>✕</button>
+    </div>
+  )
+}
+
+function PdfViewer({ seite, onClose }) {
+  const canvasRef = useRef(null)
+  const [aktSeite, setAktSeite] = useState(seite)
+  const [maxSeiten, setMaxSeiten] = useState(64)
+  const [laden, setLaden] = useState(true)
+  const pdfRef = useRef(null)
+
+  useEffect(() => {
+    pdfjsLib.getDocument('/305-002.pdf').promise.then(pdf => {
+      pdfRef.current = pdf
+      setMaxSeiten(pdf.numPages)
+      renderSeite(pdf, aktSeite)
+    })
+  }, [])
+
+  useEffect(() => {
+    if (pdfRef.current) renderSeite(pdfRef.current, aktSeite)
+  }, [aktSeite])
+
+  function renderSeite(pdf, nr) {
+    setLaden(true)
+    pdf.getPage(nr).then(page => {
+      const vw = Math.min(window.innerWidth - 32, 640)
+      const viewport = page.getViewport({ scale: vw / page.getViewport({ scale: 1 }).width })
+      const canvas = canvasRef.current
+      if (!canvas) return
+      canvas.width = viewport.width
+      canvas.height = viewport.height
+      page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise.then(() => setLaden(false))
+    })
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 1000, display: 'flex', flexDirection: 'column' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', background: 'var(--gray-800)', flexShrink: 0 }}>
+        <button onClick={onClose} className="btn btn-ghost btn-sm" style={{ color: 'white' }}>← Zurück</button>
+        <span style={{ color: 'white', fontSize: 14, fontWeight: 500, flex: 1 }}>DGUV 305-002 — Seite {aktSeite} / {maxSeiten}</span>
+        <button onClick={() => setAktSeite(s => Math.max(1, s - 1))} disabled={aktSeite <= 1} className="btn btn-ghost btn-sm" style={{ color: 'white' }}>‹</button>
+        <button onClick={() => setAktSeite(s => Math.min(maxSeiten, s + 1))} disabled={aktSeite >= maxSeiten} className="btn btn-ghost btn-sm" style={{ color: 'white' }}>›</button>
+      </div>
+      {/* Canvas */}
+      <div style={{ flex: 1, overflow: 'auto', display: 'flex', justifyContent: 'center', padding: 16 }}>
+        {laden && <div style={{ color: 'white', alignSelf: 'center' }}>Lädt...</div>}
+        <canvas ref={canvasRef} style={{ display: laden ? 'none' : 'block', maxWidth: '100%', borderRadius: 4 }} />
+      </div>
     </div>
   )
 }
