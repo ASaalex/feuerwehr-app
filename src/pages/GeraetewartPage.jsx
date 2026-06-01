@@ -43,6 +43,7 @@ export default function GeraetewartPage() {
   const [sprachSn, setSprachSn] = useState('')
   const [sprachTippen, setSprachTippen] = useState(null) // iOS: Callback für manuelles Starten
   const [infoModal, setInfoModal] = useState(null) // { geraet, sprachCallback }
+  const [pdfOffen, setPdfOffen] = useState(false)
   const srRef = useRef(null)
   const sprachLaeuftRef = useRef(false) // Abbruch-Flag für async-Kette
   const pruefungsartenRef = useRef([])
@@ -563,7 +564,18 @@ export default function GeraetewartPage() {
 
   return (
     <div style={{ maxWidth: 680 }}>
-      <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 4 }}>Geraetewart</h1>
+      {pdfOffen && <PdfViewer seite={12} onClose={() => setPdfOffen(false)} />}
+
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 4, flexWrap: 'wrap', gap: 8 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>Geraetewart</h1>
+        <button
+          onClick={() => setPdfOffen(true)}
+          className="btn btn-secondary btn-sm"
+          style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+        >
+          📄 DGUV 305-002
+        </button>
+      </div>
       <p style={{ color: 'var(--gray-400)', fontSize: 14, marginBottom: 24 }}>
         Geraete erfassen, Pruefung dokumentieren und als E-Mail versenden.
       </p>
