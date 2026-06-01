@@ -282,9 +282,13 @@ export default function GeraetewartPage() {
         // Auf Ja/Nein warten
         hoere('bereit', antwort => {
           const a = antwort.toLowerCase()
-          if (a.includes('ja') || a.includes('anzeigen') || a.includes('zeigen')) {
-            setInfoModal(prev => ({ ...prev, zeigePruefanweisung: true }))
-            spreche('Prüfanweisung wird angezeigt.')
+          if (a.includes('ja') || a.includes('anzeigen') || a.includes('zeigen') || a.includes('öffnen')) {
+            if (geraet.pdfSeite) {
+              window.open(`/305-002.pdf#page=${geraet.pdfSeite}`, '_blank')
+              spreche(`Prüfanweisung wird auf Seite ${geraet.pdfSeite} geöffnet.`)
+            } else {
+              spreche('Keine Prüfanweisung verfügbar.')
+            }
           } else {
             setInfoModal(null)
             spreche('Okay. Sage Prüfung für ein Gerät.')
@@ -502,18 +506,17 @@ export default function GeraetewartPage() {
               </div>
             )}
           </div>
-          {!infoModal.zeigePruefanweisung ? (
+          {infoModal.geraet.pdfSeite ? (
             <button
-              onClick={() => setInfoModal(prev => ({ ...prev, zeigePruefanweisung: true }))}
+              onClick={() => window.open(`/305-002.pdf#page=${infoModal.geraet.pdfSeite}`, '_blank')}
               className="btn btn-sm btn-secondary"
-              style={{ marginTop: 12 }}
+              style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 6 }}
             >
-              📄 Prüfanweisung anzeigen
+              📄 Prüfanweisung öffnen (Seite {infoModal.geraet.pdfSeite})
             </button>
           ) : (
-            <div style={{ marginTop: 12, padding: 10, background: 'rgba(0,0,0,0.04)', borderRadius: 6, fontSize: 13, color: 'var(--gray-500)' }}>
-              Die detaillierte Prüfanweisung steht in der DGUV 305-002 (Seiten 1–47 des Volldokuments).
-              {infoModal.geraet.norm && <> Norm: <strong>{infoModal.geraet.norm}</strong>.</>}
+            <div style={{ marginTop: 12, fontSize: 12, color: 'var(--gray-400)' }}>
+              Keine Prüfanweisung im Dokument verfügbar.
             </div>
           )}
         </div>
