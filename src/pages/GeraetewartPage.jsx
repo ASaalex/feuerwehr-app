@@ -68,43 +68,33 @@ export default function GeraetewartPage() {
 
     const hints = new Map()
     hints.set(DecodeHintType.POSSIBLE_FORMATS, [
-      BarcodeFormat.CODE_128,
-      BarcodeFormat.CODE_39,
-      BarcodeFormat.EAN_13,
-      BarcodeFormat.EAN_8,
-      BarcodeFormat.UPC_A,
-      BarcodeFormat.UPC_E,
-      BarcodeFormat.QR_CODE,
-      BarcodeFormat.ITF,
+      BarcodeFormat.CODE_128, BarcodeFormat.CODE_39,
+      BarcodeFormat.EAN_13,  BarcodeFormat.EAN_8,
+      BarcodeFormat.UPC_A,   BarcodeFormat.UPC_E,
+      BarcodeFormat.QR_CODE, BarcodeFormat.ITF,
     ])
     hints.set(DecodeHintType.TRY_HARDER, true)
-    hints.set(DecodeHintType.ALLOWED_LENGTHS, [6, 8, 10, 12, 14])
 
     const reader = new BrowserMultiFormatReader(hints)
     readerRef.current = reader
 
     try {
-      // Kamera-Stream direkt holen um Torch-Zugriff zu haben
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
-      })
-      streamRef.current = stream
-      videoRef.current.srcObject = stream
-      await videoRef.current.play()
-
-      // Prüfen ob Taschenlampe verfügbar
-      const track = stream.getVideoTracks()[0]
-      const capabilities = track.getCapabilities?.()
-      if (capabilities?.torch) setHasTorch(true)
-
-      // ZXing kontinuierlich auf das laufende Video-Element ansetzen
-      reader.decodeFromVideoElementContinuously(videoRef.current, (result, err) => {
+      // decodeFromVideoDevice startet Kamera intern + ist stabiler als manueller Stream
+      await reader.decodeFromVideoDevice(undefined, videoRef.current, (result, err) => {
         if (result) {
           setSeriennummer(result.getText())
           stopScanner()
         }
-        // NotFoundException ist normal (kein Barcode im Frame) — ignorieren
       })
+
+      // Stream nach Start holen (für Torch-Zugriff)
+      const stream = videoRef.current?.srcObject
+      if (stream) {
+        streamRef.current = stream
+        const track = stream.getVideoTracks?.()?.[0]
+        const caps = track?.getCapabilities?.()
+        if (caps?.torch) setHasTorch(true)
+      }
     } catch (e) {
       setScanError('Kamera konnte nicht gestartet werden: ' + e.message)
       setScanning(false)
@@ -368,6 +358,10 @@ export default function GeraetewartPage() {
     setListe(prev => prev.filter(e => e.id !== id))
   }
 
+  function aktualisieren(updated) {
+    setListe(prev => prev.map(e => e.id === updated.id ? updated : e))
+  }
+
   function listeLeeren() {
     setListe([])
     localStorage.removeItem(LS_KEY)
@@ -612,7 +606,7 @@ export default function GeraetewartPage() {
           <div style={{ marginBottom: 16 }}>
             {/* Kamera-View mit Scan-Overlay */}
             <div style={{ position: 'relative', width: '100%', borderRadius: 8, overflow: 'hidden', background: '#000' }}>
-              <video ref={videoRef} style={{ width: '100%', display: 'block' }} playsInline muted />
+              <video ref={videoRef} style={{ width: '100%', maxHeight: '38vh', objectFit: 'cover', display: 'block' }} playsInline muted />
               {/* Abdunkelungs-Overlay mit Scan-Fenster */}
               <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
                 {/* Dunkle Bereiche oben/unten/links/rechts */}
@@ -732,6 +726,7 @@ export default function GeraetewartPage() {
               </div>
               {eintraege.map((e, i) => (
                 <EintragZeile key={e.id} eintrag={e} onDelete={() => loeschen(e.id)}
+                  onUpdate={aktualisieren} pruefungsarten={pruefungsarten}
                   isLast={i === eintraege.length - 1} />
               ))}
             </div>
@@ -744,6 +739,7 @@ export default function GeraetewartPage() {
               </div>
               {sonstige.map((e, i) => (
                 <EintragZeile key={e.id} eintrag={e} onDelete={() => loeschen(e.id)}
+                  onUpdate={aktualisieren} pruefungsarten={pruefungsarten}
                   isLast={i === sonstige.length - 1} />
               ))}
             </div>
@@ -782,18 +778,47 @@ export default function GeraetewartPage() {
   )
 }
 
-function EintragZeile({ eintrag, onDelete, isLast }) {
+function EintragZeile({ eintrag, onDelete, onUpdate, isLast, pruefungsarten }) {
+  const [editMode, setEditMode] = useState(false)
+  const [sn, setSn] = useState(eintrag.seriennummer)
+  const [notiz, setNotiz] = useState(eintrag.notiz)
+  const [artId, setArtId] = useState(eintrag.artId)
+
+  function speichern() {
+    const art = pruefungsarten.find(a => a.id === artId)
+    onUpdate({ ...eintrag, seriennummer: sn.trim().toUpperCase(), notiz: notiz.trim(), artId, artName: art?.name ?? eintrag.artName })
+    setEditMode(false)
+  }
+
+  if (editMode) {
+    return (
+      <div style={{ padding: '12px 16px', borderBottom: isLast ? 'none' : '1px solid var(--gray-100)', background: '#f8fafc', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <input className="form-control" value={sn} onChange={e => setSn(e.target.value)} placeholder="Seriennummer" style={{ fontFamily: 'monospace', fontWeight: 600 }} />
+        <select className="form-control" value={artId} onChange={e => setArtId(e.target.value)}>
+          {pruefungsarten.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+        </select>
+        <input className="form-control" value={notiz} onChange={e => setNotiz(e.target.value)} placeholder="Notiz (optional)" />
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={speichern} className="btn btn-primary btn-sm">Speichern</button>
+          <button onClick={() => setEditMode(false)} className="btn btn-secondary btn-sm">Abbrechen</button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 10,
       padding: '11px 16px',
       borderBottom: isLast ? 'none' : '1px solid var(--gray-100)',
     }}>
-      <div style={{ flex: 1 }}>
+      <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => setEditMode(true)}>
         <div style={{ fontWeight: 600, fontSize: 14, fontFamily: 'monospace' }}>{eintrag.seriennummer}</div>
         {eintrag.notiz && <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 2 }}>{eintrag.notiz}</div>}
       </div>
       <div style={{ fontSize: 12, color: 'var(--gray-400)', flexShrink: 0 }}>{eintrag.uhrzeit}</div>
+      <button onClick={() => setEditMode(true)} className="btn btn-ghost btn-sm"
+        style={{ padding: '4px 8px', flexShrink: 0, color: 'var(--gray-400)' }} title="Bearbeiten">✎</button>
       <button onClick={onDelete} className="btn btn-ghost btn-sm"
         style={{ color: 'var(--red)', padding: '4px 8px', flexShrink: 0 }}>✕</button>
     </div>
