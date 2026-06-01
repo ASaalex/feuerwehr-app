@@ -34,6 +34,7 @@ export default function GeraetewartPage() {
   const videoRef = useRef(null)
   const readerRef = useRef(null)
   const streamRef = useRef(null)
+  const scanIntervalRef = useRef(null)
 
   // Sprachsteuerung
   const [sprachAktiv, setSprachAktiv] = useState(false)
@@ -92,18 +93,33 @@ export default function GeraetewartPage() {
       const track = stream.getVideoTracks()[0]
       if (track?.getCapabilities?.()?.torch) setHasTorch(true)
 
-      // Erst dekodieren wenn Video wirklich Daten liefert
+      // Warten bis Video Daten liefert
       await new Promise(res => {
         videoRef.current.onloadeddata = res
         videoRef.current.play()
       })
 
-      reader.decodeFromVideoElementContinuously(videoRef.current, (result) => {
-        if (result) {
-          setSeriennummer(result.getText())
-          stopScanner()
-        }
-      })
+      // Canvas-basiertes Scanning: zuverlässiger als decodeFromVideoElement
+      const canvas = document.createElement('canvas')
+      const ctx = canvas.getContext('2d', { willReadFrequently: true })
+      let aktiv = true
+
+      scanIntervalRef.current = setInterval(async () => {
+        const vid = videoRef.current
+        if (!vid || !aktiv || vid.readyState < 2 || vid.videoWidth === 0) return
+        canvas.width = vid.videoWidth
+        canvas.height = vid.videoHeight
+        ctx.drawImage(vid, 0, 0)
+        try {
+          const result = reader.decode(canvas)
+          if (result && aktiv) {
+            aktiv = false
+            setSeriennummer(result.getText())
+            stopScanner()
+          }
+        } catch { /* NotFoundException = normal */ }
+      }, 200)
+      readerRef.current = { reset: () => { aktiv = false; clearInterval(scanIntervalRef.current) } }
     } catch (e) {
       setScanError('Kamera konnte nicht gestartet werden: ' + e.message)
       setScanning(false)
@@ -640,7 +656,7 @@ export default function GeraetewartPage() {
                 {/* Helles Scan-Fenster (Ausschnitt) */}
                 <div style={{
                   position: 'absolute',
-                  top: '25%', left: '10%', right: '10%', height: '35%',
+                  top: '15%', left: '5%', right: '5%', height: '55%',
                   background: 'transparent',
                   boxShadow: '0 0 0 9999px rgba(0,0,0,0.5)',
                   borderRadius: 8,
