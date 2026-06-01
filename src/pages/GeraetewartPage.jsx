@@ -358,13 +358,24 @@ export default function GeraetewartPage() {
       }
     }
 
+    // Seriennummer buchstabenweise für Ansage formatieren: "NO1123" → "N O 1 1 2 3"
+    function snSprechen(sn) {
+      return sn.split('').join(' ')
+    }
+
+    // Korrektur-Keywords
+    function istKorrekturSN(t) { return ['seriennummer falsch','seriennummer neu','sn falsch','sn neu'].some(w => t.includes(w)) }
+    function istKorrekturPruefung(t) { return ['prüfung falsch','pruefung falsch','prüfung neu','pruefung neu'].some(w => t.includes(w)) }
+    function istKorrekturBemerkung(t) { return ['bemerkung falsch','kommentar falsch','bemerkung neu','kommentar neu'].some(w => t.includes(w)) }
+
     function warteAufSeriennummer() {
       setSprachStatus('seriennummer')
       hoere('seriennummer', async text => {
         const sn = text.toUpperCase().replace(/\s+/g, '').replace(/[.,!?]/g, '')
         setSprachSn(sn)
         setSeriennummer(sn)
-        await spreche(`Seriennummer ${sn}. Welche Prüfung?`)
+        // Buchstabenweise vorlesen
+        await spreche(`Seriennummer: ${snSprechen(sn)}. Welche Prüfung?`)
         setSprachInfo(`Seriennummer: ${sn} — Prüfungsart als Name oder Nummer sprechen`)
         warteAufPruefung(sn)
       }, () => warteAufSeriennummer())
@@ -373,6 +384,15 @@ export default function GeraetewartPage() {
     function warteAufPruefung(sn) {
       setSprachStatus('pruefung')
       hoere('pruefung', async text => {
+        const t = text.toLowerCase()
+        // Korrektur Seriennummer
+        if (istKorrekturSN(t)) {
+          setSprachSn('')
+          setSeriennummer('')
+          await spreche('Okay, Seriennummer nochmal.')
+          warteAufSeriennummer()
+          return
+        }
         const art = pruefungErkennen(text)
         if (art) {
           await spreche(`${art.name} erkannt. Bemerkung sprechen, oder sage weiter.`)
@@ -389,7 +409,26 @@ export default function GeraetewartPage() {
     function warteAufBemerkung(sn, art) {
       setSprachStatus('bemerkung')
       hoere('bemerkung', async text => {
-        const keineBemerkung = ['weiter', 'keine', 'nein', 'skip', 'überspringen', 'ueberspringen'].some(w => text.toLowerCase().includes(w))
+        const t = text.toLowerCase()
+        // Korrekturen
+        if (istKorrekturSN(t)) {
+          setSprachSn('')
+          setSeriennummer('')
+          await spreche('Okay, Seriennummer nochmal.')
+          warteAufSeriennummer()
+          return
+        }
+        if (istKorrekturPruefung(t)) {
+          await spreche('Okay, Prüfung nochmal.')
+          warteAufPruefung(sn)
+          return
+        }
+        if (istKorrekturBemerkung(t)) {
+          await spreche('Okay, Bemerkung nochmal.')
+          warteAufBemerkung(sn, art)
+          return
+        }
+        const keineBemerkung = ['weiter', 'keine', 'nein', 'skip', 'überspringen', 'ueberspringen'].some(w => t.includes(w))
         const bemerkung = keineBemerkung ? '' : text
         const uhrzeit = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
         const eintrag = { id: Date.now(), seriennummer: sn, artId: art.id, artName: art.name, notiz: bemerkung, uhrzeit, datum: new Date().toLocaleDateString('de-DE') }
@@ -646,7 +685,8 @@ export default function GeraetewartPage() {
                   </div>
                 ))}
                 <div style={{ padding: '5px 10px', fontSize: 11, color: 'var(--gray-400)', borderTop: '1px solid rgba(0,0,0,0.06)' }}>
-                  Befehle: <strong>abbrechen</strong> · <strong>nochmal</strong> · <strong>weiter</strong> (Bemerkung überspringen) · <strong>Info [Gerät]</strong> (Prüfintervalle)
+                  Befehle: <strong>abbrechen</strong> · <strong>nochmal</strong> · <strong>weiter</strong> (Bemerkung überspringen) · <strong>Info [Gerät]</strong><br/>
+                  Korrekturen: <strong>Seriennummer falsch</strong> · <strong>Prüfung falsch</strong> · <strong>Bemerkung falsch</strong>
                 </div>
               </div>
             )}
