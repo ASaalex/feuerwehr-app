@@ -79,22 +79,28 @@ export default function GeraetewartPage() {
     readerRef.current = reader
 
     try {
-      // decodeFromVideoDevice startet Kamera intern + ist stabiler als manueller Stream
-      await reader.decodeFromVideoDevice(undefined, videoRef.current, (result, err) => {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
+      })
+      streamRef.current = stream
+      videoRef.current.srcObject = stream
+
+      // Torch prüfen
+      const track = stream.getVideoTracks()[0]
+      if (track?.getCapabilities?.()?.torch) setHasTorch(true)
+
+      // Erst dekodieren wenn Video wirklich Daten liefert
+      await new Promise(res => {
+        videoRef.current.onloadeddata = res
+        videoRef.current.play()
+      })
+
+      reader.decodeFromVideoElementContinuously(videoRef.current, (result) => {
         if (result) {
           setSeriennummer(result.getText())
           stopScanner()
         }
       })
-
-      // Stream nach Start holen (für Torch-Zugriff)
-      const stream = videoRef.current?.srcObject
-      if (stream) {
-        streamRef.current = stream
-        const track = stream.getVideoTracks?.()?.[0]
-        const caps = track?.getCapabilities?.()
-        if (caps?.torch) setHasTorch(true)
-      }
     } catch (e) {
       setScanError('Kamera konnte nicht gestartet werden: ' + e.message)
       setScanning(false)
@@ -298,8 +304,7 @@ export default function GeraetewartPage() {
         const sn = text.toUpperCase().replace(/\s+/g, '').replace(/[.,!?]/g, '')
         setSprachSn(sn)
         setSeriennummer(sn)
-        const pruefListe = pruefungsartenRef.current.map((a, i) => `${i + 1} ${a.name}`).join(', ')
-        spreche(`Seriennummer ${sn}. Welche Prüfung? ${pruefListe}`)
+        spreche(`Seriennummer ${sn}. Welche Prüfung?`)
         setSprachInfo(`Seriennummer: ${sn} — Prüfungsart als Name oder Nummer sprechen`)
         warteAufPruefung(sn)
       }, () => warteAufSeriennummer())
@@ -314,8 +319,7 @@ export default function GeraetewartPage() {
           setSprachInfo(`Prüfung: ${art.name} — Bemerkung sprechen oder „weiter"`)
           warteAufBemerkung(sn, art)
         } else {
-          const pruefListe = pruefungsartenRef.current.map((a, i) => `${i + 1} ${a.name}`).join(', ')
-          spreche(`Nicht erkannt. Sage eine Nummer oder den Namen. ${pruefListe}`)
+          spreche('Nicht erkannt. Bitte nochmal sprechen oder Nummer sagen.')
           setSprachInfo('Nicht erkannt — Name oder Nummer sprechen')
           warteAufPruefung(sn)
         }
@@ -578,7 +582,7 @@ export default function GeraetewartPage() {
                   </div>
                 ))}
                 <div style={{ padding: '5px 10px', fontSize: 11, color: 'var(--gray-400)', borderTop: '1px solid rgba(0,0,0,0.06)' }}>
-                  Schlagwörter: <strong>abbrechen</strong> · <strong>nochmal</strong> · <strong>weiter</strong> (Bemerkung überspringen)
+                  Befehle: <strong>abbrechen</strong> · <strong>nochmal</strong> · <strong>weiter</strong> (Bemerkung überspringen) · <strong>Info [Gerät]</strong> (Prüfintervalle)
                 </div>
               </div>
             )}
