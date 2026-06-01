@@ -486,7 +486,8 @@ export default function GeraetewartPage() {
     setListe(prev => prev.map(e => e.id === updated.id ? updated : e))
   }
 
-  function listeLeeren() {
+  function listeLeeren(ohneBestaetigung = false) {
+    if (!ohneBestaetigung && !window.confirm(`Alle ${liste.length} Einträge wirklich löschen?\n\nDieser Vorgang kann nicht rückgängig gemacht werden.`)) return
     setListe([])
     localStorage.removeItem(LS_KEY)
   }
@@ -566,7 +567,7 @@ export default function GeraetewartPage() {
         setTimeout(() => setMailStatus(null), 8000)
       } else {
         setMailStatus('ok')
-        listeLeeren()
+        listeLeeren(true)
         setTimeout(() => setMailStatus(null), 3000)
       }
     } catch (err) {
