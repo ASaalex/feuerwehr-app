@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { BrowserMultiFormatReader, NotFoundException, BarcodeFormat, DecodeHintType } from '@zxing/library'
 import { useWakeLock } from '../hooks/useWakeLock'
+import { geraetSuchen, pruefInfoSprechen } from '../data/pruefintervalle'
 
 const LS_KEY = 'geraetewart_liste'
 
@@ -37,6 +38,7 @@ export default function GeraetewartPage() {
   const [sprachInfo, setSprachInfo] = useState('')
   const [sprachSn, setSprachSn] = useState('')
   const [sprachTippen, setSprachTippen] = useState(null) // iOS: Callback für manuelles Starten
+  const [infoModal, setInfoModal] = useState(null) // { geraet, sprachCallback }
   const srRef = useRef(null)
   const pruefungsartenRef = useRef([])
   const artIdRef = useRef('')
@@ -247,16 +249,53 @@ export default function GeraetewartPage() {
 
     function warteAufTrigger() {
       setSprachStatus('bereit')
-      setSprachInfo('Sage „Prüfung" um ein Gerät zu erfassen')
+      setSprachInfo('Sage „Prüfung" um zu erfassen, oder „Info" für Prüfintervalle')
       hoere('bereit', text => {
-        if (text.toLowerCase().includes('prüfung') || text.toLowerCase().includes('pruefung')) {
+        const t = text.toLowerCase()
+        if (t.includes('prüfung') || t.includes('pruefung')) {
           spreche('Seriennummer bitte')
           setSprachInfo('Seriennummer sprechen…')
           warteAufSeriennummer()
+        } else if (t.includes('info')) {
+          // Gerätename aus dem Rest des Satzes extrahieren (z.B. "Info Wathose")
+          const gerätName = text.replace(/info/gi, '').trim()
+          if (gerätName) {
+            zeigeInfo(gerätName)
+          } else {
+            spreche('Welches Gerät?')
+            setSprachInfo('Gerätename sprechen…')
+            hoere('bereit', geraetText => zeigeInfo(geraetText), null)
+          }
         } else {
           warteAufTrigger()
         }
       }, null)
+    }
+
+    function zeigeInfo(gerätName) {
+      const geraet = geraetSuchen(gerätName)
+      if (geraet) {
+        const infoText = pruefInfoSprechen(geraet)
+        spreche(`${geraet.name}: ${infoText} Prüfanweisung anzeigen? Ja oder Nein.`)
+        setSprachInfo(`Info: ${geraet.name}`)
+        setInfoModal({ geraet, offen: true })
+        // Auf Ja/Nein warten
+        hoere('bereit', antwort => {
+          const a = antwort.toLowerCase()
+          if (a.includes('ja') || a.includes('anzeigen') || a.includes('zeigen')) {
+            setInfoModal(prev => ({ ...prev, zeigePruefanweisung: true }))
+            spreche('Prüfanweisung wird angezeigt.')
+          } else {
+            setInfoModal(null)
+            spreche('Okay. Sage Prüfung für ein Gerät.')
+          }
+          warteAufTrigger()
+        }, null)
+      } else {
+        spreche(`${gerätName} nicht gefunden. Sage Prüfung für ein Gerät.`)
+        setSprachInfo(`"${gerätName}" nicht in Datenbank`)
+        warteAufTrigger()
+      }
     }
 
     function warteAufSeriennummer() {
@@ -426,6 +465,59 @@ export default function GeraetewartPage() {
       <p style={{ color: 'var(--gray-400)', fontSize: 14, marginBottom: 24 }}>
         Geraete erfassen, Pruefung dokumentieren und als E-Mail versenden.
       </p>
+
+      {/* Info-Modal */}
+      {infoModal?.offen && (
+        <div style={{ background: '#fffbeb', border: '1px solid #fbbf24', borderRadius: 10, padding: 16, marginBottom: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+            <div style={{ fontWeight: 700, fontSize: 15 }}>📋 {infoModal.geraet.name}</div>
+            <button onClick={() => setInfoModal(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: 'var(--gray-400)' }}>✕</button>
+          </div>
+          <div style={{ display: 'grid', gap: 8 }}>
+            {infoModal.geraet.sichtpruefung && (
+              <div style={{ display: 'flex', gap: 10 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: '#92400e', background: '#fef3c7', padding: '2px 8px', borderRadius: 4, flexShrink: 0 }}>Sichtprüfung</span>
+                <span style={{ fontSize: 13 }}>{infoModal.geraet.sichtpruefung}</span>
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 10 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: '#065f46', background: '#d1fae5', padding: '2px 8px', borderRadius: 4, flexShrink: 0 }}>Regelmäßig</span>
+              <span style={{ fontSize: 13 }}>{infoModal.geraet.regelmaessig}</span>
+            </div>
+            {infoModal.geraet.belastung && (
+              <div style={{ display: 'flex', gap: 10 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: '#1e40af', background: '#dbeafe', padding: '2px 8px', borderRadius: 4, flexShrink: 0 }}>Belastung</span>
+                <span style={{ fontSize: 13 }}>{infoModal.geraet.belastung}</span>
+              </div>
+            )}
+            {infoModal.geraet.hinweis && (
+              <div style={{ display: 'flex', gap: 10 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: '#7c3aed', background: '#ede9fe', padding: '2px 8px', borderRadius: 4, flexShrink: 0 }}>Hinweis</span>
+                <span style={{ fontSize: 13 }}>{infoModal.geraet.hinweis}</span>
+              </div>
+            )}
+            {infoModal.geraet.norm && (
+              <div style={{ fontSize: 11, color: 'var(--gray-400)', marginTop: 4 }}>
+                Norm: {infoModal.geraet.norm} · Quelle: DGUV 305-002
+              </div>
+            )}
+          </div>
+          {!infoModal.zeigePruefanweisung ? (
+            <button
+              onClick={() => setInfoModal(prev => ({ ...prev, zeigePruefanweisung: true }))}
+              className="btn btn-sm btn-secondary"
+              style={{ marginTop: 12 }}
+            >
+              📄 Prüfanweisung anzeigen
+            </button>
+          ) : (
+            <div style={{ marginTop: 12, padding: 10, background: 'rgba(0,0,0,0.04)', borderRadius: 6, fontSize: 13, color: 'var(--gray-500)' }}>
+              Die detaillierte Prüfanweisung steht in der DGUV 305-002 (Seiten 1–47 des Volldokuments).
+              {infoModal.geraet.norm && <> Norm: <strong>{infoModal.geraet.norm}</strong>.</>}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Sprachsteuerung */}
       <div style={{
