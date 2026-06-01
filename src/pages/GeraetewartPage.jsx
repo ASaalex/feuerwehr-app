@@ -170,12 +170,26 @@ export default function GeraetewartPage() {
     const input = norm(text)
     const arten = pruefungsartenRef.current
 
-    // Per Nummer erkennen — nach norm() sind Umlaute bereits ersetzt
-    const zahlwoerter = { 'eins':1,'ein':1,'eine':1,'zwei':2,'drei':3,'vier':4,
-      'fuenf':5,'sechs':6,'sieben':7,'acht':8,'neun':9,'zehn':10 }
-    const nurZahl = input.trim()
-    const alsNr = parseInt(nurZahl) || zahlwoerter[nurZahl] || 0
-    if (alsNr >= 1 && alsNr <= arten.length) return arten[alsNr - 1]
+    // Per Nummer erkennen — nach norm() sind Umlaute bereits ersetzt (ü→ue etc.)
+    const zahlwoerter = {
+      'eins':1,'ein':1,'eine':1,'ersten':1,'erste':1,
+      'zwei':2,'zweiten':2,'zweite':2,
+      'drei':3,'dritten':3,'dritte':3,
+      'vier':4,'vierten':4,'vierte':4,
+      'fuenf':5,'fuenften':5,'fuenfte':5,
+      'sechs':6,'sechsten':6,'sechste':6,
+      'sieben':7,'siebten':7,'siebte':7,'siebt':7,
+      'acht':8,'achten':8,'achte':8,
+      'neun':9,'neunten':9,'neunte':9,
+      'zehn':10,'zehnten':10,'zehnte':10,
+      'elf':11,'zwoelf':12,
+    }
+    // Suche Zahl-Wort in beliebiger Position im Satz (z.B. "Nummer drei", "die erste")
+    const woerterImSatz = input.split(/\s+/)
+    for (const w of woerterImSatz) {
+      const alsNr = parseInt(w) || zahlwoerter[w] || 0
+      if (alsNr >= 1 && alsNr <= arten.length) return arten[alsNr - 1]
+    }
 
     // Per Name erkennen
     let treffer = arten.find(a => norm(a.name) === input)
