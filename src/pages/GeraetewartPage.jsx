@@ -44,8 +44,10 @@ export default function GeraetewartPage() {
   const [sprachTippen, setSprachTippen] = useState(null) // iOS: Callback für manuelles Starten
   const [infoModal, setInfoModal] = useState(null) // { geraet, sprachCallback }
   const [pdfOffen, setPdfOffen] = useState(false)
+  const [sprachPause, setSprachPause] = useState(false)
   const srRef = useRef(null)
   const sprachLaeuftRef = useRef(false) // Abbruch-Flag für async-Kette
+  const sprachPauseRef = useRef(false)
   const pruefungsartenRef = useRef([])
   const artIdRef = useRef('')
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream
@@ -186,18 +188,20 @@ export default function GeraetewartPage() {
     } catch {}
   }
 
-  // spreche: resolved nur wenn Sprachsteuerung noch aktiv ist
+  // spreche: SR stoppen während TTS läuft (verhindert Headset-Echo)
   function spreche(text) {
     return new Promise(resolve => {
       window.speechSynthesis.cancel()
       if (!sprachLaeuftRef.current) { resolve(); return }
+      // SR aktiv abbrechen bevor TTS startet → kein Echo-Problem mit Headset
+      srRef.current?.abort()
       const u = new SpeechSynthesisUtterance(text)
       u.lang = 'de-DE'
       u.rate = 1.05
       u.onend = () => {
         if (!sprachLaeuftRef.current) { resolve(); return }
         beep()
-        setTimeout(resolve, 400)
+        setTimeout(resolve, 600) // längerer Puffer für Headset
       }
       u.onerror = () => resolve()
       window.speechSynthesis.speak(u)
@@ -308,9 +312,32 @@ export default function GeraetewartPage() {
 
     function warteAufTrigger() {
       setSprachStatus('bereit')
-      setSprachInfo('Sage „Prüfung" um zu erfassen, oder „Info" für Prüfintervalle')
+      setSprachInfo('Sage „Prüfung" · „Info" · „Absenden" · „Pause"')
       hoere('bereit', async text => {
         const t = text.toLowerCase()
+        // Pause
+        if (t.includes('pause')) {
+          sprachPauseRef.current = true
+          setSprachPause(true)
+          await spreche('Pause. Sage weiter um fortzufahren.')
+          setSprachInfo('⏸ Pause — Sage „weiter" um fortzufahren')
+          wartePause()
+          return
+        }
+        // Absenden
+        if (t.includes('absenden') || t.includes('versenden') || t.includes('mail')) {
+          await spreche('Protokoll versenden? Sage ja oder nein.')
+          hoere('bereit', async antwort => {
+            if (antwort.toLowerCase().includes('ja')) {
+              await spreche('Wird versendet.')
+              mailSenden()
+            } else {
+              await spreche('Abgebrochen.')
+            }
+            warteAufTrigger()
+          }, null)
+          return
+        }
         if (t.includes('prüfung') || t.includes('pruefung')) {
           await spreche('Seriennummer bitte')
           setSprachInfo('Seriennummer sprechen…')
@@ -349,13 +376,29 @@ export default function GeraetewartPage() {
       }, null)
     }
 
+    function wartePause() {
+      // Nur auf "weiter" hören
+      hoere('bereit', async text => {
+        const t = text.toLowerCase()
+        if (t.includes('weiter') || t.includes('fortfahren') || t.includes('start')) {
+          sprachPauseRef.current = false
+          setSprachPause(false)
+          await spreche('Weiter.')
+          warteAufTrigger()
+        } else {
+          wartePause() // weiter warten
+        }
+      }, null)
+    }
+
     async function zeigeInfo(gerätName) {
       const geraet = geraetSuchen(gerätName)
       if (geraet) {
+        // Sofort anzeigen, dann vorlesen
+        setInfoModal({ geraet, offen: true })
+        setSprachInfo(`Info: ${geraet.name}`)
         const infoText = pruefInfoSprechen(geraet)
         await spreche(`${geraet.name}: ${infoText} Prüfanweisung anzeigen? Ja oder Nein.`)
-        setSprachInfo(`Info: ${geraet.name}`)
-        setInfoModal({ geraet, offen: true })
         hoere('bereit', async antwort => {
           const a = antwort.toLowerCase()
           if (a.includes('ja') || a.includes('anzeigen') || a.includes('zeigen') || a.includes('öffnen')) {
@@ -468,10 +511,12 @@ export default function GeraetewartPage() {
   }
 
   function stoppeSprache() {
-    sprachLaeuftRef.current = false  // Stoppt alle laufenden async-Ketten
+    sprachLaeuftRef.current = false
+    sprachPauseRef.current = false
     srRef.current?.abort()
     window.speechSynthesis.cancel()
     setSprachAktiv(false)
+    setSprachPause(false)
     setSprachStatus('bereit')
     setSprachInfo('')
     setSprachSn('')
@@ -690,7 +735,8 @@ export default function GeraetewartPage() {
                 background: sprachStatus === 'bereit' ? '#fef08a' : sprachStatus === 'seriennummer' ? '#bfdbfe' : sprachStatus === 'pruefung' ? '#bbf7d0' : '#f3e8ff',
                 color: '#374151',
               }}>
-                {sprachStatus === 'bereit' ? '👂 Warte auf „Prüfung"'
+                {sprachPause ? '⏸ Pause — Sage „weiter"'
+                  : sprachStatus === 'bereit' ? '👂 Warte auf „Prüfung"'
                   : sprachStatus === 'seriennummer' ? '🔢 Seriennummer sprechen'
                   : sprachStatus === 'pruefung' ? '📋 Prüfungsart sprechen (Name oder Nummer)'
                   : '💬 Bemerkung sprechen oder „weiter"'}
@@ -717,7 +763,7 @@ export default function GeraetewartPage() {
                   </div>
                 ))}
                 <div style={{ padding: '5px 10px', fontSize: 11, color: 'var(--gray-400)', borderTop: '1px solid rgba(0,0,0,0.06)' }}>
-                  Befehle: <strong>abbrechen</strong> · <strong>nochmal</strong> · <strong>weiter</strong> (Bemerkung überspringen) · <strong>Info [Gerät]</strong><br/>
+                  Befehle: <strong>abbrechen</strong> · <strong>nochmal</strong> · <strong>pause</strong> / <strong>weiter</strong> · <strong>absenden</strong> · <strong>Info [Gerät]</strong><br/>
                   Korrekturen: <strong>Seriennummer falsch</strong> · <strong>Prüfung falsch</strong> · <strong>Bemerkung falsch</strong>
                 </div>
               </div>
