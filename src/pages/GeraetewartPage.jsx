@@ -43,7 +43,10 @@ export default function GeraetewartPage() {
   const [sprachSn, setSprachSn] = useState('')
   const [sprachTippen, setSprachTippen] = useState(null) // iOS: Callback für manuelles Starten
   const [infoModal, setInfoModal] = useState(null) // { geraet, sprachCallback }
-  const [pdfOffen, setPdfOffen] = useState(false)
+  const [pdfOffen, setPdfOffen] = useState(null) // null = zu, Zahl = Seite
+  const [infoSuche, setInfoSuche] = useState(false)
+  const [infoSuchtext, setInfoSuchtext] = useState('')
+  const [infoSuchErgebnis, setInfoSuchErgebnis] = useState(null)
   const [sprachPause, setSprachPause] = useState(false)
   const srRef = useRef(null)
   const sprachLaeuftRef = useRef(false) // Abbruch-Flag für async-Kette
@@ -629,17 +632,85 @@ export default function GeraetewartPage() {
 
   return (
     <div style={{ maxWidth: 680 }}>
-      {pdfOffen && <PdfViewer seite={12} onClose={() => setPdfOffen(false)} />}
+      {pdfOffen && <PdfViewer seite={pdfOffen} onClose={() => setPdfOffen(null)} />}
+
+      {/* Info-Such-Modal */}
+      {infoSuche && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 500, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div style={{ background: 'white', borderRadius: 12, padding: 20, width: '100%', maxWidth: 480 }}>
+            <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 12 }}>🔍 Prüfintervall nachschlagen</div>
+            <input
+              autoFocus
+              className="form-control"
+              value={infoSuchtext}
+              onChange={e => {
+                setInfoSuchtext(e.target.value)
+                setInfoSuchErgebnis(e.target.value.trim().length > 1 ? geraetSuchen(e.target.value.trim()) : null)
+              }}
+              placeholder="z.B. Wathose, Pressluftatmer, Schiebleiter…"
+              style={{ marginBottom: 12 }}
+            />
+            {infoSuchErgebnis ? (
+              <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
+                <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--red)' }}>{infoSuchErgebnis.name}</div>
+                {infoSuchErgebnis.sichtpruefung && (
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: '#92400e', background: '#fef3c7', padding: '2px 8px', borderRadius: 4, flexShrink: 0 }}>Sichtprüfung</span>
+                    <span style={{ fontSize: 13 }}>{infoSuchErgebnis.sichtpruefung}</span>
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: '#065f46', background: '#d1fae5', padding: '2px 8px', borderRadius: 4, flexShrink: 0 }}>Regelmäßig</span>
+                  <span style={{ fontSize: 13 }}>{infoSuchErgebnis.regelmaessig}</span>
+                </div>
+                {infoSuchErgebnis.belastung && (
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: '#1e40af', background: '#dbeafe', padding: '2px 8px', borderRadius: 4, flexShrink: 0 }}>Belastung</span>
+                    <span style={{ fontSize: 13 }}>{infoSuchErgebnis.belastung}</span>
+                  </div>
+                )}
+                {infoSuchErgebnis.hinweis && (
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: '#7c3aed', background: '#ede9fe', padding: '2px 8px', borderRadius: 4, flexShrink: 0 }}>Hinweis</span>
+                    <span style={{ fontSize: 13 }}>{infoSuchErgebnis.hinweis}</span>
+                  </div>
+                )}
+                {infoSuchErgebnis.norm && <div style={{ fontSize: 11, color: 'var(--gray-400)' }}>Norm: {infoSuchErgebnis.norm} · DGUV 305-002</div>}
+                {infoSuchErgebnis.pdfSeite && (
+                  <button
+                    onClick={() => { setInfoSuche(false); setPdfOffen(infoSuchErgebnis.pdfSeite) }}
+                    className="btn btn-secondary btn-sm"
+                    style={{ marginTop: 4, alignSelf: 'flex-start' }}
+                  >📄 Prüfanweisung (Seite {infoSuchErgebnis.pdfSeite})</button>
+                )}
+              </div>
+            ) : infoSuchtext.trim().length > 1 ? (
+              <div style={{ fontSize: 13, color: 'var(--gray-400)', marginBottom: 12 }}>Kein Gerät gefunden.</div>
+            ) : null}
+            <button onClick={() => { setInfoSuche(false); setInfoSuchtext(''); setInfoSuchErgebnis(null) }} className="btn btn-secondary" style={{ width: '100%' }}>Schließen</button>
+          </div>
+        </div>
+      )}
 
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 4, flexWrap: 'wrap', gap: 8 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>Geraetewart</h1>
-        <button
-          onClick={() => setPdfOffen(true)}
-          className="btn btn-secondary btn-sm"
-          style={{ display: 'flex', alignItems: 'center', gap: 6 }}
-        >
-          📄 DGUV 305-002
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            onClick={() => setInfoSuche(true)}
+            className="btn btn-secondary btn-sm"
+            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+            title="Prüfintervall nachschlagen"
+          >
+            🔍 Info
+          </button>
+          <button
+            onClick={() => setPdfOffen(12)}
+            className="btn btn-secondary btn-sm"
+            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+          >
+            📄 DGUV 305-002
+          </button>
+        </div>
       </div>
       <p style={{ color: 'var(--gray-400)', fontSize: 14, marginBottom: 24 }}>
         Geraete erfassen, Pruefung dokumentieren und als E-Mail versenden.
@@ -1016,7 +1087,10 @@ function PdfViewer({ seite, onClose }) {
   const [aktSeite, setAktSeite] = useState(seite)
   const [maxSeiten, setMaxSeiten] = useState(64)
   const [laden, setLaden] = useState(true)
+  const [sprungSeite, setSprungSeite] = useState('')
   const pdfRef = useRef(null)
+  const touchStartX = useRef(null)
+  const touchStartY = useRef(null)
 
   useEffect(() => {
     pdfjsLib.getDocument('/305-002.pdf').promise.then(pdf => {
@@ -1043,19 +1117,65 @@ function PdfViewer({ seite, onClose }) {
     })
   }
 
+  function vorige() { setAktSeite(s => Math.max(1, s - 1)) }
+  function naechste() { setAktSeite(s => Math.min(maxSeiten, s + 1)) }
+
+  function onTouchStart(e) {
+    touchStartX.current = e.touches[0].clientX
+    touchStartY.current = e.touches[0].clientY
+  }
+
+  function onTouchEnd(e) {
+    if (touchStartX.current === null) return
+    const dx = e.changedTouches[0].clientX - touchStartX.current
+    const dy = Math.abs(e.changedTouches[0].clientY - touchStartY.current)
+    if (Math.abs(dx) > 50 && dy < 80) {
+      if (dx < 0) naechste()  // Links wischen → nächste Seite
+      else vorige()            // Rechts wischen → vorige Seite
+    }
+    touchStartX.current = null
+  }
+
+  function sprungZuSeite(e) {
+    e.preventDefault()
+    const nr = parseInt(sprungSeite)
+    if (nr >= 1 && nr <= maxSeiten) { setAktSeite(nr); setSprungSeite('') }
+  }
+
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 1000, display: 'flex', flexDirection: 'column' }}>
+    <div style={{ position: 'fixed', inset: 0, background: '#1a1a1a', zIndex: 1000, display: 'flex', flexDirection: 'column' }}>
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', background: 'var(--gray-800)', flexShrink: 0 }}>
-        <button onClick={onClose} className="btn btn-ghost btn-sm" style={{ color: 'white' }}>← Zurück</button>
-        <span style={{ color: 'white', fontSize: 14, fontWeight: 500, flex: 1 }}>DGUV 305-002 — Seite {aktSeite} / {maxSeiten}</span>
-        <button onClick={() => setAktSeite(s => Math.max(1, s - 1))} disabled={aktSeite <= 1} className="btn btn-ghost btn-sm" style={{ color: 'white' }}>‹</button>
-        <button onClick={() => setAktSeite(s => Math.min(maxSeiten, s + 1))} disabled={aktSeite >= maxSeiten} className="btn btn-ghost btn-sm" style={{ color: 'white' }}>›</button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: 'var(--gray-800)', flexShrink: 0 }}>
+        <button onClick={onClose} className="btn btn-ghost btn-sm" style={{ color: 'white', flexShrink: 0 }}>← Zurück</button>
+        <span style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, flex: 1, textAlign: 'center' }}>DGUV 305-002</span>
+        {/* Seiten-Sprung */}
+        <form onSubmit={sprungZuSeite} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <input
+            value={sprungSeite}
+            onChange={e => setSprungSeite(e.target.value)}
+            placeholder={`${aktSeite}/${maxSeiten}`}
+            style={{ width: 72, padding: '3px 6px', borderRadius: 4, border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.1)', color: 'white', fontSize: 12, textAlign: 'center' }}
+          />
+        </form>
+        <button onClick={vorige} disabled={aktSeite <= 1} className="btn btn-ghost btn-sm" style={{ color: 'white', fontSize: 18, padding: '2px 10px' }}>‹</button>
+        <button onClick={naechste} disabled={aktSeite >= maxSeiten} className="btn btn-ghost btn-sm" style={{ color: 'white', fontSize: 18, padding: '2px 10px' }}>›</button>
       </div>
-      {/* Canvas */}
-      <div style={{ flex: 1, overflow: 'auto', display: 'flex', justifyContent: 'center', padding: 16 }}>
-        {laden && <div style={{ color: 'white', alignSelf: 'center' }}>Lädt...</div>}
-        <canvas ref={canvasRef} style={{ display: laden ? 'none' : 'block', maxWidth: '100%', borderRadius: 4 }} />
+
+      {/* Canvas mit Touch-Swipe */}
+      <div
+        style={{ flex: 1, overflow: 'auto', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', padding: '12px 8px' }}
+        onTouchStart={onTouchStart}
+        onTouchEnd={onTouchEnd}
+      >
+        {laden && <div style={{ color: 'white', alignSelf: 'center', fontSize: 14 }}>Lädt Seite {aktSeite}…</div>}
+        <canvas ref={canvasRef} style={{ display: laden ? 'none' : 'block', maxWidth: '100%', borderRadius: 4, boxShadow: '0 4px 24px rgba(0,0,0,0.6)' }} />
+      </div>
+
+      {/* Footer mit Wisch-Hinweis */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 16px', background: 'var(--gray-800)', flexShrink: 0 }}>
+        <button onClick={vorige} disabled={aktSeite <= 1} className="btn btn-ghost btn-sm" style={{ color: 'white', fontSize: 13 }}>← Vorige</button>
+        <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11 }}>← wischen →</span>
+        <button onClick={naechste} disabled={aktSeite >= maxSeiten} className="btn btn-ghost btn-sm" style={{ color: 'white', fontSize: 13 }}>Nächste →</button>
       </div>
     </div>
   )
