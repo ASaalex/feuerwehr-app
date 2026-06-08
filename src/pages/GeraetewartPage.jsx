@@ -51,6 +51,7 @@ export default function GeraetewartPage() {
   const srRef = useRef(null)
   const sprachLaeuftRef = useRef(false) // Abbruch-Flag für async-Kette
   const sprachPauseRef = useRef(false)
+  const ignorierenRef = useRef(false)   // Ergebnisse ignorieren während TTS läuft
   const pruefungsartenRef = useRef([])
   const artIdRef = useRef('')
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream
@@ -191,22 +192,22 @@ export default function GeraetewartPage() {
     } catch {}
   }
 
-  // spreche: SR stoppen während TTS läuft (verhindert Headset-Echo)
+  // spreche: TTS abspielen; SR läuft weiter (kein Mic-Klick beim Headset)
+  // ignorierenRef blockt eingehende SR-Ergebnisse während TTS läuft
   function spreche(text) {
     return new Promise(resolve => {
       window.speechSynthesis.cancel()
       if (!sprachLaeuftRef.current) { resolve(); return }
-      // SR aktiv abbrechen bevor TTS startet → kein Echo-Problem mit Headset
-      srRef.current?.abort()
+      ignorierenRef.current = true   // SR-Ergebnisse verwerfen während gesprochen wird
       const u = new SpeechSynthesisUtterance(text)
       u.lang = 'de-DE'
-      u.rate = 1.05
+      u.rate = 1.25  // schneller
       u.onend = () => {
-        if (!sprachLaeuftRef.current) { resolve(); return }
+        if (!sprachLaeuftRef.current) { ignorierenRef.current = false; resolve(); return }
         beep()
-        setTimeout(resolve, 600) // längerer Puffer für Headset
+        setTimeout(() => { ignorierenRef.current = false; resolve() }, 250)
       }
-      u.onerror = () => resolve()
+      u.onerror = () => { ignorierenRef.current = false; resolve() }
       window.speechSynthesis.speak(u)
     })
   }
@@ -258,97 +259,119 @@ export default function GeraetewartPage() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SR) { alert('Spracherkennung nicht unterstützt. Bitte Chrome oder Safari verwenden.'); return }
     sprachLaeuftRef.current = true
+    ignorierenRef.current = false
+    sprachPauseRef.current = false
     setSprachAktiv(true)
 
-    function hoere(naechsterStatus, onResult, wiederholen) {
-      if (!sprachLaeuftRef.current) return  // Abgebrochen → nichts tun
-      srRef.current?.abort()
-      setSprachStatus(naechsterStatus)
+    // ── Persistentes SR-Objekt (Non-iOS) ──────────────────────────
+    // Ein einziges SR läuft die gesamte Session durch → kein Mic-Klick
+    // beim Headset. ignorierenRef verwirft Ergebnisse während TTS läuft.
+    const pendingRef = { fn: null, wr: null }
 
-      setTimeout(() => {
-        if (!sprachLaeuftRef.current) return  // nochmal prüfen nach Delay
-        const neu = new SR()
-        neu.lang = 'de-DE'
-        neu.continuous = false
-        neu.interimResults = false
-        srRef.current = neu
+    function verarbeiteText(text) {
+      if (!sprachLaeuftRef.current || !pendingRef.fn) return
+      const cb = pendingRef.fn
+      const wr = pendingRef.wr
+      pendingRef.fn = null
+      pendingRef.wr = null
+      if (istAbbruch(text)) {
+        spreche('Abgebrochen.').then(() => {
+          setSprachSn(''); setSeriennummer('')
+          setSprachInfo('Abgebrochen — Sage „Prüfung" für ein neues Gerät')
+          warteAufTrigger()
+        })
+        return
+      }
+      if (istWiederholen(text) && wr) { spreche('Nochmal.').then(() => wr()); return }
+      cb(text)
+    }
 
+    if (!isIOS) {
+      const sr = new SR()
+      sr.lang = 'de-DE'
+      sr.continuous = true
+      sr.interimResults = false
+      srRef.current = sr
+      sr.onresult = e => {
+        if (ignorierenRef.current || !sprachLaeuftRef.current) return
+        const text = e.results[e.results.length - 1][0].transcript.trim()
+        if (text) verarbeiteText(text)
+      }
+      sr.onerror = () => {
+        if (sprachLaeuftRef.current) setTimeout(() => { try { sr.start() } catch {} }, 300)
+      }
+      sr.onend = () => {
+        if (sprachLaeuftRef.current) setTimeout(() => { try { sr.start() } catch {} }, 100)
+      }
+      try { sr.start() } catch {}
+    }
+
+    function hoere(status, cb, wr = null) {
+      if (!sprachLaeuftRef.current) return
+      setSprachStatus(status)
+      if (isIOS) {
+        // iOS: jedes Mal ein neues SR (Safari-Einschränkung)
+        srRef.current?.abort()
+        const sr = new SR()
+        sr.lang = 'de-DE'; sr.continuous = false; sr.interimResults = false
+        srRef.current = sr
         function starte() {
           let ergebnis = false
-          neu.onresult = e => {
-            ergebnis = true
+          sr.onresult = e => {
+            ergebnis = true; setSprachTippen(null)
+            verarbeiteText(e.results[0][0].transcript.trim())
+          }
+          sr.onerror = e => {
             setSprachTippen(null)
-            const text = e.results[0][0].transcript.trim()
-            if (istAbbruch(text)) {
-              spreche('Abgebrochen. Sage Prüfung für ein neues Gerät.')
-              setSprachSn('')
-              setSprachInfo('Abgebrochen — Sage „Prüfung" für ein neues Gerät')
-              warteAufTrigger()
-              return
-            }
-            if (istWiederholen(text) && wiederholen) {
-              spreche('Okay, nochmal.')
-              wiederholen()
-              return
-            }
-            onResult(text)
+            if (e.error === 'no-speech') hoere(status, cb, wr)
           }
-          neu.onerror = e => {
-            setSprachTippen(null)
-            if (e.error === 'no-speech') hoere(naechsterStatus, onResult, wiederholen)
-            else setSprachInfo('Mikrofon-Fehler: ' + e.error)
-          }
-          neu.onend = () => {
-            // Falls kein Ergebnis und kein Fehler kam → nochmal hören
-            if (!ergebnis) setTimeout(() => hoere(naechsterStatus, onResult, wiederholen), 200)
-          }
-          try { neu.start() } catch {}
+          sr.onend = () => { if (!ergebnis) setTimeout(() => hoere(status, cb, wr), 200) }
+          try { sr.start() } catch {}
         }
-
-        if (isIOS) {
-          setSprachTippen(() => starte)
-        } else {
-          starte()
-        }
-      }, 300)
+        pendingRef.fn = cb; pendingRef.wr = wr
+        setSprachTippen(() => starte)
+      } else {
+        pendingRef.fn = cb; pendingRef.wr = wr
+      }
     }
+
+    // ── Ablauf-Funktionen ─────────────────────────────────────────
+
+    // Korrektur-Keywords
+    function istKorrekturSN(t) { return ['seriennummer falsch','seriennummer neu','sn falsch','sn neu'].some(w => t.includes(w)) }
+    function istKorrekturPruefung(t) { return ['prüfung falsch','pruefung falsch','prüfung neu','pruefung neu'].some(w => t.includes(w)) }
+    function istKorrekturBemerkung(t) { return ['bemerkung falsch','kommentar falsch','bemerkung neu','kommentar neu'].some(w => t.includes(w)) }
+
+    // Seriennummer buchstabenweise: "NO1123" → "N O 1 1 2 3"
+    function snSprechen(sn) { return sn.split('').join(' ') }
 
     function warteAufTrigger() {
       setSprachStatus('bereit')
       setSprachInfo('Sage „Prüfung" · „Info" · „Absenden" · „Pause"')
       hoere('bereit', async text => {
         const t = text.toLowerCase()
-        // Pause
         if (t.includes('pause')) {
-          sprachPauseRef.current = true
-          setSprachPause(true)
-          await spreche('Pause. Sage weiter um fortzufahren.')
-          setSprachInfo('⏸ Pause — Sage „weiter" um fortzufahren')
-          wartePause()
-          return
+          sprachPauseRef.current = true; setSprachPause(true)
+          await spreche('Pause.')
+          setSprachInfo('⏸ Pause — Sage „weiter"')
+          wartePause(); return
         }
-        // Absenden
         if (t.includes('absenden') || t.includes('versenden') || t.includes('mail')) {
-          await spreche('Protokoll versenden? Sage ja oder nein.')
+          await spreche('Versenden? Ja oder Nein.')
           hoere('bereit', async antwort => {
-            if (antwort.toLowerCase().includes('ja')) {
-              await spreche('Wird versendet.')
-              mailSenden()
-            } else {
-              await spreche('Abgebrochen.')
-            }
+            if (antwort.toLowerCase().includes('ja')) { await spreche('Wird gesendet.'); mailSenden() }
+            else await spreche('Okay.')
             warteAufTrigger()
-          }, null)
+          })
           return
         }
         if (t.includes('prüfung') || t.includes('pruefung')) {
-          await spreche('Seriennummer bitte')
+          await spreche('Seriennummer?')
           setSprachInfo('Seriennummer sprechen…')
           warteAufSeriennummer()
         } else if (istKorrekturBemerkung(t)) {
-          // Letzten Eintrag nachträglich korrigieren
-          await spreche('Neue Bemerkung für den letzten Eintrag bitte.')
-          setSprachInfo('Neue Bemerkung sprechen oder „weiter" für keine…')
+          await spreche('Neue Bemerkung?')
+          setSprachInfo('Neue Bemerkung sprechen oder „weiter"…')
           hoere('bemerkung', async neueBemerkung => {
             const keineB = ['weiter','keine','nein','skip'].some(w => neueBemerkung.toLowerCase().includes(w))
             const b = keineB ? '' : neueBemerkung
@@ -358,91 +381,73 @@ export default function GeraetewartPage() {
               neu[neu.length - 1] = { ...neu[neu.length - 1], notiz: b }
               return neu
             })
-            const msg = b ? `Bemerkung geändert auf: ${b}.` : 'Bemerkung geleert.'
-            await spreche(msg)
+            await spreche(b ? `Geändert: ${b}.` : 'Geleert.')
             setSprachInfo('Bemerkung aktualisiert ✓')
             warteAufTrigger()
-          }, null)
+          })
           return
         } else if (t.includes('info')) {
           const gerätName = text.replace(/info/gi, '').trim()
-          if (gerätName) {
-            zeigeInfo(gerätName)
-          } else {
+          if (gerätName) { zeigeInfo(gerätName) }
+          else {
             await spreche('Welches Gerät?')
             setSprachInfo('Gerätename sprechen…')
-            hoere('bereit', geraetText => zeigeInfo(geraetText), null)
+            hoere('bereit', geraetText => zeigeInfo(geraetText))
           }
         } else {
           warteAufTrigger()
         }
-      }, null)
+      })
     }
 
     function wartePause() {
-      // Nur auf "weiter" hören
       hoere('bereit', async text => {
         const t = text.toLowerCase()
         if (t.includes('weiter') || t.includes('fortfahren') || t.includes('start')) {
-          sprachPauseRef.current = false
-          setSprachPause(false)
+          sprachPauseRef.current = false; setSprachPause(false)
           await spreche('Weiter.')
           warteAufTrigger()
         } else {
-          wartePause() // weiter warten
+          wartePause()
         }
-      }, null)
+      })
     }
 
     async function zeigeInfo(gerätName) {
       const geraet = geraetSuchen(gerätName)
       if (geraet) {
-        // Sofort anzeigen, dann vorlesen
         setInfoModal({ geraet, offen: true })
         setSprachInfo(`Info: ${geraet.name}`)
         const infoText = pruefInfoSprechen(geraet)
-        await spreche(`${geraet.name}: ${infoText} Prüfanweisung anzeigen? Ja oder Nein.`)
+        await spreche(`${geraet.name}: ${infoText} PDF anzeigen? Ja oder Nein.`)
         hoere('bereit', async antwort => {
           const a = antwort.toLowerCase()
           if (a.includes('ja') || a.includes('anzeigen') || a.includes('zeigen') || a.includes('öffnen')) {
             if (geraet.pdfSeite) {
               setInfoModal(prev => ({ ...prev, zeigePdf: true }))
-              await spreche(`Seite ${geraet.pdfSeite} wird angezeigt.`)
+              await spreche(`Seite ${geraet.pdfSeite}.`)
             } else {
-              await spreche('Keine Prüfanweisung verfügbar.')
+              await spreche('Keine Anweisung vorhanden.')
             }
           } else {
             setInfoModal(null)
-            await spreche('Okay. Sage Prüfung für ein Gerät.')
           }
           warteAufTrigger()
-        }, null)
+        })
       } else {
-        await spreche(`${gerätName} nicht gefunden. Sage Prüfung für ein Gerät.`)
+        await spreche(`Nicht gefunden.`)
         setSprachInfo(`"${gerätName}" nicht in Datenbank`)
         warteAufTrigger()
       }
     }
 
-    // Seriennummer buchstabenweise für Ansage formatieren: "NO1123" → "N O 1 1 2 3"
-    function snSprechen(sn) {
-      return sn.split('').join(' ')
-    }
-
-    // Korrektur-Keywords
-    function istKorrekturSN(t) { return ['seriennummer falsch','seriennummer neu','sn falsch','sn neu'].some(w => t.includes(w)) }
-    function istKorrekturPruefung(t) { return ['prüfung falsch','pruefung falsch','prüfung neu','pruefung neu'].some(w => t.includes(w)) }
-    function istKorrekturBemerkung(t) { return ['bemerkung falsch','kommentar falsch','bemerkung neu','kommentar neu'].some(w => t.includes(w)) }
-
     function warteAufSeriennummer() {
       setSprachStatus('seriennummer')
       hoere('seriennummer', async text => {
         const sn = text.toUpperCase().replace(/\s+/g, '').replace(/[.,!?]/g, '')
-        setSprachSn(sn)
-        setSeriennummer(sn)
-        // Buchstabenweise vorlesen
-        await spreche(`Seriennummer: ${snSprechen(sn)}. Welche Prüfung?`)
-        setSprachInfo(`Seriennummer: ${sn} — Prüfungsart als Name oder Nummer sprechen`)
+        setSprachSn(sn); setSeriennummer(sn)
+        await spreche(`${snSprechen(sn)}. Prüfung?`)
+        setSprachInfo(`Seriennummer: ${sn} — Prüfungsart als Name oder Nummer`)
         warteAufPruefung(sn)
       }, () => warteAufSeriennummer())
     }
@@ -451,21 +456,18 @@ export default function GeraetewartPage() {
       setSprachStatus('pruefung')
       hoere('pruefung', async text => {
         const t = text.toLowerCase()
-        // Korrektur Seriennummer
         if (istKorrekturSN(t)) {
-          setSprachSn('')
-          setSeriennummer('')
-          await spreche('Okay, Seriennummer nochmal.')
-          warteAufSeriennummer()
-          return
+          setSprachSn(''); setSeriennummer('')
+          await spreche('Seriennummer nochmal.')
+          warteAufSeriennummer(); return
         }
         const art = pruefungErkennen(text)
         if (art) {
-          await spreche(`${art.name} erkannt. Bemerkung sprechen, oder sage weiter.`)
-          setSprachInfo(`Prüfung: ${art.name} — Bemerkung sprechen oder „weiter"`)
+          await spreche(`${art.name}. Bemerkung?`)
+          setSprachInfo(`Prüfung: ${art.name} — Bemerkung oder „weiter"`)
           warteAufBemerkung(sn, art)
         } else {
-          await spreche('Nicht erkannt. Nochmal sprechen oder Nummer sagen.')
+          await spreche('Nicht erkannt.')
           setSprachInfo('Nicht erkannt — Name oder Nummer sprechen')
           warteAufPruefung(sn)
         }
@@ -476,36 +478,24 @@ export default function GeraetewartPage() {
       setSprachStatus('bemerkung')
       hoere('bemerkung', async text => {
         const t = text.toLowerCase()
-        // Korrekturen
         if (istKorrekturSN(t)) {
-          setSprachSn('')
-          setSeriennummer('')
-          await spreche('Okay, Seriennummer nochmal.')
-          warteAufSeriennummer()
-          return
+          setSprachSn(''); setSeriennummer('')
+          await spreche('Seriennummer nochmal.'); warteAufSeriennummer(); return
         }
         if (istKorrekturPruefung(t)) {
-          await spreche('Okay, Prüfung nochmal.')
-          warteAufPruefung(sn)
-          return
+          await spreche('Prüfung nochmal.'); warteAufPruefung(sn); return
         }
         if (istKorrekturBemerkung(t)) {
-          await spreche('Okay, Bemerkung nochmal.')
-          warteAufBemerkung(sn, art)
-          return
+          await spreche('Bemerkung nochmal.'); warteAufBemerkung(sn, art); return
         }
-        const keineBemerkung = ['weiter', 'keine', 'nein', 'skip', 'überspringen', 'ueberspringen'].some(w => t.includes(w))
+        const keineBemerkung = ['weiter','keine','nein','skip','überspringen','ueberspringen'].some(w => t.includes(w))
         const bemerkung = keineBemerkung ? '' : text
         const uhrzeit = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
         const eintrag = { id: Date.now(), seriennummer: sn, artId: art.id, artName: art.name, notiz: bemerkung, uhrzeit, datum: new Date().toLocaleDateString('de-DE') }
         setListe(prev => [...prev, eintrag])
-        setNotiz(bemerkung)
-        setArtId(art.id)
-        setSeriennummer('')
-        setSprachSn('')
-        const msg = bemerkung ? `Eingetragen mit Bemerkung: ${bemerkung}.` : 'Eingetragen.'
-        await spreche(`${msg} Sage Prüfung für das nächste Gerät.`)
-        setSprachInfo('Eingetragen ✓ — Sage „Prüfung" für das nächste Gerät')
+        setNotiz(bemerkung); setArtId(art.id); setSeriennummer(''); setSprachSn('')
+        await spreche(bemerkung ? `Eingetragen. ${bemerkung}.` : 'Eingetragen.')
+        setSprachInfo('Eingetragen ✓ — Sage „Prüfung"')
         warteAufTrigger()
       }, () => warteAufBemerkung(sn, art))
     }
@@ -516,6 +506,7 @@ export default function GeraetewartPage() {
   function stoppeSprache() {
     sprachLaeuftRef.current = false
     sprachPauseRef.current = false
+    ignorierenRef.current = false
     srRef.current?.abort()
     window.speechSynthesis.cancel()
     setSprachAktiv(false)
