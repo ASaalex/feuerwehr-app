@@ -47,7 +47,7 @@ Antworte NUR mit diesem JSON-Objekt:
       return json({ success: true, ...bewertung });
     }
 
-    const { thema_titel, lehrgang_name, dokument_texte, regelwerk_texte, anzahl = 8 } = body;
+    const { _aktion: aktion, thema_titel, lehrgang_name, dokument_texte, regelwerk_texte, anzahl = 6 } = body;
 
     const quellen = [
       ...(dokument_texte ?? []).map((t: string) => `[Lehrgangs-Dokument]\n${t}`),
@@ -56,6 +56,76 @@ Antworte NUR mit diesem JSON-Objekt:
 
     if (!quellen.trim()) throw new Error("Keine Textquellen übergeben.");
 
+    // ── Modus: Themen + Fragen komplett generieren ─────────────────
+    if (aktion === 'generiere_komplett') {
+      const prompt = `Du bist Ausbilder bei der deutschen Feuerwehr. Analysiere die folgenden Quellen und erstelle einen vollständigen Lernplan für den Lehrgang "${lehrgang_name}".
+
+Quellen:
+${quellen}
+
+Aufgabe:
+1. Leite aus den Quellen sinnvolle Themenblöcke ab (3–6 Themen, die den Lehrgang abdecken).
+2. Erstelle pro Thema 4–6 Prüfungsfragen als Mischung aus multiple_choice, ja_nein, karteikarte und freitext.
+
+Antworte NUR mit diesem JSON-Objekt, kein Text davor oder danach:
+{
+  "themen": [
+    {
+      "titel": "Themenblock-Titel",
+      "fragen": [
+        {
+          "typ": "multiple_choice",
+          "frage": "Fragetext?",
+          "antworten": [
+            {"text": "Richtige Antwort", "richtig": true},
+            {"text": "Falsche Antwort A", "richtig": false},
+            {"text": "Falsche Antwort B", "richtig": false},
+            {"text": "Falsche Antwort C", "richtig": false}
+          ],
+          "erklaerung": "Kurze Erklärung warum diese Antwort richtig ist."
+        },
+        {
+          "typ": "ja_nein",
+          "frage": "Aussage die wahr oder falsch ist.",
+          "antworten": [{"text": "Richtig", "richtig": true}, {"text": "Falsch", "richtig": false}],
+          "erklaerung": "Erklärung."
+        },
+        {
+          "typ": "karteikarte",
+          "frage": "Was bedeutet ...?",
+          "antworten": null,
+          "erklaerung": "Die vollständige Antwort die aufgedeckt wird."
+        },
+        {
+          "typ": "freitext",
+          "frage": "Beschreibe den Vorgang ...",
+          "antworten": null,
+          "erklaerung": "Musterlösung: ..."
+        }
+      ]
+    }
+  ]
+}`;
+
+      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-5",
+          max_tokens: 8192,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+      if (!resp.ok) throw new Error(`Claude API Fehler: ${await resp.text()}`);
+      const result = await resp.json();
+      const text = result.content?.[0]?.text ?? "";
+      const match = text.match(/\{[\s\S]*\}/);
+      if (!match) throw new Error("Kein JSON in Antwort gefunden.");
+      const parsed = JSON.parse(match[0]);
+      return json({ success: true, themen: parsed.themen ?? [] });
+    }
+
+    // ── Modus: nur Fragen für ein bestehendes Thema ────────────────
     const prompt = `Du bist Ausbilder bei der deutschen Feuerwehr. Generiere ${anzahl} Prüfungsfragen für den Lehrgang "${lehrgang_name}", Themenblock "${thema_titel}".
 
 Nutze ausschließlich die folgenden Quellen als Grundlage:
@@ -107,27 +177,13 @@ Antworte NUR mit einem JSON-Array, kein Text davor oder danach:
 
     const resp = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 4096,
-        messages: [{ role: "user", content: prompt }],
-      }),
+      headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 4096, messages: [{ role: "user", content: prompt }] }),
     });
 
-    if (!resp.ok) {
-      const err = await resp.text();
-      throw new Error(`Claude API Fehler: ${err}`);
-    }
-
+    if (!resp.ok) throw new Error(`Claude API Fehler: ${await resp.text()}`);
     const result = await resp.json();
     const text = result.content?.[0]?.text ?? "";
-
-    // JSON aus Antwort extrahieren
     const match = text.match(/\[[\s\S]*\]/);
     if (!match) throw new Error("Kein JSON in Antwort gefunden.");
     const fragen = JSON.parse(match[0]);

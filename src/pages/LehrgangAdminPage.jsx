@@ -22,7 +22,8 @@ export default function LehrgangAdminPage() {
   const [themaForm, setThemaForm] = useState({ titel: '' })
   const [frageModal, setFrageModal] = useState(null) // { thema_id, frage? }
   const [frageForm, setFrageForm] = useState(defaultFrageForm())
-  const [kiGenerieren, setKiGenerieren] = useState(false) // { thema }
+  const [kiGenerieren, setKiGenerieren] = useState(false) // { thema } oder true für Komplett
+  const [kiKomplettModal, setKiKomplettModal] = useState(false)
   const [kiLaedt, setKiLaedt] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [dokForm, setDokForm] = useState({ titel: '', quelle: '', datei: null })
@@ -178,6 +179,62 @@ export default function LehrgangAdminPage() {
     setKiLaedt(false)
   }
 
+  async function kiKomplettGenerieren() {
+    setKiLaedt(true)
+    try {
+      const dokTexte = dokumente.map(d => `Dokument: ${d.titel} (${d.quelle ?? 'intern'})`).join('\n')
+      const { data: rw } = await supabase.from('regelwerke')
+        .select('titel,inhalt_text').eq('aktiv', true).not('inhalt_text', 'is', null).limit(5)
+      const rwTexte = (rw ?? []).map(r => r.inhalt_text?.slice(0, 4000) ?? '').filter(Boolean)
+
+      const { data, error } = await supabase.functions.invoke('generate-lehrgang-fragen', {
+        body: {
+          _aktion: 'generiere_komplett',
+          lehrgang_name: aktiver.name,
+          dokument_texte: dokTexte ? [dokTexte] : [],
+          regelwerk_texte: rwTexte,
+        }
+      })
+      if (error || !data?.success) throw new Error(data?.error ?? error?.message)
+
+      const genThemen = data.themen ?? []
+      let themenGesamt = 0, fragenGesamt = 0
+
+      // Bestehende Reihenfolge fortsetzen
+      const maxReihenfolge = themen.length ? Math.max(...themen.map(t => t.reihenfolge)) + 1 : 0
+
+      for (let i = 0; i < genThemen.length; i++) {
+        const gt = genThemen[i]
+        const { data: neuesThema } = await supabase.from('lehrgang_themen').insert({
+          vorbereitung_id: aktiver.id,
+          titel: gt.titel,
+          reihenfolge: maxReihenfolge + i,
+        }).select().single()
+
+        if (neuesThema && gt.fragen?.length) {
+          const frageRows = gt.fragen.map((f, fi) => ({
+            thema_id: neuesThema.id,
+            typ: f.typ, frage: f.frage,
+            antworten: f.antworten ?? null,
+            erklaerung: f.erklaerung ?? null,
+            ki_generiert: true, freigegeben: false,
+            reihenfolge: fi,
+          }))
+          await supabase.from('lehrgang_fragen').insert(frageRows)
+          fragenGesamt += frageRows.length
+        }
+        themenGesamt++
+      }
+
+      setKiKomplettModal(false)
+      await ladeThemen()
+      zeig(`✨ ${themenGesamt} Themen und ${fragenGesamt} Fragen generiert — bitte prüfen und freigeben.`, 6000)
+    } catch (e) {
+      zeig('Fehler: ' + e.message)
+    }
+    setKiLaedt(false)
+  }
+
   async function dokumentHochladen() {
     if (!dokForm.datei || !dokForm.titel.trim()) return
     setUploading(true)
@@ -299,6 +356,20 @@ export default function LehrgangAdminPage() {
             {/* Tab: Themen & Fragen */}
             {tab === 'themen' && (
               <div>
+                {/* KI-Komplett-Button */}
+                <div style={{ background: 'linear-gradient(135deg, #4c1d95, #7c3aed)', borderRadius: 10, padding: '14px 16px', marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                  <div>
+                    <div style={{ color: 'white', fontWeight: 700, fontSize: 14 }}>✨ KI-Komplettgenerierung</div>
+                    <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, marginTop: 2 }}>
+                      Themen &amp; Fragen automatisch aus Materialien und Regelwerken ableiten
+                    </div>
+                  </div>
+                  <button onClick={() => setKiKomplettModal(true)} className="btn btn-sm"
+                    style={{ background: 'rgba(255,255,255,0.2)', color: 'white', border: '1px solid rgba(255,255,255,0.3)', fontWeight: 600, flexShrink: 0, padding: '6px 14px' }}>
+                    Starten
+                  </button>
+                </div>
+
                 {themen.map(thema => (
                   <div key={thema.id} style={{ background: 'var(--white)', border: '1px solid var(--gray-200)', borderRadius: 10, marginBottom: 12, overflow: 'hidden' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: 'var(--gray-700)', color: 'white' }}>
@@ -412,6 +483,31 @@ export default function LehrgangAdminPage() {
       {frageModal && (
         <Modal title={frageModal.frage ? 'Frage bearbeiten' : 'Neue Frage'} onClose={() => setFrageModal(null)} wide>
           <FrageFormular form={frageForm} onChange={setFrageForm} onSave={frageSpeichern} />
+        </Modal>
+      )}
+
+      {/* Modal: KI-Komplett */}
+      {kiKomplettModal && (
+        <Modal title={`✨ Komplett-Generierung: ${aktiver?.name}`} onClose={() => !kiLaedt && setKiKomplettModal(false)}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ fontSize: 13, color: 'var(--gray-600)', lineHeight: 1.6 }}>
+              Claude analysiert alle hochgeladenen Materialien und Regelwerke und erstellt daraus passende
+              <strong> Themenblöcke mit Prüfungsfragen</strong> für den Lehrgang <strong>{aktiver?.name}</strong>.<br /><br />
+              Alle generierten Inhalte werden als <strong>„Nicht freigegeben"</strong> gespeichert — du kannst sie einzeln prüfen, bearbeiten und freigeben oder löschen.
+            </div>
+            {dokumente.length === 0 && (
+              <div style={{ fontSize: 12, color: '#92400e', background: '#fef3c7', padding: '8px 12px', borderRadius: 6 }}>
+                💡 Tipp: Lade zuerst Materialien (Tab „Materialien") hoch — dann kann Claude lehrgangs&shy;spezifische Inhalte ableiten. Ohne Materialien nutzt Claude nur allgemeine Regelwerke.
+              </div>
+            )}
+            <div style={{ fontSize: 12, color: 'var(--gray-400)', background: 'var(--gray-50)', padding: '8px 12px', borderRadius: 6 }}>
+              ⏱ Dieser Vorgang dauert ca. 20–40 Sekunden. Bitte nicht schließen.
+            </div>
+            <button onClick={kiKomplettGenerieren} className="btn btn-primary" disabled={kiLaedt}
+              style={{ background: '#7c3aed', border: 'none', padding: '12px', fontSize: 15, fontWeight: 700 }}>
+              {kiLaedt ? '✨ Wird generiert… bitte warten' : '✨ Jetzt generieren'}
+            </button>
+          </div>
         </Modal>
       )}
 
