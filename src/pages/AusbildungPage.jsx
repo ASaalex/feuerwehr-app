@@ -247,6 +247,26 @@ export default function AusbildungPage() {
         </Link>
       )}
 
+      {/* Lehrgangsausbildung Banner */}
+      <Link to="/ausbildung/lehrgang" style={{ textDecoration: 'none', display: 'block', marginBottom: 16 }}>
+        <div style={{
+          background: 'linear-gradient(135deg, #1e40af 0%, #1d4ed8 100%)',
+          borderRadius: 12, padding: '16px 20px',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+          cursor: 'pointer', transition: 'opacity 150ms',
+        }}
+          onMouseEnter={e => e.currentTarget.style.opacity = '0.92'}
+          onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+        >
+          <div>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>Lehrgangs-Vorbereitung</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: 'white', marginBottom: 4 }}>🎓 Lehrgangsausbildung</div>
+            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.75)' }}>Karteikarten, Multiple-Choice &amp; KI-Auswertung · Lernfortschritt in %</div>
+          </div>
+          <div style={{ fontSize: 28, opacity: 0.8 }}>📚</div>
+        </div>
+      </Link>
+
       {/* Wissensfrage Banner */}
       <div style={{ marginBottom: 20 }}>
         <div style={{

@@ -26,6 +26,9 @@ import EinsatzberichtFormular from './pages/EinsatzberichtFormular'
 import VersammlungenPage from './pages/VersammlungenPage'
 import GeraetewartPage from './pages/GeraetewartPage'
 import PruefungsartenPage from './pages/PruefungsartenPage'
+import LehrgangAdminPage from './pages/LehrgangAdminPage'
+import LehrgangUebersichtPage from './pages/LehrgangUebersichtPage'
+import LehrgangLernPage from './pages/LehrgangLernPage'
 import './index.css'
 
 function GbmRoute({ children }) {
@@ -115,8 +118,11 @@ function AppRoutes() {
         <Route path="versammlungen" element={<ProtectedRoute><VersammlungenPage /></ProtectedRoute>} />
         <Route path="ausbildung" element={<ProtectedRoute><AusbildungPage /></ProtectedRoute>} />
         <Route path="ausbildung/chat" element={<ProtectedRoute><AusbildungChatPage /></ProtectedRoute>} />
+        <Route path="ausbildung/lehrgang" element={<ProtectedRoute><LehrgangUebersichtPage /></ProtectedRoute>} />
+        <Route path="ausbildung/lehrgang/:id" element={<ProtectedRoute><LehrgangLernPage /></ProtectedRoute>} />
         <Route path="szenarien" element={<ProtectedRoute adminOnly><SzenarienAdminPage /></ProtectedRoute>} />
         <Route path="regelwerke" element={<ProtectedRoute adminOnly><RegelwerkeAdminPage /></ProtectedRoute>} />
+        <Route path="lehrgang-admin" element={<ProtectedRoute adminOnly><LehrgangAdminPage /></ProtectedRoute>} />
         <Route path="pruefungen" element={<PruefungenPage />} />
         <Route path="aufgaben" element={
           <AufgabenRoute><AufgabenPage /></AufgabenRoute>
