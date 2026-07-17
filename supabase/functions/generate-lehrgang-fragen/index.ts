@@ -60,9 +60,7 @@ Antworte NUR mit diesem JSON-Objekt:
     if (aktion === 'generiere_komplett') {
       const prompt = `Du bist Ausbilder bei der deutschen Feuerwehr. Analysiere die folgenden Quellen und erstelle einen vollständigen Lernplan für den Lehrgang "${lehrgang_name}".
 
-Quellen:
-${quellen}
-
+${quellen ? `Quellen:\n${quellen}\n` : ''}
 Aufgabe:
 1. Leite aus den Quellen sinnvolle Themenblöcke ab (3–6 Themen, die den Lehrgang abdecken).
 2. Erstelle pro Thema 4–6 Prüfungsfragen als Mischung aus multiple_choice, ja_nein, karteikarte und freitext.
@@ -112,15 +110,19 @@ Antworte NUR mit diesem JSON-Objekt, kein Text davor oder danach:
         headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
         body: JSON.stringify({
           model: "claude-sonnet-5",
-          max_tokens: 8192,
+          max_tokens: 32000,
           messages: [{ role: "user", content: prompt }],
         }),
       });
       if (!resp.ok) throw new Error(`Claude API Fehler: ${await resp.text()}`);
       const result = await resp.json();
-      const text = result.content?.[0]?.text ?? "";
-      const match = text.match(/\{[\s\S]*\}/);
-      if (!match) throw new Error("Kein JSON in Antwort gefunden.");
+      console.log("komplett result keys:", Object.keys(result));
+      console.log("komplett result type:", result.type, "error:", JSON.stringify(result.error));
+      if (result.type === "error") throw new Error(`Claude Fehler: ${result.error?.message ?? JSON.stringify(result.error)}`);
+      const text = (result.content ?? []).map((b: { type: string; text?: string }) => b.type === "text" ? b.text ?? "" : "").join("");
+      const clean = text.replace(/^```(?:json)?\s*/m, "").replace(/\s*```\s*$/m, "").trim();
+      const match = clean.match(/\{[\s\S]*\}/);
+      if (!match) throw new Error(`Kein JSON. stop=${result.stop_reason} tokens=${result.usage?.output_tokens}`);
       const parsed = JSON.parse(match[0]);
       return json({ success: true, themen: parsed.themen ?? [] });
     }
@@ -183,8 +185,9 @@ Antworte NUR mit einem JSON-Array, kein Text davor oder danach:
 
     if (!resp.ok) throw new Error(`Claude API Fehler: ${await resp.text()}`);
     const result = await resp.json();
-    const text = result.content?.[0]?.text ?? "";
-    const match = text.match(/\[[\s\S]*\]/);
+    const rawText = (result.content ?? []).map((b: { type: string; text?: string }) => b.type === "text" ? b.text ?? "" : "").join("");
+    const cleanText = rawText.replace(/^```(?:json)?\s*/m, "").replace(/\s*```\s*$/m, "").trim();
+    const match = cleanText.match(/\[[\s\S]*\]/);
     if (!match) throw new Error("Kein JSON in Antwort gefunden.");
     const fragen = JSON.parse(match[0]);
 

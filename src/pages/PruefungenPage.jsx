@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { format } from 'date-fns'
@@ -27,7 +27,6 @@ export default function PruefungenPage() {
         .select('*')
         .eq('kamerad_id', profile.id)
         .order('abgelegt_am', { ascending: false }),
-      // GBM-Profile laden um deren IDs zu kennen
       supabase.from('profiles')
         .select('id')
         .eq('rolle', 'gemeindebrandmeister')
@@ -36,34 +35,24 @@ export default function PruefungenPage() {
 
     const gbmIds = (gbmProfile ?? []).map(x => x.id)
     const alle = p ?? []
-
     const jetzt = new Date()
 
     function istAktivJetzt(pr) {
-      // Zeitbereich-Pruefung
       if (pr.aktiv_von || pr.aktiv_bis) {
         const vonOk = !pr.aktiv_von || new Date(pr.aktiv_von) <= jetzt
         const bisOk = !pr.aktiv_bis || new Date(pr.aktiv_bis) >= jetzt
         return vonOk && bisOk
       }
-      // Klassisch aktiv/inaktiv
       return pr.aktiv
     }
 
     let sichtbar = []
-
     if (profile.rolle === 'gemeindebrandmeister') {
       sichtbar = alle
     } else if (isWehrleiter) {
-      sichtbar = alle.filter(pr =>
-        pr.wehr_id === profile.wehr_id ||
-        gbmIds.includes(pr.erstellt_von?.id)
-      )
+      sichtbar = alle.filter(pr => pr.wehr_id === profile.wehr_id || gbmIds.includes(pr.erstellt_von?.id))
     } else if (isAusbilder) {
-      sichtbar = alle.filter(pr =>
-        pr.wehr_id === profile.wehr_id ||
-        gbmIds.includes(pr.erstellt_von?.id)
-      )
+      sichtbar = alle.filter(pr => pr.wehr_id === profile.wehr_id || gbmIds.includes(pr.erstellt_von?.id))
     } else {
       sichtbar = alle.filter(pr => {
         if (!istAktivJetzt(pr)) return false
@@ -89,7 +78,6 @@ export default function PruefungenPage() {
   function hatAbgelegt(id) {
     const alle = ergebnisse.filter(e => e.pruefung_id === id)
     if (alle.length === 0) return null
-    // Neuestes zurueckgeben
     return alle.sort((a, b) => new Date(b.abgelegt_am) - new Date(a.abgelegt_am))[0]
   }
 
@@ -106,7 +94,11 @@ export default function PruefungenPage() {
         json.fragen.forEach((f, i) => {
           if (!f.frage_text) throw new Error(`Frage ${i+1}: "frage_text" fehlt`)
           if (!f.typ) throw new Error(`Frage ${i+1}: "typ" fehlt`)
-          if (!Array.isArray(f.antworten)) throw new Error(`Frage ${i+1}: "antworten" fehlt`)
+          if (f.typ === 'freitext') {
+            if (!f.musterloesung) throw new Error(`Frage ${i+1}: "musterloesung" fehlt (Pflichtfeld bei Freitext)`)
+          } else {
+            if (!Array.isArray(f.antworten)) throw new Error(`Frage ${i+1}: "antworten" fehlt`)
+          }
         })
         setSelected({ _import: true, ...json })
         setView('erstellen')
@@ -117,6 +109,62 @@ export default function PruefungenPage() {
     reader.readAsText(datei)
     e.target.value = ''
   }
+
+  const promptText = `Erstelle eine Lernkontrolle zum Thema [THEMA] für die Feuerwehr.
+Die Prüfung soll [ANZAHL] Fragen enthalten. Mische verschiedene Fragetypen.
+Gib ausschließlich den JSON-Code zurück, ohne Erklärungen oder Markdown.
+
+Es gibt vier Fragetypen:
+- "multiple_choice"  → genau 1 richtige Antwort (2–5 Antwortoptionen)
+- "mehrfachauswahl"  → 1 bis 4 richtige Antworten (2–5 Antwortoptionen)
+- "wahr_falsch"      → genau 2 Antworten: "Wahr" und "Falsch"
+- "freitext"         → offene Frage, kein "antworten"-Array, stattdessen "musterloesung" als Text
+
+{
+  "titel": "[Titel der Prüfung]",
+  "beschreibung": "[Kurze Beschreibung]",
+  "bestehens_prozent": 70,
+  "sofortfeedback": false,
+  "fragen": [
+    {
+      "frage_text": "[Frage mit einer richtigen Antwort]",
+      "typ": "multiple_choice",
+      "punkte": 1,
+      "antworten": [
+        { "text": "[Antwort A]", "richtig": true },
+        { "text": "[Antwort B]", "richtig": false },
+        { "text": "[Antwort C]", "richtig": false },
+        { "text": "[Antwort D]", "richtig": false }
+      ]
+    },
+    {
+      "frage_text": "[Frage mit mehreren richtigen Antworten]",
+      "typ": "mehrfachauswahl",
+      "punkte": 1,
+      "antworten": [
+        { "text": "[Antwort A]", "richtig": true },
+        { "text": "[Antwort B]", "richtig": false },
+        { "text": "[Antwort C]", "richtig": true },
+        { "text": "[Antwort D]", "richtig": false }
+      ]
+    },
+    {
+      "frage_text": "[Aussage, die wahr oder falsch ist]",
+      "typ": "wahr_falsch",
+      "punkte": 1,
+      "antworten": [
+        { "text": "Wahr", "richtig": true },
+        { "text": "Falsch", "richtig": false }
+      ]
+    },
+    {
+      "frage_text": "[Offene Frage, die der Kamerad selbst beantwortet]",
+      "typ": "freitext",
+      "punkte": 1,
+      "musterloesung": "[Vollständige Musterlösung, anhand derer die KI die Antwort bewertet]"
+    }
+  ]
+}`
 
   if (loading) return <div className="loading-page"><div className="spinner"></div></div>
   if (view === 'erstellen') return <PruefungErstellen profile={profile} importDaten={selected?._import ? selected : null} onBack={() => { setSelected(null); setView('liste'); fetchData() }} />
@@ -170,6 +218,7 @@ export default function PruefungenPage() {
                       }
                       return p.aktiv ? <span className="badge badge-green">Aktiv</span> : <span className="badge badge-gray">Inaktiv</span>
                     })()}
+                    {p.sofortfeedback && <span className="badge badge-amber" style={{ fontSize: 11 }}>Sofortfeedback</span>}
                     {p.sichtbar_fuer_wehren && <span className="badge badge-amber" style={{ fontSize: 11 }}>Bestimmte Wachen</span>}
                   </div>
                   {p.beschreibung && <p style={{ fontSize: 13, color: 'var(--gray-400)' }}>{p.beschreibung}</p>}
@@ -178,16 +227,8 @@ export default function PruefungenPage() {
                   </p>
                   {(p.aktiv_von || p.aktiv_bis) && (
                     <div style={{ display: 'flex', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
-                      {p.aktiv_von && (
-                        <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: '#E1F5EE', color: '#085041' }}>
-                          Von: {format(new Date(p.aktiv_von), 'd. MMM yyyy HH:mm', { locale: de })}
-                        </span>
-                      )}
-                      {p.aktiv_bis && (
-                        <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: '#FAEEDA', color: '#633806' }}>
-                          Bis: {format(new Date(p.aktiv_bis), 'd. MMM yyyy HH:mm', { locale: de })}
-                        </span>
-                      )}
+                      {p.aktiv_von && <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: '#E1F5EE', color: '#085041' }}>Von: {format(new Date(p.aktiv_von), 'd. MMM yyyy HH:mm', { locale: de })}</span>}
+                      {p.aktiv_bis && <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: '#FAEEDA', color: '#633806' }}>Bis: {format(new Date(p.aktiv_bis), 'd. MMM yyyy HH:mm', { locale: de })}</span>}
                     </div>
                   )}
                 </div>
@@ -233,58 +274,12 @@ export default function PruefungenPage() {
             <p style={{ fontSize: 13, color: 'var(--gray-400)', marginBottom: 16 }}>
               Kopiere diesen Prompt und füge ihn in ChatGPT, Claude oder ein anderes KI-Tool ein. Passe Thema und Anzahl der Fragen an. Die erzeugte JSON-Datei kannst du direkt über „JSON importieren" einlesen.
             </p>
-            <div style={{ background: 'var(--gray-50)', border: '1px solid var(--gray-200)', borderRadius: 10, padding: '14px 16px', fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--gray-700)', whiteSpace: 'pre-wrap', lineHeight: 1.6, userSelect: 'all' }}>
-{`Erstelle eine Lernkontrolle zum Thema [THEMA] für die Feuerwehr.
-Die Prüfung soll [ANZAHL] Fragen enthalten. Mische verschiedene Fragetypen.
-Gib ausschließlich den JSON-Code zurück, ohne Erklärungen oder Markdown.
-
-Es gibt drei Fragetypen:
-- "multiple_choice"  → genau 1 richtige Antwort (2–5 Antwortoptionen)
-- "mehrfachauswahl"  → 1 bis 4 richtige Antworten (2–5 Antwortoptionen)
-- "wahr_falsch"      → genau 2 Antworten: "Wahr" und "Falsch"
-
-{
-  "titel": "[Titel der Prüfung]",
-  "beschreibung": "[Kurze Beschreibung]",
-  "bestehens_prozent": 70,
-  "fragen": [
-    {
-      "frage_text": "[Frage mit einer richtigen Antwort]",
-      "typ": "multiple_choice",
-      "punkte": 1,
-      "antworten": [
-        { "text": "[Antwort A]", "richtig": true },
-        { "text": "[Antwort B]", "richtig": false },
-        { "text": "[Antwort C]", "richtig": false },
-        { "text": "[Antwort D]", "richtig": false }
-      ]
-    },
-    {
-      "frage_text": "[Frage mit mehreren richtigen Antworten]",
-      "typ": "mehrfachauswahl",
-      "punkte": 1,
-      "antworten": [
-        { "text": "[Antwort A]", "richtig": true },
-        { "text": "[Antwort B]", "richtig": false },
-        { "text": "[Antwort C]", "richtig": true },
-        { "text": "[Antwort D]", "richtig": false }
-      ]
-    },
-    {
-      "frage_text": "[Aussage, die wahr oder falsch ist]",
-      "typ": "wahr_falsch",
-      "punkte": 1,
-      "antworten": [
-        { "text": "Wahr", "richtig": true },
-        { "text": "Falsch", "richtig": false }
-      ]
-    }
-  ]
-}`}
+            <div style={{ background: 'var(--gray-50)', border: '1px solid var(--gray-200)', borderRadius: 10, padding: '14px 16px', fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--gray-700)', whiteSpace: 'pre-wrap', lineHeight: 1.6, userSelect: 'all', maxHeight: 320, overflowY: 'auto' }}>
+              {promptText}
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
               <button className="btn btn-primary" onClick={() => {
-                navigator.clipboard.writeText(`Erstelle eine Lernkontrolle zum Thema [THEMA] für die Feuerwehr.\nDie Prüfung soll [ANZAHL] Fragen enthalten. Mische verschiedene Fragetypen.\nGib ausschließlich den JSON-Code zurück, ohne Erklärungen oder Markdown.\n\nEs gibt drei Fragetypen:\n- "multiple_choice"  → genau 1 richtige Antwort (2–5 Antwortoptionen)\n- "mehrfachauswahl"  → 1 bis 4 richtige Antworten (2–5 Antwortoptionen)\n- "wahr_falsch"      → genau 2 Antworten: "Wahr" und "Falsch"\n\n{\n  "titel": "[Titel der Prüfung]",\n  "beschreibung": "[Kurze Beschreibung]",\n  "bestehens_prozent": 70,\n  "fragen": [\n    {\n      "frage_text": "[Frage mit einer richtigen Antwort]",\n      "typ": "multiple_choice",\n      "punkte": 1,\n      "antworten": [\n        { "text": "[Antwort A]", "richtig": true },\n        { "text": "[Antwort B]", "richtig": false },\n        { "text": "[Antwort C]", "richtig": false },\n        { "text": "[Antwort D]", "richtig": false }\n      ]\n    },\n    {\n      "frage_text": "[Frage mit mehreren richtigen Antworten]",\n      "typ": "mehrfachauswahl",\n      "punkte": 1,\n      "antworten": [\n        { "text": "[Antwort A]", "richtig": true },\n        { "text": "[Antwort B]", "richtig": false },\n        { "text": "[Antwort C]", "richtig": true },\n        { "text": "[Antwort D]", "richtig": false }\n      ]\n    },\n    {\n      "frage_text": "[Aussage, die wahr oder falsch ist]",\n      "typ": "wahr_falsch",\n      "punkte": 1,\n      "antworten": [\n        { "text": "Wahr", "richtig": true },\n        { "text": "Falsch", "richtig": false }\n      ]\n    }\n  ]\n}`)
+                navigator.clipboard.writeText(promptText)
                 setPromptKopiert(true)
                 setTimeout(() => setPromptKopiert(false), 2000)
               }}>
@@ -298,233 +293,503 @@ Es gibt drei Fragetypen:
   )
 }
 
-function AktivToggle({ pruefung, onToggle }) {
-  const [modal, setModal] = useState(false)
-  const [modus, setModus] = useState(pruefung.aktiv_von || pruefung.aktiv_bis ? 'zeitraum' : 'manuell')
-  const [von, setVon] = useState(pruefung.aktiv_von ? pruefung.aktiv_von.slice(0,16) : '')
-  const [bis, setBis] = useState(pruefung.aktiv_bis ? pruefung.aktiv_bis.slice(0,16) : '')
-  const [saving, setSaving] = useState(false)
+// ─── Speech Recognition Hook ────────────────────────────────────────────────
 
-  const jetzt = new Date()
-  const laeuft = pruefung.aktiv_von || pruefung.aktiv_bis
-    ? (!pruefung.aktiv_von || new Date(pruefung.aktiv_von) <= jetzt) && (!pruefung.aktiv_bis || new Date(pruefung.aktiv_bis) >= jetzt)
-    : pruefung.aktiv
+function useSpeechRecognition(onResult) {
+  const [hoert, setHoert] = useState(false)
+  const recRef = useRef(null)
 
-  async function handleSave() {
-    setSaving(true)
-    if (modus === 'zeitraum') {
-      await supabase.from('pruefungen').update({
-        aktiv: true,
-        aktiv_von: von ? new Date(von).toISOString() : null,
-        aktiv_bis: bis ? new Date(bis).toISOString() : null,
-      }).eq('id', pruefung.id)
-    } else {
-      await supabase.from('pruefungen').update({
-        aktiv: !laeuft,
-        aktiv_von: null,
-        aktiv_bis: null,
-      }).eq('id', pruefung.id)
-    }
-    setSaving(false)
-    setModal(false)
-    onToggle()
+  function starten() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) { alert('Spracherkennung wird in diesem Browser nicht unterstützt.'); return }
+    const rec = new SR()
+    rec.lang = 'de-DE'
+    rec.interimResults = false
+    rec.onstart = () => setHoert(true)
+    rec.onend = () => setHoert(false)
+    rec.onresult = (e) => { onResult(e.results[0][0].transcript) }
+    rec.onerror = () => setHoert(false)
+    recRef.current = rec
+    rec.start()
   }
 
-  return (
-    <>
-      {laeuft ? (
-        // Direkt deaktivieren ohne Modal
-        <button className="btn btn-sm btn-secondary" onClick={async () => {
-          await supabase.from('pruefungen').update({ aktiv: false, aktiv_von: null, aktiv_bis: null }).eq('id', pruefung.id)
-          onToggle()
-        }}>
-          Deaktivieren
-        </button>
-      ) : (
-        // Aktivieren oeffnet Modal fuer Modus-Wahl
-        <button className="btn btn-sm btn-primary" onClick={() => setModal(true)}>
-          Aktivieren
-        </button>
-      )}
-      {modal && (
-        <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && setModal(false)}>
-          <div className="modal" style={{ maxWidth: 440 }}>
-            <div className="modal-header">
-              <h3>Pruefung aktivieren</h3>
-              <button className="btn btn-ghost btn-sm" onClick={() => setModal(false)}>x</button>
-            </div>
-            <div className="form-group">
-              <label>Aktivierungsmodus</label>
-              <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-                <button type="button" className={`btn btn-sm ${modus === 'manuell' ? 'btn-primary' : 'btn-secondary'}`}
-                  onClick={() => setModus('manuell')}>Sofort aktiv</button>
-                <button type="button" className={`btn btn-sm ${modus === 'zeitraum' ? 'btn-primary' : 'btn-secondary'}`}
-                  onClick={() => setModus('zeitraum')}>Mit Zeitraum</button>
-              </div>
-            </div>
-            {modus === 'manuell' ? (
-              <div className="alert alert-info" style={{ fontSize: 13 }}>
-                Pruefung wird sofort aktiviert — ohne Zeitbegrenzung.
-              </div>
-            ) : (
-              <>
-                <div className="form-group">
-                  <label>Aktiv von (optional)</label>
-                  <input type="datetime-local" value={von} onChange={e => setVon(e.target.value)} />
-                </div>
-                <div className="form-group">
-                  <label>Aktiv bis (optional)</label>
-                  <input type="datetime-local" value={bis} onChange={e => setBis(e.target.value)} />
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--gray-400)' }}>
-                  Leer lassen = kein Limit in diese Richtung
-                </div>
-              </>
-            )}
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
-              <button className="btn btn-secondary" onClick={() => setModal(false)}>Abbrechen</button>
-              <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
-                {saving ? 'Speichern...' : 'Speichern'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </>
-  )
+  function stoppen() {
+    recRef.current?.stop()
+    setHoert(false)
+  }
+
+  return { hoert, starten, stoppen }
 }
 
-function WachenToggle({ pruefung, onToggle }) {
-  const [modal, setModal] = useState(false)
-  const [wehren, setWehren] = useState([])
-  const [auswahl, setAuswahl] = useState(pruefung.sichtbar_fuer_wehren ?? null)
-  const [modus, setModus] = useState(pruefung.sichtbar_fuer_wehren ? 'ausgewaehlte' : 'alle')
-  const [saving, setSaving] = useState(false)
+// ─── Freitext Input mit Mikrofon ─────────────────────────────────────────────
 
-  const { profile: myProfile } = useAuth()
-  const nurEigeneWache = myProfile?.rolle === 'wehrleiter'
-
-  async function oeffnen() {
-    let wehrQuery = supabase.from('wehren').select('id,name').order('name')
-    // Wehrleiter darf nur eigene Wache auswaehlen
-    if (nurEigeneWache && myProfile?.wehr_id) {
-      wehrQuery = wehrQuery.eq('id', myProfile.wehr_id)
-    }
-    const { data } = await wehrQuery
-    setWehren(data ?? [])
-
-    if (nurEigeneWache && myProfile?.wehr_id) {
-      // Checkbox zeigen: gecheckt wenn null (alle duerfen) ODER eigene Wache explizit enthalten
-      const istEnthalten = pruefung.sichtbar_fuer_wehren === null ||
-        (pruefung.sichtbar_fuer_wehren ?? []).includes(myProfile.wehr_id)
-      setAuswahl(istEnthalten ? [myProfile.wehr_id] : [])
-      setModus('ausgewaehlte')
-    } else {
-      setAuswahl(pruefung.sichtbar_fuer_wehren ?? [])
-      setModus(pruefung.sichtbar_fuer_wehren ? 'ausgewaehlte' : 'alle')
-    }
-    setModal(true)
-  }
-
-  function toggleWehr(id) {
-    setAuswahl(a => (a ?? []).includes(id) ? (a ?? []).filter(x => x !== id) : [...(a ?? []), id])
-  }
-
-  async function handleSave() {
-    setSaving(true)
-    let neueWehren
-    if (modus === 'alle') {
-      neueWehren = null  // null = alle Wachen sehen die Pruefung
-    } else if (nurEigeneWache && myProfile?.wehr_id) {
-      // Wehrleiter: nur eigene Wache ein-/ausschalten, andere unberuehrt lassen
-      const istChecked = (auswahl ?? []).includes(myProfile.wehr_id)
-      const aktuelle = pruefung.sichtbar_fuer_wehren  // null oder Array
-      if (istChecked) {
-        // Eigene Wache eintragen
-        neueWehren = aktuelle === null ? null : [...new Set([...aktuelle, myProfile.wehr_id])]
-      } else {
-        // Eigene Wache entfernen
-        if (aktuelle === null) {
-          // War 'alle' → alle Wachen laden und eigene herausnehmen
-          const { data: alleWehren } = await supabase.from('wehren').select('id')
-          neueWehren = (alleWehren ?? []).map(w => w.id).filter(id => id !== myProfile.wehr_id)
-        } else {
-          neueWehren = aktuelle.filter(id => id !== myProfile.wehr_id)
-        }
-      }
-    } else {
-      // Admin/GBM: leere Auswahl = [] (nicht null!), damit keine Wache sieht die Pruefung
-      neueWehren = auswahl?.length > 0 ? auswahl : []
-    }
-    await supabase.from('pruefungen').update({
-      sichtbar_fuer_wehren: neueWehren
-    }).eq('id', pruefung.id)
-    setModal(false)
-    setSaving(false)
-    onToggle()
-  }
+function FreitextEingabe({ value, onChange, disabled }) {
+  const { hoert, starten, stoppen } = useSpeechRecognition((text) => {
+    onChange(value ? value + ' ' + text : text)
+  })
 
   return (
-    <>
-      <button className="btn btn-sm btn-secondary" onClick={oeffnen} title="Sichtbarkeit fuer Wachen einstellen">
-        🏠 Wachen
+    <div style={{ position: 'relative' }}>
+      <textarea
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        disabled={disabled}
+        placeholder="Antwort eingeben..."
+        rows={4}
+        style={{ width: '100%', paddingRight: 48, resize: 'vertical', boxSizing: 'border-box' }}
+      />
+      <button
+        type="button"
+        onClick={hoert ? stoppen : starten}
+        disabled={disabled}
+        title={hoert ? 'Aufnahme stoppen' : 'Antwort sprechen'}
+        style={{
+          position: 'absolute', right: 10, top: 10,
+          width: 34, height: 34, borderRadius: '50%', border: 'none', cursor: disabled ? 'not-allowed' : 'pointer',
+          background: hoert ? 'var(--red)' : 'var(--gray-200)',
+          color: hoert ? 'white' : 'var(--gray-600)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+          animation: hoert ? 'pulse 1s infinite' : 'none',
+        }}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+          <line x1="12" y1="19" x2="12" y2="23" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+          <line x1="8" y1="23" x2="16" y2="23" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+        </svg>
       </button>
-      {modal && (
-        <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && setModal(false)}>
-          <div className="modal" style={{ maxWidth: 480 }}>
-            <div className="modal-header">
-              <h3>Sichtbarkeit: {pruefung.titel}</h3>
-              <button className="btn btn-ghost btn-sm" onClick={() => setModal(false)}>x</button>
-            </div>
-            <div className="form-group">
-              <label>Pruefung sichtbar fuer</label>
-              {nurEigeneWache ? (
-                <div className="alert alert-info" style={{ marginTop: 6, fontSize: 13 }}>
-                  Als Wehrleiter koennen Sie Pruefungen nur fuer Ihre eigene Wache freigeben.
-                </div>
-              ) : (
-                <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-                  <button type="button" className={`btn btn-sm ${modus === 'alle' ? 'btn-primary' : 'btn-secondary'}`}
-                    onClick={() => setModus('alle')}>Alle Wachen</button>
-                  <button type="button" className={`btn btn-sm ${modus === 'ausgewaehlte' ? 'btn-primary' : 'btn-secondary'}`}
-                    onClick={() => setModus('ausgewaehlte')}>Nur bestimmte</button>
-                </div>
-              )}
-            </div>
-            {modus === 'ausgewaehlte' && (
-              <div className="form-group">
-                <label>Wachen auswaehlen</label>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 }}>
-                  {wehren.map(w => {
-                    const aktiv = (auswahl ?? []).includes(w.id)
-                    return (
-                      <label key={w.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 8, border: `1px solid ${aktiv ? 'var(--red)' : 'var(--gray-200)'}`, cursor: 'pointer', background: aktiv ? 'var(--red-pale)' : 'white' }}>
-                        <input type="checkbox" checked={aktiv} onChange={() => toggleWehr(w.id)} style={{ width: 'auto' }} />
-                        <span style={{ fontWeight: aktiv ? 500 : 400, color: aktiv ? 'var(--red-dark)' : 'var(--gray-700)' }}>{w.name}</span>
-                      </label>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
-              <button className="btn btn-secondary" onClick={() => setModal(false)}>Abbrechen</button>
-              <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
-                {saving ? 'Speichern...' : 'Speichern'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </>
+    </div>
   )
 }
 
-function ErgebnisDetail({ pruefung, ergebnis, onBack, istNachAbgabe, kameradName }) {
+// ─── Feedback-Anzeige ────────────────────────────────────────────────────────
+
+function FeedbackBox({ feedback }) {
+  const p = feedback.punkte ?? 0
+  const farbe = p === 1 ? '#1E8449' : p === 0.5 ? '#B45309' : 'var(--red-dark)'
+  const fbBg = p === 1 ? '#EAFAF1' : p === 0.5 ? '#FFFBEB' : 'var(--red-pale)'
+  const fbBorder = p === 1 ? '#1E8449' : p === 0.5 ? '#FCD34D' : 'var(--red)'
+  const icon = p === 1 ? '✅' : p === 0.5 ? '🟡' : '❌'
+  const label = p === 1 ? 'Richtig!' : p === 0.5 ? 'Teilweise richtig' : 'Falsch'
+  return (
+    <div className="card" style={{ marginBottom: 16, borderLeft: `4px solid ${fbBorder}`, background: fbBg }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: feedback.begruendung || feedback.musterloesung ? 10 : 0 }}>
+        <span style={{ fontSize: 24 }}>{icon}</span>
+        <span style={{ fontWeight: 600, color: farbe }}>{label}</span>
+      </div>
+      {feedback.begruendung && (
+        <p style={{ fontSize: 13, color: 'var(--gray-600)', marginBottom: feedback.musterloesung ? 8 : 0 }}>{feedback.begruendung}</p>
+      )}
+      {feedback.musterloesung && (
+        <div style={{ marginTop: 8, padding: '10px 14px', borderRadius: 8, background: 'rgba(255,255,255,0.6)', border: '1px solid rgba(0,0,0,0.08)' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--gray-500)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Musterlösung</div>
+          <p style={{ fontSize: 13, color: 'var(--gray-700)', lineHeight: 1.5 }}>{feedback.musterloesung}</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── KI-Bewertung aufrufen ───────────────────────────────────────────────────
+
+async function bewerteFreitext(frage_text, musterloesung, antwort) {
+  const { data: { session } } = await supabase.auth.getSession()
+  const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/bewerte-freitext-antwort`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${session?.access_token}`,
+    },
+    body: JSON.stringify({ frage_text, musterloesung, antwort }),
+  })
+  if (!res.ok) throw new Error('Bewertung fehlgeschlagen')
+  return await res.json()
+}
+
+// ─── PruefungAblegen ─────────────────────────────────────────────────────────
+
+function PruefungAblegen({ pruefung, profile, onBack }) {
   const [fragen, setFragen] = useState([])
   const [loading, setLoading] = useState(true)
+  // Sofortfeedback-Modus
+  const [currentIndex, setCurrentIndex] = useState(0)
+  const [freitextEingabe, setFreitextEingabe] = useState('')
+  const [beantwortet, setBeantwortet] = useState({}) // frageId -> { richtig, begruendung, text, musterloesung }
+  const [bewertungLaeuft, setBewertungLaeuft] = useState(false)
+  const [bewertungFehler, setBewertungFehler] = useState(false)
+  // Klassischer Modus
+  const [antworten, setAntworten] = useState({})
+  // Ergebnis
+  const [submitted, setSubmitted] = useState(false)
+  const [ergebnis, setErgebnis] = useState(null)
+  const [abgebenLaeuft, setAbgebenLaeuft] = useState(false)
+
+  const sofortfeedback = !!pruefung.sofortfeedback
 
   useEffect(() => {
+    supabase.from('fragen').select('*').eq('pruefung_id', pruefung.id).order('reihenfolge').then(({ data }) => {
+      const f = (data ?? []).map(f => ({
+        ...f,
+        antworten: typeof f.antworten === 'string' ? JSON.parse(f.antworten) : (f.antworten ?? [])
+      }))
+      setFragen(f)
+      setLoading(false)
+    })
+  }, [])
+
+  // ── Punkte berechnen ──────────────────────────────────────────────────────
+
+  function berechnePunkte(fragenListe, antwortenMap, beantwortetMap) {
+    let richtig = 0, gesamt = 0
+    fragenListe.forEach(f => {
+      gesamt += f.punkte
+      if (f.typ === 'freitext') {
+        const p = beantwortetMap[f.id]?.punkte ?? 0
+        richtig += f.punkte * p
+      } else {
+        const auswahl = antwortenMap[f.id]
+        if (!auswahl || (Array.isArray(auswahl) && auswahl.length === 0)) return
+        const richtigeAntworten = f.antworten.filter(a => a.richtig).map(a => a.text)
+        if (f.typ === 'mehrfachauswahl') {
+          const auswahlArr = Array.isArray(auswahl) ? auswahl : [auswahl]
+          if (richtigeAntworten.every(r => auswahlArr.includes(r)) && auswahlArr.every(a => richtigeAntworten.includes(a))) richtig += f.punkte
+        } else {
+          if (richtigeAntworten.includes(auswahl)) richtig += f.punkte
+        }
+      }
+    })
+    return { richtig, gesamt }
+  }
+
+  // ── Speichern ─────────────────────────────────────────────────────────────
+
+  async function speichereErgebnis(fragenListe, antwortenMap, beantwortetMap) {
+    const { richtig, gesamt } = berechnePunkte(fragenListe, antwortenMap, beantwortetMap)
+    const bestanden = gesamt > 0 && (richtig / gesamt * 100) >= pruefung.bestehens_prozent
+
+    // antworten_detail zusammenbauen
+    const detail = {}
+    fragenListe.forEach(f => {
+      if (f.typ === 'freitext') {
+        detail[f.id] = { text: beantwortetMap[f.id]?.text ?? '', punkte: beantwortetMap[f.id]?.punkte ?? 0 }
+      } else {
+        detail[f.id] = antwortenMap[f.id] ?? null
+      }
+    })
+
+    const { count: anzahlVersuche } = await supabase
+      .from('pruefungs_ergebnisse').select('*', { count: 'exact', head: true })
+      .eq('kamerad_id', profile.id).eq('pruefung_id', pruefung.id)
+
+    await supabase.from('pruefungs_ergebnisse').insert({
+      kamerad_id: profile.id,
+      pruefung_id: pruefung.id,
+      punkte_erreicht: richtig,
+      punkte_gesamt: gesamt,
+      bestanden,
+      antworten_detail: detail,
+      versuch: (anzahlVersuche ?? 0) + 1,
+    })
+
+    const res = { punkte_erreicht: richtig, punkte_gesamt: gesamt, bestanden, prozent: gesamt > 0 ? Math.round(richtig / gesamt * 100) : 0, abgelegt_am: new Date().toISOString(), antworten_detail: detail }
+    setErgebnis(res)
+    setSubmitted(true)
+  }
+
+  // ── Sofortfeedback: Frage beantworten ────────────────────────────────────
+
+  async function handleSofortAntwort() {
+    const f = fragen[currentIndex]
+    if (f.typ === 'freitext') {
+      if (!freitextEingabe.trim()) return
+      setBewertungLaeuft(true)
+      setBewertungFehler(false)
+      try {
+        const result = await bewerteFreitext(f.frage_text, f.musterloesung, freitextEingabe)
+        setBeantwortet(b => ({ ...b, [f.id]: { punkte: result.punkte, begruendung: result.begruendung, text: freitextEingabe, musterloesung: f.musterloesung } }))
+      } catch {
+        setBewertungFehler(true)
+      } finally {
+        setBewertungLaeuft(false)
+      }
+    } else {
+      const auswahl = antworten[f.id]
+      if (!auswahl || (Array.isArray(auswahl) && auswahl.length === 0)) return
+      const richtigeAntworten = f.antworten.filter(a => a.richtig).map(a => a.text)
+      let istRichtig = false
+      if (f.typ === 'mehrfachauswahl') {
+        const auswahlArr = Array.isArray(auswahl) ? auswahl : [auswahl]
+        istRichtig = richtigeAntworten.every(r => auswahlArr.includes(r)) && auswahlArr.every(a => richtigeAntworten.includes(a))
+      } else {
+        istRichtig = richtigeAntworten.includes(auswahl)
+      }
+      setBeantwortet(b => ({ ...b, [f.id]: { richtig: istRichtig, richtigeAntworten } }))
+    }
+  }
+
+  async function handleNaechste() {
+    if (currentIndex < fragen.length - 1) {
+      setCurrentIndex(i => i + 1)
+      setFreitextEingabe('')
+      setBewertungFehler(false)
+    } else {
+      // Letzte Frage — Ergebnis speichern
+      await speichereErgebnis(fragen, antworten, beantwortet)
+    }
+  }
+
+  // ── Klassisch: Abgabe ────────────────────────────────────────────────────
+
+  async function handleKlassischAbgabe() {
+    setAbgebenLaeuft(true)
+    // Freitext-Fragen evaluieren
+    const neuesBeantwortet = { ...beantwortet }
+    for (const f of fragen) {
+      if (f.typ === 'freitext') {
+        const text = antworten[f.id] ?? ''
+        if (text.trim()) {
+          try {
+            const result = await bewerteFreitext(f.frage_text, f.musterloesung, text)
+            neuesBeantwortet[f.id] = { punkte: result.punkte, begruendung: result.begruendung, text, musterloesung: f.musterloesung }
+          } catch {
+            neuesBeantwortet[f.id] = { punkte: 0, begruendung: 'Bewertung fehlgeschlagen', text, musterloesung: f.musterloesung }
+          }
+        } else {
+          neuesBeantwortet[f.id] = { punkte: 0, begruendung: 'Keine Antwort', text: '', musterloesung: f.musterloesung }
+        }
+      }
+    }
+    setBeantwortet(neuesBeantwortet)
+    await speichereErgebnis(fragen, antworten, neuesBeantwortet)
+    setAbgebenLaeuft(false)
+  }
+
+  function setAntwort(frageId, value, typ) {
+    if (typ === 'mehrfachauswahl') {
+      setAntworten(a => {
+        const aktuelle = Array.isArray(a[frageId]) ? a[frageId] : []
+        const neu = aktuelle.includes(value) ? aktuelle.filter(x => x !== value) : [...aktuelle, value]
+        return { ...a, [frageId]: neu }
+      })
+    } else if (typ === 'freitext') {
+      setAntworten(a => ({ ...a, [frageId]: value }))
+    } else {
+      setAntworten(a => ({ ...a, [frageId]: value }))
+    }
+  }
+
+  if (loading) return <div className="loading-page"><div className="spinner"></div></div>
+
+  if (submitted && ergebnis) return (
+    <div>
+      <div className="page-header">
+        <h1>Ergebnis</h1>
+        <button className="btn btn-secondary" onClick={onBack}>Zurueck zur Uebersicht</button>
+      </div>
+      <div className="card" style={{ textAlign: 'center', padding: 48, marginBottom: 20 }}>
+        <div style={{ fontSize: 56, fontWeight: 700, color: ergebnis.bestanden ? '#1E8449' : 'var(--red)', marginBottom: 12 }}>{ergebnis.prozent}%</div>
+        <div style={{ fontSize: 22, fontWeight: 600, marginBottom: 8, color: 'var(--gray-800)' }}>{ergebnis.bestanden ? 'Bestanden!' : 'Nicht bestanden'}</div>
+        <div style={{ color: 'var(--gray-400)' }}>{ergebnis.punkte_erreicht} von {ergebnis.punkte_gesamt} Punkten · Grenze: {pruefung.bestehens_prozent}%</div>
+      </div>
+      <ErgebnisDetail pruefung={pruefung} ergebnis={{ ...ergebnis, _beantwortet: beantwortet }} fragen={fragen} onBack={onBack} istNachAbgabe />
+    </div>
+  )
+
+  // ── Sofortfeedback-Modus ─────────────────────────────────────────────────
+
+  if (sofortfeedback) {
+    const f = fragen[currentIndex]
+    if (!f) return null
+    const istBeantwortet = !!beantwortet[f.id]
+    const feedback = beantwortet[f.id]
+    const auswahl = antworten[f.id]
+    const auswahlArr = Array.isArray(auswahl) ? auswahl : (auswahl ? [auswahl] : [])
+    const hatAntwort = f.typ === 'freitext' ? freitextEingabe.trim().length > 0 : auswahlArr.length > 0
+    const istLetzte = currentIndex === fragen.length - 1
+
+    return (
+      <div>
+        <div className="page-header">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <button className="btn btn-ghost btn-sm" onClick={onBack}>← Zurueck</button>
+            <div>
+              <h1>{pruefung.titel}</h1>
+              <p style={{ fontSize: 13, marginTop: 2, color: 'var(--gray-400)' }}>Frage {currentIndex + 1} von {fragen.length}</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Fortschrittsbalken */}
+        <div style={{ height: 4, background: 'var(--gray-200)', borderRadius: 2, marginBottom: 20, overflow: 'hidden' }}>
+          <div style={{ height: '100%', background: 'var(--red)', borderRadius: 2, width: `${((currentIndex + (istBeantwortet ? 1 : 0)) / fragen.length) * 100}%`, transition: 'width 300ms' }} />
+        </div>
+
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 12, color: 'var(--gray-400)', marginBottom: 8, fontWeight: 600 }}>
+            FRAGE {currentIndex + 1}/{fragen.length}
+            {f.typ === 'freitext' && <span style={{ marginLeft: 8, color: 'var(--gray-400)', fontWeight: 400 }}>· KI-bewertet</span>}
+          </div>
+          <div style={{ fontWeight: 500, fontSize: 16, lineHeight: 1.5, color: 'var(--gray-700)', marginBottom: 20 }}>{f.frage_text}</div>
+
+          {f.typ === 'freitext' ? (
+            <FreitextEingabe value={freitextEingabe} onChange={setFreitextEingabe} disabled={istBeantwortet} />
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {(f.antworten ?? []).map((a, ai) => {
+                const isSelected = f.typ === 'mehrfachauswahl' ? auswahlArr.includes(a.text) : auswahl === a.text
+                let bg = isSelected ? 'var(--red-pale)' : 'var(--white)'
+                let border = isSelected ? 'var(--red)' : 'var(--gray-200)'
+
+                // Nach Beantwortung Farben zeigen
+                if (istBeantwortet && f.typ !== 'freitext') {
+                  if (a.richtig && isSelected) { bg = '#EAFAF1'; border = '#A9DFBF' }
+                  else if (a.richtig && !isSelected) { bg = '#FFFBEB'; border = '#FCD34D' }
+                  else if (!a.richtig && isSelected) { bg = 'var(--red-pale)'; border = 'var(--red)' }
+                  else { bg = 'var(--gray-50)'; border = 'var(--gray-200)' }
+                }
+
+                return (
+                  <label key={ai} onClick={() => !istBeantwortet && setAntwort(f.id, a.text, f.typ)} style={{
+                    display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderRadius: 10,
+                    cursor: istBeantwortet ? 'default' : 'pointer', fontSize: 14,
+                    border: `2px solid ${border}`, background: bg, transition: 'all 150ms', userSelect: 'none',
+                  }}>
+                    <div style={{
+                      width: 22, height: 22, flexShrink: 0,
+                      borderRadius: f.typ === 'mehrfachauswahl' ? '4px' : '50%',
+                      border: `2px solid ${isSelected ? 'var(--red)' : 'var(--gray-300)'}`,
+                      background: isSelected ? 'var(--red)' : 'transparent',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      {isSelected && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20,6 9,17 4,12"/></svg>}
+                    </div>
+                    <span style={{ flex: 1, color: 'var(--gray-700)', fontWeight: isSelected ? 500 : 400 }}>{a.text}</span>
+                    {istBeantwortet && a.richtig && <span style={{ fontSize: 12, color: '#1E8449', fontWeight: 600 }}>✓ Richtig</span>}
+                  </label>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Feedback nach Beantwortung */}
+        {istBeantwortet && <FeedbackBox feedback={feedback} />}
+
+        {/* Fehler bei KI-Bewertung */}
+        {bewertungFehler && (
+          <div className="alert alert-error" style={{ marginBottom: 16 }}>
+            Bewertung fehlgeschlagen.
+            <button className="btn btn-sm btn-secondary" style={{ marginLeft: 12 }} onClick={() => { setBewertungFehler(false); handleSofortAntwort() }}>
+              Nochmal versuchen
+            </button>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+          {!istBeantwortet ? (
+            <button
+              className="btn btn-primary"
+              onClick={handleSofortAntwort}
+              disabled={!hatAntwort || bewertungLaeuft}
+            >
+              {bewertungLaeuft ? (
+                <><span className="spinner" style={{ width: 14, height: 14, marginRight: 8 }} />Wird bewertet...</>
+              ) : 'Antworten'}
+            </button>
+          ) : (
+            <button className="btn btn-primary" onClick={handleNaechste}>
+              {istLetzte ? 'Ergebnis anzeigen' : 'Nächste Frage →'}
+            </button>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // ── Klassischer Modus (alle Fragen auf einmal) ───────────────────────────
+
+  return (
+    <div>
+      <div className="page-header">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button className="btn btn-ghost btn-sm" onClick={onBack}>← Zurueck</button>
+          <h1>{pruefung.titel}</h1>
+        </div>
+        <button className="btn btn-primary" onClick={handleKlassischAbgabe} disabled={abgebenLaeuft}>
+          {abgebenLaeuft ? <><span className="spinner" style={{ width: 14, height: 14, marginRight: 8 }} />Wird ausgewertet...</> : 'Abgeben'}
+        </button>
+      </div>
+      {fragen.map((f, fi) => {
+        let antwortListe = []
+        try {
+          if (Array.isArray(f.antworten)) antwortListe = f.antworten
+          else if (typeof f.antworten === 'string') antwortListe = JSON.parse(f.antworten)
+        } catch(e) { antwortListe = [] }
+
+        const istMehrfach = f.typ === 'mehrfachauswahl'
+        const auswahlArr = Array.isArray(antworten[f.id]) ? antworten[f.id] : (antworten[f.id] ? [antworten[f.id]] : [])
+
+        return (
+          <div key={f.id} className="card" style={{ marginBottom: 10, padding: '14px' }}>
+            <div style={{ fontWeight: 500, marginBottom: 14, fontSize: 15, lineHeight: 1.4, color: 'var(--gray-700)' }}>
+              <span style={{ color: 'var(--red)', marginRight: 6, fontSize: 12, fontWeight: 600 }}>{fi + 1}/{fragen.length}</span>
+              {f.frage_text}
+              {istMehrfach && <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--gray-400)', fontWeight: 400 }}>(Mehrere Antworten moeglich)</span>}
+              {f.typ === 'freitext' && <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--gray-400)', fontWeight: 400 }}>(Freitext · KI-bewertet)</span>}
+            </div>
+            {f.typ === 'freitext' ? (
+              <FreitextEingabe
+                value={antworten[f.id] ?? ''}
+                onChange={val => setAntwort(f.id, val, 'freitext')}
+                disabled={abgebenLaeuft}
+              />
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {antwortListe.map((a, ai) => {
+                  const isSelected = istMehrfach ? auswahlArr.includes(a.text) : antworten[f.id] === a.text
+                  return (
+                    <label key={ai} onClick={() => !abgebenLaeuft && setAntwort(f.id, a.text, f.typ)} style={{
+                      display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderRadius: 10,
+                      cursor: abgebenLaeuft ? 'not-allowed' : 'pointer', fontSize: 14,
+                      border: `2px solid ${isSelected ? 'var(--red)' : 'var(--gray-200)'}`,
+                      background: isSelected ? 'var(--red-pale)' : 'var(--white)', transition: 'all 150ms', userSelect: 'none',
+                    }}>
+                      <div style={{
+                        width: 22, height: 22, flexShrink: 0,
+                        borderRadius: istMehrfach ? '4px' : '50%',
+                        border: `2px solid ${isSelected ? 'var(--red)' : 'var(--gray-300)'}`,
+                        background: isSelected ? 'var(--red)' : 'transparent',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        {isSelected && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20,6 9,17 4,12"/></svg>}
+                      </div>
+                      <span style={{ color: isSelected ? 'var(--red-dark)' : 'var(--gray-700)', fontWeight: isSelected ? 500 : 400 }}>{a.text}</span>
+                    </label>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )
+      })}
+      <div style={{ marginTop: 16 }}>
+        <button className="btn btn-primary btn-lg" style={{ width: '100%', justifyContent: 'center' }} onClick={handleKlassischAbgabe} disabled={abgebenLaeuft}>
+          {abgebenLaeuft ? 'Wird ausgewertet...' : 'Pruefung abgeben'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── ErgebnisDetail ───────────────────────────────────────────────────────────
+
+function ErgebnisDetail({ pruefung, ergebnis, fragen: fragenProp, onBack, istNachAbgabe, kameradName }) {
+  const [fragen, setFragen] = useState(fragenProp ?? [])
+  const [loading, setLoading] = useState(!fragenProp)
+
+  useEffect(() => {
+    if (fragenProp) return
     supabase.from('fragen').select('*').eq('pruefung_id', pruefung.id).order('reihenfolge').then(({ data }) => {
       setFragen(data ?? [])
       setLoading(false)
@@ -532,6 +797,7 @@ function ErgebnisDetail({ pruefung, ergebnis, onBack, istNachAbgabe, kameradName
   }, [])
 
   const antworten = ergebnis.antworten_detail ?? {}
+  const beantwortet = ergebnis._beantwortet ?? {}
   const prozent = ergebnis.punkte_gesamt > 0 ? Math.round(ergebnis.punkte_erreicht / ergebnis.punkte_gesamt * 100) : 0
 
   if (loading) return <div className="loading-page"><div className="spinner"></div></div>
@@ -548,7 +814,6 @@ function ErgebnisDetail({ pruefung, ergebnis, onBack, istNachAbgabe, kameradName
         </div>
       </div>
 
-      {/* Ergebnis-Banner */}
       <div className="card" style={{ marginBottom: 20, display: 'flex', alignItems: 'center', gap: 20, background: ergebnis.bestanden ? '#EAFAF1' : 'var(--red-pale)', border: `1px solid ${ergebnis.bestanden ? '#A9DFBF' : 'var(--red-light)'}` }}>
         <div style={{ fontSize: 48, fontWeight: 700, color: ergebnis.bestanden ? '#1E8449' : 'var(--red)', flexShrink: 0 }}>{prozent}%</div>
         <div>
@@ -558,16 +823,60 @@ function ErgebnisDetail({ pruefung, ergebnis, onBack, istNachAbgabe, kameradName
           <div style={{ fontSize: 13, color: 'var(--gray-500)', marginTop: 4 }}>
             {ergebnis.punkte_erreicht} von {ergebnis.punkte_gesamt} Punkten · Bestehensgrenze: {pruefung.bestehens_prozent}%
           </div>
-          <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 2 }}>
-            {ergebnis.abgelegt_am ? `Abgelegt am ${format(new Date(ergebnis.abgelegt_am), 'd. MMMM yyyy HH:mm', { locale: de })}` : ''}
-          </div>
+          {ergebnis.abgelegt_am && (
+            <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 2 }}>
+              Abgelegt am {format(new Date(ergebnis.abgelegt_am), 'd. MMMM yyyy HH:mm', { locale: de })}
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Fragen Durchsicht */}
       <h3 style={{ marginBottom: 12 }}>Fragen und Antworten</h3>
       {fragen.map((f, fi) => {
         const meineAntwort = antworten[f.id]
+
+        // Freitext-Frage
+        if (f.typ === 'freitext') {
+          const ft = beantwortet[f.id] ?? (typeof meineAntwort === 'object' ? meineAntwort : null)
+          const text = ft?.text ?? (typeof meineAntwort === 'string' ? meineAntwort : '')
+          const teilpunkte = ft?.punkte ?? 0
+          const nichtBeantwortet = !text
+          const borderCol = nichtBeantwortet ? 'var(--gray-300)' : teilpunkte === 1 ? '#1E8449' : teilpunkte === 0.5 ? '#FCD34D' : 'var(--red)'
+          const iconBg = nichtBeantwortet ? 'var(--gray-200)' : teilpunkte === 1 ? '#D5F5E3' : teilpunkte === 0.5 ? '#FEF3C7' : 'var(--red-light)'
+          const iconChar = nichtBeantwortet ? '?' : teilpunkte === 1 ? '✓' : teilpunkte === 0.5 ? '½' : '✗'
+
+          return (
+            <div key={f.id} className="card" style={{ marginBottom: 10, borderLeft: `3px solid ${borderCol}` }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10 }}>
+                <div style={{ width: 24, height: 24, borderRadius: '50%', flexShrink: 0, background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>
+                  {iconChar}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 12, color: 'var(--gray-400)', marginBottom: 4 }}>Frage {fi + 1} · Freitext</div>
+                  <div style={{ fontWeight: 500, color: 'var(--gray-700)', lineHeight: 1.4 }}>{f.frage_text}</div>
+                </div>
+              </div>
+              {text && (
+                <div style={{ padding: '10px 14px', borderRadius: 8, background: 'var(--gray-50)', border: '1px solid var(--gray-200)', marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--gray-400)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Antwort</div>
+                  <p style={{ fontSize: 13, color: 'var(--gray-700)', lineHeight: 1.5 }}>{text}</p>
+                </div>
+              )}
+              {f.musterloesung && (
+                <div style={{ padding: '10px 14px', borderRadius: 8, background: '#FFFBEB', border: '1px solid #FCD34D' }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: '#92400E', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Musterlösung</div>
+                  <p style={{ fontSize: 13, color: 'var(--gray-700)', lineHeight: 1.5 }}>{f.musterloesung}</p>
+                </div>
+              )}
+              {ft?.begruendung && (
+                <p style={{ fontSize: 12, color: 'var(--gray-500)', marginTop: 8, fontStyle: 'italic' }}>KI-Bewertung: {ft.begruendung}</p>
+              )}
+              {nichtBeantwortet && <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 8, fontStyle: 'italic' }}>Nicht beantwortet</div>}
+            </div>
+          )
+        }
+
+        // MC / Mehrfach / Wahr-Falsch
         const richtigeAntworten = (f.antworten ?? []).filter(a => a.richtig).map(a => a.text)
         const meineAntwortArr = Array.isArray(meineAntwort) ? meineAntwort : meineAntwort ? [meineAntwort] : []
         const istRichtig = meineAntwortArr.length > 0 &&
@@ -576,16 +885,9 @@ function ErgebnisDetail({ pruefung, ergebnis, onBack, istNachAbgabe, kameradName
         const nichtBeantwortet = meineAntwortArr.length === 0
 
         return (
-          <div key={f.id} className="card" style={{
-            marginBottom: 10,
-            borderLeft: `3px solid ${nichtBeantwortet ? 'var(--gray-300)' : istRichtig ? '#1E8449' : 'var(--red)'}`,
-          }}>
+          <div key={f.id} className="card" style={{ marginBottom: 10, borderLeft: `3px solid ${nichtBeantwortet ? 'var(--gray-300)' : istRichtig ? '#1E8449' : 'var(--red)'}` }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 12 }}>
-              <div style={{
-                width: 24, height: 24, borderRadius: '50%', flexShrink: 0,
-                background: nichtBeantwortet ? 'var(--gray-200)' : istRichtig ? '#D5F5E3' : 'var(--red-light)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12,
-              }}>
+              <div style={{ width: 24, height: 24, borderRadius: '50%', flexShrink: 0, background: nichtBeantwortet ? 'var(--gray-200)' : istRichtig ? '#D5F5E3' : 'var(--red-light)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>
                 {nichtBeantwortet ? '?' : istRichtig ? '✓' : '✗'}
               </div>
               <div style={{ flex: 1 }}>
@@ -593,47 +895,24 @@ function ErgebnisDetail({ pruefung, ergebnis, onBack, istNachAbgabe, kameradName
                 <div style={{ fontWeight: 500, color: 'var(--gray-700)', lineHeight: 1.4 }}>{f.frage_text}</div>
               </div>
             </div>
-
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {(f.antworten ?? []).map((a, ai) => {
                 const istMeineAntwort = Array.isArray(meineAntwort) ? meineAntwort.includes(a.text) : meineAntwort === a.text
                 const istRichtigeAntwort = a.richtig
-
-                // 4 Zustände klar unterscheiden
                 let bg, border, textColor, label, labelColor
-
-                if (istRichtigeAntwort && istMeineAntwort) {
-                  // ✅ Richtig angekreuzt
-                  bg = '#EAFAF1'; border = '#A9DFBF'; textColor = '#1E8449'
-                  label = '✓ Angekreuzt'; labelColor = '#1E8449'
-                } else if (istRichtigeAntwort && !istMeineAntwort) {
-                  // ⚠️ Richtig aber NICHT angekreuzt
-                  bg = '#FFFBEB'; border = '#FCD34D'; textColor = '#92400E'
-                  label = '⚠ Nicht angekreuzt'; labelColor = '#B45309'
-                } else if (!istRichtigeAntwort && istMeineAntwort) {
-                  // ✗ Falsch angekreuzt
-                  bg = 'var(--red-pale)'; border = 'var(--red-light)'; textColor = 'var(--red-dark)'
-                  label = '✗ Falsch angekreuzt'; labelColor = 'var(--red)'
-                } else {
-                  // Neutral
-                  bg = 'var(--gray-50)'; border = 'var(--gray-200)'; textColor = 'var(--gray-600)'
-                  label = null; labelColor = null
-                }
-
+                if (istRichtigeAntwort && istMeineAntwort) { bg = '#EAFAF1'; border = '#A9DFBF'; textColor = '#1E8449'; label = '✓ Angekreuzt'; labelColor = '#1E8449' }
+                else if (istRichtigeAntwort && !istMeineAntwort) { bg = '#FFFBEB'; border = '#FCD34D'; textColor = '#92400E'; label = '⚠ Nicht angekreuzt'; labelColor = '#B45309' }
+                else if (!istRichtigeAntwort && istMeineAntwort) { bg = 'var(--red-pale)'; border = 'var(--red-light)'; textColor = 'var(--red-dark)'; label = '✗ Falsch angekreuzt'; labelColor = 'var(--red)' }
+                else { bg = 'var(--gray-50)'; border = 'var(--gray-200)'; textColor = 'var(--gray-600)'; label = null; labelColor = null }
                 return (
                   <div key={ai} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 8, border: `1px solid ${border}`, background: bg }}>
                     <span style={{ fontSize: 13, fontWeight: 500, color: textColor, flex: 1 }}>{a.text}</span>
-                    {label && (
-                      <span style={{ fontSize: 11, color: labelColor, fontWeight: 600, flexShrink: 0 }}>{label}</span>
-                    )}
+                    {label && <span style={{ fontSize: 11, color: labelColor, fontWeight: 600, flexShrink: 0 }}>{label}</span>}
                   </div>
                 )
               })}
             </div>
-
-            {nichtBeantwortet && (
-              <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 8, fontStyle: 'italic' }}>Nicht beantwortet</div>
-            )}
+            {nichtBeantwortet && <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 8, fontStyle: 'italic' }}>Nicht beantwortet</div>}
           </div>
         )
       })}
@@ -641,130 +920,34 @@ function ErgebnisDetail({ pruefung, ergebnis, onBack, istNachAbgabe, kameradName
   )
 }
 
-function PruefungErstellen({ profile, onBack, importDaten }) {
-  const [form, setForm] = useState({
-    titel: importDaten?.titel ?? '',
-    beschreibung: importDaten?.beschreibung ?? '',
-    bestehens_prozent: importDaten?.bestehens_prozent ?? 70,
-  })
-  const [fragen, setFragen] = useState(
-    importDaten?.fragen
-      ? importDaten.fragen.map((f, i) => ({
-          id: 'imp_' + i, frage_text: f.frage_text ?? '',
-          typ: f.typ ?? 'multiple_choice',
-          antworten: f.antworten ?? [], punkte: f.punkte ?? 1, reihenfolge: i,
-        }))
-      : []
-  )
-  const [saving, setSaving] = useState(false)
-  const istImport = !!importDaten
+// ─── Fragen-Editor (gemeinsam für Erstellen + Bearbeiten) ────────────────────
 
-  function addFrage() {
-    setFragen(f => [...f, {
-      id: Date.now(), frage_text: '', typ: 'multiple_choice',
-      antworten: [{ text: '', richtig: false }, { text: '', richtig: false }, { text: '', richtig: false }, { text: '', richtig: false }],
-      punkte: 1, reihenfolge: f.length
-    }])
-  }
-
-  function updateFrage(id, field, value) { setFragen(fs => fs.map(f => f.id === id ? { ...f, [field]: value } : f)) }
-  function updateAntwort(frageId, idx, field, value) {
-    setFragen(fs => fs.map(f => {
-      if (f.id !== frageId) return f
-      const antworten = [...f.antworten]
-      antworten[idx] = { ...antworten[idx], [field]: value }
-      return { ...f, antworten }
-    }))
-  }
-
-  function toggleRichtig(frageId, idx) {
-    setFragen(fs => fs.map(f => {
-      if (f.id !== frageId) return f
-      const antworten = f.antworten.map((a, i) => {
-        if (f.typ === 'mehrfachauswahl') {
-          // Checkbox: nur diesen togglen
-          return i === idx ? { ...a, richtig: !a.richtig } : a
-        } else {
-          // Radio: nur diesen auf true, alle anderen auf false
-          return { ...a, richtig: i === idx }
-        }
-      })
-      return { ...f, antworten }
-    }))
-  }
-  function removeFrage(id) { setFragen(fs => fs.filter(f => f.id !== id)) }
-
-  async function handleSave() {
-    if (!form.titel || fragen.length === 0) return alert('Titel und mindestens eine Frage erforderlich')
-    setSaving(true)
-    const { data: pruefung, error: pruefungError } = await supabase.from('pruefungen').insert({
-      ...form, erstellt_von: profile.id, wehr_id: profile.wehr_id, aktiv: false
-    }).select().single()
-    if (pruefungError) { alert('Fehler beim Anlegen der Pruefung: ' + pruefungError.message); setSaving(false); return }
-    if (pruefung) {
-      // Nur erlaubte Felder senden - keine temporaeren IDs oder unbekannte Felder
-      const fragenPayload = fragen.map((f, i) => ({
-        pruefung_id: pruefung.id,
-        frage_text: f.frage_text,
-        typ: f.typ,
-        antworten: f.antworten,
-        punkte: f.punkte ?? 1,
-        reihenfolge: i,
-      }))
-      const { error: fragenError } = await supabase.from('fragen').insert(fragenPayload)
-      if (fragenError) { alert('Fehler beim Speichern der Fragen: ' + fragenError.message); setSaving(false); return }
-    }
-    setSaving(false)
-    onBack()
-  }
-
+function FrageEditor({ frage, fi, onUpdate, onUpdateAntwort, onToggleRichtig, onRemove }) {
   return (
-    <div>
-      <div className="page-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <button className="btn btn-ghost btn-sm" onClick={onBack}>← Zurueck</button>
-          <h1>{istImport ? 'Pruefung importieren' : 'Neue Pruefung'}</h1>
-        </div>
-        <button className="btn btn-primary" onClick={handleSave} disabled={saving}>{saving ? 'Speichern...' : 'Pruefung speichern'}</button>
+    <div className="card" style={{ marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--gray-400)' }}>Frage {fi + 1}</span>
+        <select value={frage.typ} onChange={e => onUpdate(frage.id, 'typ', e.target.value)} style={{ maxWidth: 260 }}>
+          <option value="multiple_choice">Multiple Choice (1 richtig)</option>
+          <option value="mehrfachauswahl">Mehrfachauswahl (mehrere richtig)</option>
+          <option value="wahr_falsch">Wahr / Falsch</option>
+          <option value="freitext">Freitext (KI-bewertet)</option>
+        </select>
+        <button className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto', color: 'var(--red)' }} onClick={() => onRemove(frage.id)}>Entfernen</button>
       </div>
-      {istImport && <div className="alert alert-success" style={{ marginBottom: 16 }}>{fragen.length} Fragen aus JSON importiert</div>}
-      <div className="card" style={{ marginBottom: 20 }}>
-        <h3 style={{ marginBottom: 16 }}>Grunddaten</h3>
-        <div className="form-group">
-          <label>Titel</label>
-          <input value={form.titel} onChange={e => setForm(f => ({ ...f, titel: e.target.value }))} placeholder="z.B. Atemschutzgeraetetraeger" />
-        </div>
-        <div className="form-group">
-          <label>Beschreibung (optional)</label>
-          <textarea value={form.beschreibung} onChange={e => setForm(f => ({ ...f, beschreibung: e.target.value }))} rows={2} />
-        </div>
-        <div className="form-group">
-          <label>Bestehensgrenze (%)</label>
-          <input type="number" min="1" max="100" value={form.bestehens_prozent} onChange={e => setForm(f => ({ ...f, bestehens_prozent: parseInt(e.target.value) }))} style={{ maxWidth: 100 }} />
-        </div>
+      <div className="form-group">
+        <label>Fragetext</label>
+        <input value={frage.frage_text} onChange={e => onUpdate(frage.id, 'frage_text', e.target.value)} placeholder="Fragetext eingeben..." />
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-        <h3>Fragen ({fragen.length})</h3>
-        <button className="btn btn-secondary btn-sm" onClick={addFrage}>+ Frage hinzufuegen</button>
-      </div>
-      {fragen.length === 0 && <div className="card" style={{ textAlign: 'center', color: 'var(--gray-400)', padding: 32 }}><p>Noch keine Fragen</p></div>}
-      {fragen.map((frage, fi) => (
-        <div key={frage.id} className="card" style={{ marginBottom: 12 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--gray-400)' }}>Frage {fi + 1}</span>
-            <select value={frage.typ} onChange={e => updateFrage(frage.id, 'typ', e.target.value)} style={{ maxWidth: 220 }}>
-              <option value="multiple_choice">Multiple Choice (1 richtig)</option>
-              <option value="mehrfachauswahl">Mehrfachauswahl (mehrere richtig)</option>
-              <option value="wahr_falsch">Wahr / Falsch</option>
-            </select>
-            <button className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto', color: 'var(--red)' }} onClick={() => removeFrage(frage.id)}>Entfernen</button>
-          </div>
-          <div className="form-group">
-            <label>Fragetext</label>
-            <input value={frage.frage_text} onChange={e => updateFrage(frage.id, 'frage_text', e.target.value)} placeholder="Fragetext eingeben..." />
-          </div>
+      {frage.typ === 'freitext' ? (
+        <div className="form-group">
+          <label>Musterlösung <span style={{ fontWeight: 400, color: 'var(--gray-400)', fontSize: 12 }}>(KI bewertet anhand dieser Lösung)</span></label>
+          <textarea value={frage.musterloesung ?? ''} onChange={e => onUpdate(frage.id, 'musterloesung', e.target.value)} rows={3} placeholder="Vollständige Musterlösung eingeben..." />
+        </div>
+      ) : (
+        <>
           <label style={{ marginBottom: 8, display: 'block' }}>
-            Antworten {frage.typ === 'mehrfachauswahl' ? '(Checkboxen: mehrere richtig moeglich)' : '(Radio: eine richtige Antwort)'}
+            Antworten {frage.typ === 'mehrfachauswahl' ? '(Checkboxen: mehrere richtig möglich)' : '(Radio: eine richtige Antwort)'}
           </label>
           {(frage.typ === 'wahr_falsch'
             ? [{ text: 'Wahr', richtig: frage.antworten[0]?.richtig ?? false }, { text: 'Falsch', richtig: frage.antworten[1]?.richtig ?? false }]
@@ -774,167 +957,220 @@ function PruefungErstellen({ profile, onBack, importDaten }) {
               <input
                 type={frage.typ === 'mehrfachauswahl' ? 'checkbox' : 'radio'}
                 checked={a.richtig ?? false}
-                onChange={() => toggleRichtig(frage.id, ai)}
+                onChange={() => onToggleRichtig(frage.id, ai)}
                 style={{ width: 'auto', flexShrink: 0 }}
                 name={frage.typ !== 'mehrfachauswahl' ? `frage-${frage.id}` : undefined}
               />
-              {frage.typ === 'wahr_falsch' ? <span style={{ fontSize: 14 }}>{a.text}</span> : <input value={a.text ?? ''} onChange={e => updateAntwort(frage.id, ai, 'text', e.target.value)} placeholder={`Antwort ${ai + 1}`} />}
+              {frage.typ === 'wahr_falsch'
+                ? <span style={{ fontSize: 14 }}>{a.text}</span>
+                : <input value={a.text ?? ''} onChange={e => onUpdateAntwort(frage.id, ai, 'text', e.target.value)} placeholder={`Antwort ${ai + 1}`} />
+              }
             </div>
           ))}
-        </div>
-      ))}
+        </>
+      )}
     </div>
   )
 }
 
-function PruefungAblegen({ pruefung, profile, onBack }) {
-  const [fragen, setFragen] = useState([])
-  const [antworten, setAntworten] = useState({})
-  const [loading, setLoading] = useState(true)
-  const [submitted, setSubmitted] = useState(false)
-  const [ergebnis, setErgebnis] = useState(null)
+function neueAntworten(typ) {
+  if (typ === 'freitext') return []
+  if (typ === 'wahr_falsch') return [{ text: 'Wahr', richtig: false }, { text: 'Falsch', richtig: false }]
+  return [{ text: '', richtig: false }, { text: '', richtig: false }, { text: '', richtig: false }, { text: '', richtig: false }]
+}
 
-  function setAntwort(frageId, value, typ) {
-    if (typ === 'mehrfachauswahl') {
-      setAntworten(a => {
-        const aktuelle = Array.isArray(a[frageId]) ? a[frageId] : []
-        const neu = aktuelle.includes(value)
-          ? aktuelle.filter(x => x !== value)
-          : [...aktuelle, value]
-        return { ...a, [frageId]: neu }
-      })
-    } else {
-      setAntworten(a => ({ ...a, [frageId]: value }))
-    }
-  }
+// ─── PruefungErstellen ────────────────────────────────────────────────────────
 
-  useEffect(() => {
-    supabase.from('fragen').select('*').eq('pruefung_id', pruefung.id).order('reihenfolge').then(({ data }) => {
-      const fragen = (data ?? []).map(f => ({
-        ...f,
-        antworten: typeof f.antworten === 'string' ? JSON.parse(f.antworten) : (f.antworten ?? [])
-      }))
-      setFragen(fragen)
-      setLoading(false)
-    })
-  }, [])
-
-  async function handleAbgabe() {
-    let richtig = 0, gesamt = 0
-    fragen.forEach(f => {
-      gesamt += f.punkte
-      const auswahl = antworten[f.id]
-      if (!auswahl || (Array.isArray(auswahl) && auswahl.length === 0)) return
-      const richtigeAntworten = f.antworten.filter(a => a.richtig).map(a => a.text)
-      if (f.typ === 'mehrfachauswahl') {
-        // Alle richtigen muessen ausgewaehlt sein, keine falschen
-        const auswahlArr = Array.isArray(auswahl) ? auswahl : [auswahl]
-        const alleRichtigenGewaehlt = richtigeAntworten.every(r => auswahlArr.includes(r))
-        const keineFalschenGewaehlt = auswahlArr.every(a => richtigeAntworten.includes(a))
-        if (alleRichtigenGewaehlt && keineFalschenGewaehlt) richtig += f.punkte
-      } else {
-        if (richtigeAntworten.includes(auswahl)) richtig += f.punkte
-      }
-    })
-    const bestanden = gesamt > 0 && (richtig / gesamt * 100) >= pruefung.bestehens_prozent
-    const res = { punkte_erreicht: richtig, punkte_gesamt: gesamt, bestanden, prozent: gesamt > 0 ? Math.round(richtig / gesamt * 100) : 0, abgelegt_am: new Date().toISOString(), antworten_detail: antworten }
-    // Versuch-Nummer ermitteln
-    const { count: anzahlVersuche } = await supabase
-      .from('pruefungs_ergebnisse')
-      .select('*', { count: 'exact', head: true })
-      .eq('kamerad_id', profile.id)
-      .eq('pruefung_id', pruefung.id)
-
-    await supabase.from('pruefungs_ergebnisse').insert({
-      kamerad_id: profile.id,
-      pruefung_id: pruefung.id,
-      punkte_erreicht: richtig,
-      punkte_gesamt: gesamt,
-      bestanden,
-      antworten_detail: antworten,
-      versuch: (anzahlVersuche ?? 0) + 1,
-    })
-    setErgebnis(res)
-    setSubmitted(true)
-  }
-
-  if (loading) return <div className="loading-page"><div className="spinner"></div></div>
-
-  if (submitted && ergebnis) return (
-    <div>
-      <div className="page-header">
-        <h1>Ergebnis</h1>
-        <button className="btn btn-secondary" onClick={onBack}>Zurueck zur Uebersicht</button>
-      </div>
-      <div className="card" style={{ textAlign: 'center', padding: 48, marginBottom: 20 }}>
-        <div style={{ fontSize: 56, fontWeight: 700, color: ergebnis.bestanden ? '#1E8449' : 'var(--red)', marginBottom: 12 }}>{ergebnis.prozent}%</div>
-        <div style={{ fontSize: 22, fontWeight: 600, marginBottom: 8, color: 'var(--gray-800)' }}>{ergebnis.bestanden ? 'Bestanden!' : 'Nicht bestanden'}</div>
-        <div style={{ color: 'var(--gray-400)' }}>{ergebnis.punkte_erreicht} von {ergebnis.punkte_gesamt} Punkten · Grenze: {pruefung.bestehens_prozent}%</div>
-      </div>
-      <ErgebnisDetail pruefung={pruefung} ergebnis={ergebnis} onBack={onBack} istNachAbgabe />
-    </div>
+function PruefungErstellen({ profile, onBack, importDaten }) {
+  const [form, setForm] = useState({
+    titel: importDaten?.titel ?? '',
+    beschreibung: importDaten?.beschreibung ?? '',
+    bestehens_prozent: importDaten?.bestehens_prozent ?? 70,
+    sofortfeedback: importDaten?.sofortfeedback ?? false,
+  })
+  const [fragen, setFragen] = useState(
+    importDaten?.fragen
+      ? importDaten.fragen.map((f, i) => ({
+          id: 'imp_' + i, frage_text: f.frage_text ?? '',
+          typ: f.typ ?? 'multiple_choice',
+          antworten: f.antworten ?? [],
+          musterloesung: f.musterloesung ?? '',
+          punkte: f.punkte ?? 1, reihenfolge: i,
+        }))
+      : []
   )
+  const [saving, setSaving] = useState(false)
+
+  function addFrage() {
+    setFragen(f => [...f, { id: Date.now(), frage_text: '', typ: 'multiple_choice', antworten: neueAntworten('multiple_choice'), musterloesung: '', punkte: 1, reihenfolge: f.length }])
+  }
+  function updateFrage(id, field, value) {
+    setFragen(fs => fs.map(f => {
+      if (f.id !== id) return f
+      const updated = { ...f, [field]: value }
+      if (field === 'typ') updated.antworten = neueAntworten(value)
+      return updated
+    }))
+  }
+  function updateAntwort(frageId, idx, field, value) {
+    setFragen(fs => fs.map(f => { if (f.id !== frageId) return f; const antworten = [...f.antworten]; antworten[idx] = { ...antworten[idx], [field]: value }; return { ...f, antworten } }))
+  }
+  function toggleRichtig(frageId, idx) {
+    setFragen(fs => fs.map(f => {
+      if (f.id !== frageId) return f
+      const antworten = f.antworten.map((a, i) => f.typ === 'mehrfachauswahl' ? (i === idx ? { ...a, richtig: !a.richtig } : a) : { ...a, richtig: i === idx })
+      return { ...f, antworten }
+    }))
+  }
+  function removeFrage(id) { setFragen(fs => fs.filter(f => f.id !== id)) }
+
+  async function handleSave() {
+    if (!form.titel || fragen.length === 0) return alert('Titel und mindestens eine Frage erforderlich')
+    setSaving(true)
+    const { data: pruefung, error } = await supabase.from('pruefungen').insert({
+      ...form, erstellt_von: profile.id, wehr_id: profile.wehr_id, aktiv: false
+    }).select().single()
+    if (error) { alert('Fehler: ' + error.message); setSaving(false); return }
+    const payload = fragen.map((f, i) => ({
+      pruefung_id: pruefung.id, frage_text: f.frage_text, typ: f.typ,
+      antworten: f.typ === 'freitext' ? null : f.antworten,
+      musterloesung: f.musterloesung || null,
+      punkte: f.punkte ?? 1, reihenfolge: i,
+    }))
+    const { error: fe } = await supabase.from('fragen').insert(payload)
+    if (fe) { alert('Fehler beim Speichern der Fragen: ' + fe.message); setSaving(false); return }
+    setSaving(false)
+    onBack()
+  }
 
   return (
     <div>
       <div className="page-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <button className="btn btn-ghost btn-sm" onClick={onBack}>← Zurueck</button>
-          <h1>{pruefung.titel}</h1>
+          <h1>{importDaten ? 'Pruefung importieren' : 'Neue Pruefung'}</h1>
         </div>
-        <button className="btn btn-primary" onClick={handleAbgabe}>Abgeben</button>
+        <button className="btn btn-primary" onClick={handleSave} disabled={saving}>{saving ? 'Speichern...' : 'Pruefung speichern'}</button>
       </div>
-      {fragen.map((f, fi) => {
-        // Antworten sicher parsen
-        let antwortListe = []
-        try {
-          if (Array.isArray(f.antworten)) antwortListe = f.antworten
-          else if (typeof f.antworten === 'string') antwortListe = JSON.parse(f.antworten)
-          else antwortListe = []
-        } catch(e) { antwortListe = [] }
-
-        const istMehrfach = f.typ === 'mehrfachauswahl'
-        const auswahlArr = Array.isArray(antworten[f.id]) ? antworten[f.id] : (antworten[f.id] ? [antworten[f.id]] : [])
-
-        return (
-          <div key={f.id} className="card" style={{ marginBottom: 10, padding: '14px' }}>
-            <div style={{ fontWeight: 500, marginBottom: 14, fontSize: 15, lineHeight: 1.4, color: 'var(--gray-700)' }}>
-              <span style={{ color: 'var(--red)', marginRight: 6, fontSize: 12, fontWeight: 600 }}>{fi + 1}/{fragen.length}</span>
-              {f.frage_text}
-              {istMehrfach && <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--gray-400)', fontWeight: 400 }}>(Mehrere Antworten moeglich)</span>}
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {antwortListe.map((a, ai) => {
-                const isSelected = istMehrfach ? auswahlArr.includes(a.text) : antworten[f.id] === a.text
-                return (
-                  <label key={ai} onClick={() => setAntwort(f.id, a.text, f.typ)} style={{
-                    display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderRadius: 10, cursor: 'pointer', fontSize: 14,
-                    border: `2px solid ${isSelected ? 'var(--red)' : 'var(--gray-200)'}`,
-                    background: isSelected ? 'var(--red-pale)' : 'var(--white)', transition: 'all 150ms', userSelect: 'none',
-                  }}>
-                    <div style={{
-                      width: 22, height: 22, flexShrink: 0,
-                      borderRadius: istMehrfach ? '4px' : '50%',
-                      border: `2px solid ${isSelected ? 'var(--red)' : 'var(--gray-300)'}`,
-                      background: isSelected ? 'var(--red)' : 'transparent',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    }}>
-                      {isSelected && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20,6 9,17 4,12"/></svg>}
-                    </div>
-                    <span style={{ color: isSelected ? 'var(--red-dark)' : 'var(--gray-700)', fontWeight: isSelected ? 500 : 400 }}>{a.text}</span>
-                  </label>
-                )
-              })}
-            </div>
-          </div>
-        )
-      })}
-      <div style={{ marginTop: 16 }}>
-        <button className="btn btn-primary btn-lg" style={{ width: '100%', justifyContent: 'center' }} onClick={handleAbgabe}>Pruefung abgeben</button>
+      {importDaten && <div className="alert alert-success" style={{ marginBottom: 16 }}>{fragen.length} Fragen aus JSON importiert</div>}
+      <div className="card" style={{ marginBottom: 20 }}>
+        <h3 style={{ marginBottom: 16 }}>Grunddaten</h3>
+        <div className="form-group"><label>Titel</label><input value={form.titel} onChange={e => setForm(f => ({ ...f, titel: e.target.value }))} placeholder="z.B. Atemschutzgeraetetraeger" /></div>
+        <div className="form-group"><label>Beschreibung (optional)</label><textarea value={form.beschreibung} onChange={e => setForm(f => ({ ...f, beschreibung: e.target.value }))} rows={2} /></div>
+        <div className="form-group"><label>Bestehensgrenze (%)</label><input type="number" min="1" max="100" value={form.bestehens_prozent} onChange={e => setForm(f => ({ ...f, bestehens_prozent: parseInt(e.target.value) }))} style={{ maxWidth: 100 }} /></div>
+        <div className="form-group">
+          <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', userSelect: 'none' }}>
+            <input type="checkbox" checked={form.sofortfeedback} onChange={e => setForm(f => ({ ...f, sofortfeedback: e.target.checked }))} style={{ width: 'auto' }} />
+            <span>Sofortiges Feedback nach jeder Frage</span>
+            <span style={{ fontSize: 12, color: 'var(--gray-400)', fontWeight: 400 }}>— eine Frage pro Bildschirm, Antwort direkt angezeigt</span>
+          </label>
+        </div>
       </div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <h3>Fragen ({fragen.length})</h3>
+        <button className="btn btn-secondary btn-sm" onClick={addFrage}>+ Frage hinzufuegen</button>
+      </div>
+      {fragen.length === 0 && <div className="card" style={{ textAlign: 'center', color: 'var(--gray-400)', padding: 32 }}><p>Noch keine Fragen</p></div>}
+      {fragen.map((frage, fi) => (
+        <FrageEditor key={frage.id} frage={frage} fi={fi} onUpdate={updateFrage} onUpdateAntwort={updateAntwort} onToggleRichtig={toggleRichtig} onRemove={removeFrage} />
+      ))}
     </div>
   )
 }
+
+// ─── PruefungBearbeiten ───────────────────────────────────────────────────────
+
+function PruefungBearbeiten({ pruefung, profile, onBack }) {
+  const [form, setForm] = useState({
+    titel: pruefung.titel,
+    beschreibung: pruefung.beschreibung ?? '',
+    bestehens_prozent: pruefung.bestehens_prozent,
+    sofortfeedback: pruefung.sofortfeedback ?? false,
+  })
+  const [fragen, setFragen] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    supabase.from('fragen').select('*').eq('pruefung_id', pruefung.id).order('reihenfolge').then(({ data }) => {
+      setFragen((data ?? []).map(f => ({ ...f, antworten: f.antworten ?? [], musterloesung: f.musterloesung ?? '' })))
+      setLoading(false)
+    })
+  }, [])
+
+  function addFrage() { setFragen(f => [...f, { id: 'neu_' + Date.now(), pruefung_id: pruefung.id, frage_text: '', typ: 'multiple_choice', antworten: neueAntworten('multiple_choice'), musterloesung: '', punkte: 1, reihenfolge: f.length }]) }
+  function updateFrage(id, field, value) {
+    setFragen(fs => fs.map(f => {
+      if (f.id !== id) return f
+      const updated = { ...f, [field]: value }
+      if (field === 'typ') updated.antworten = neueAntworten(value)
+      return updated
+    }))
+  }
+  function updateAntwort(frageId, idx, field, value) { setFragen(fs => fs.map(f => { if (f.id !== frageId) return f; const antworten = [...f.antworten]; antworten[idx] = { ...antworten[idx], [field]: value }; return { ...f, antworten } })) }
+  function toggleRichtig(frageId, idx) {
+    setFragen(fs => fs.map(f => {
+      if (f.id !== frageId) return f
+      const antworten = f.antworten.map((a, i) => f.typ === 'mehrfachauswahl' ? (i === idx ? { ...a, richtig: !a.richtig } : a) : { ...a, richtig: i === idx })
+      return { ...f, antworten }
+    }))
+  }
+  function removeFrage(id) { setFragen(fs => fs.filter(f => f.id !== id)) }
+
+  async function handleSave() {
+    if (!form.titel) return alert('Titel erforderlich')
+    setSaving(true)
+    await supabase.from('pruefungen').update({ ...form }).eq('id', pruefung.id)
+    await supabase.from('fragen').delete().eq('pruefung_id', pruefung.id)
+    if (fragen.length > 0) {
+      await supabase.from('fragen').insert(fragen.map((f, i) => ({
+        pruefung_id: pruefung.id, frage_text: f.frage_text, typ: f.typ,
+        antworten: f.typ === 'freitext' ? null : f.antworten,
+        musterloesung: f.musterloesung || null,
+        punkte: f.punkte ?? 1, reihenfolge: i,
+      })))
+    }
+    setSaving(false)
+    onBack()
+  }
+
+  if (loading) return <div className="loading-page"><div className="spinner"></div></div>
+
+  return (
+    <div>
+      <div className="page-header">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button className="btn btn-ghost btn-sm" onClick={onBack}>← Zurueck</button>
+          <h1>Pruefung bearbeiten</h1>
+        </div>
+        <button className="btn btn-primary" onClick={handleSave} disabled={saving}>{saving ? 'Speichern...' : 'Speichern'}</button>
+      </div>
+      <div className="card" style={{ marginBottom: 20 }}>
+        <h3 style={{ marginBottom: 16 }}>Grunddaten</h3>
+        <div className="form-group"><label>Titel</label><input value={form.titel} onChange={e => setForm(f => ({ ...f, titel: e.target.value }))} /></div>
+        <div className="form-group"><label>Beschreibung</label><textarea value={form.beschreibung} onChange={e => setForm(f => ({ ...f, beschreibung: e.target.value }))} rows={2} /></div>
+        <div className="form-group"><label>Bestehensgrenze (%)</label><input type="number" min="1" max="100" value={form.bestehens_prozent} onChange={e => setForm(f => ({ ...f, bestehens_prozent: parseInt(e.target.value) }))} style={{ maxWidth: 100 }} /></div>
+        <div className="form-group">
+          <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', userSelect: 'none' }}>
+            <input type="checkbox" checked={form.sofortfeedback} onChange={e => setForm(f => ({ ...f, sofortfeedback: e.target.checked }))} style={{ width: 'auto' }} />
+            <span>Sofortiges Feedback nach jeder Frage</span>
+            <span style={{ fontSize: 12, color: 'var(--gray-400)', fontWeight: 400 }}>— eine Frage pro Bildschirm, Antwort direkt angezeigt</span>
+          </label>
+        </div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <h3>Fragen ({fragen.length})</h3>
+        <button className="btn btn-secondary btn-sm" onClick={addFrage}>+ Frage hinzufuegen</button>
+      </div>
+      {fragen.length === 0 && <div className="card" style={{ textAlign: 'center', color: 'var(--gray-400)', padding: 32 }}><p>Keine Fragen</p></div>}
+      {fragen.map((frage, fi) => (
+        <FrageEditor key={frage.id} frage={frage} fi={fi} onUpdate={updateFrage} onUpdateAntwort={updateAntwort} onToggleRichtig={toggleRichtig} onRemove={removeFrage} />
+      ))}
+    </div>
+  )
+}
+
+// ─── PruefungAuswertung ───────────────────────────────────────────────────────
 
 function PruefungAuswertung({ pruefung, onBack }) {
   const [ergebnisse, setErgebnisse] = useState([])
@@ -948,12 +1184,7 @@ function PruefungAuswertung({ pruefung, onBack }) {
   }, [])
 
   if (detailErgebnis) return (
-    <ErgebnisDetail
-      pruefung={pruefung}
-      ergebnis={detailErgebnis}
-      onBack={() => setDetailErgebnis(null)}
-      kameradName={`${detailErgebnis.kamerad?.vorname} ${detailErgebnis.kamerad?.nachname}`}
-    />
+    <ErgebnisDetail pruefung={pruefung} ergebnis={detailErgebnis} onBack={() => setDetailErgebnis(null)} kameradName={`${detailErgebnis.kamerad?.vorname} ${detailErgebnis.kamerad?.nachname}`} />
   )
 
   const gefiltert = ergebnisse.filter(e => {
@@ -976,28 +1207,14 @@ function PruefungAuswertung({ pruefung, onBack }) {
           <h1>Auswertung: {pruefung.titel}</h1>
         </div>
       </div>
-      {/* Zeitraum-Filter */}
       <div className="card" style={{ marginBottom: 20, padding: '14px 18px' }}>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          <div className="form-group" style={{ margin: 0, flex: 1, minWidth: 150 }}>
-            <label style={{ fontSize: 12 }}>Von</label>
-            <input type="date" value={vonFilter} onChange={e => setVonFilter(e.target.value)} />
-          </div>
-          <div className="form-group" style={{ margin: 0, flex: 1, minWidth: 150 }}>
-            <label style={{ fontSize: 12 }}>Bis</label>
-            <input type="date" value={bisFilter} onChange={e => setBisFilter(e.target.value)} />
-          </div>
-          <button className="btn btn-secondary btn-sm" onClick={() => { setVonFilter(''); setBisFilter('') }}>
-            Zuruecksetzen
-          </button>
+          <div className="form-group" style={{ margin: 0, flex: 1, minWidth: 150 }}><label style={{ fontSize: 12 }}>Von</label><input type="date" value={vonFilter} onChange={e => setVonFilter(e.target.value)} /></div>
+          <div className="form-group" style={{ margin: 0, flex: 1, minWidth: 150 }}><label style={{ fontSize: 12 }}>Bis</label><input type="date" value={bisFilter} onChange={e => setBisFilter(e.target.value)} /></div>
+          <button className="btn btn-secondary btn-sm" onClick={() => { setVonFilter(''); setBisFilter('') }}>Zuruecksetzen</button>
         </div>
-        {(vonFilter || bisFilter) && (
-          <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 8 }}>
-            {gefiltert.length} von {ergebnisse.length} Ergebnissen im gewaehlten Zeitraum
-          </div>
-        )}
+        {(vonFilter || bisFilter) && <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 8 }}>{gefiltert.length} von {ergebnisse.length} Ergebnissen im gewaehlten Zeitraum</div>}
       </div>
-
       <div className="stat-grid" style={{ marginBottom: 24 }}>
         <div className="stat-card"><div className="stat-label">Teilnehmer</div><div className="stat-value">{gefiltert.length}</div></div>
         <div className="stat-card accent"><div className="stat-label">Bestanden</div><div className="stat-value">{bestanden}</div></div>
@@ -1020,9 +1237,7 @@ function PruefungAuswertung({ pruefung, onBack }) {
                   <td>
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                       <span className={`badge badge-${e.bestanden ? 'green' : 'red'}`}>{e.bestanden ? 'Bestanden' : 'Nicht bestanden'}</span>
-                      <button className="btn btn-sm btn-secondary" style={{ fontSize: 11, padding: '4px 8px' }} onClick={() => setDetailErgebnis(e)}>
-                        Ansehen
-                      </button>
+                      <button className="btn btn-sm btn-secondary" style={{ fontSize: 11, padding: '4px 8px' }} onClick={() => setDetailErgebnis(e)}>Ansehen</button>
                     </div>
                   </td>
                 </tr>
@@ -1034,92 +1249,169 @@ function PruefungAuswertung({ pruefung, onBack }) {
   )
 }
 
-function PruefungBearbeiten({ pruefung, profile, onBack }) {
-  const [form, setForm] = useState({ titel: pruefung.titel, beschreibung: pruefung.beschreibung ?? '', bestehens_prozent: pruefung.bestehens_prozent })
-  const [fragen, setFragen] = useState([])
-  const [loading, setLoading] = useState(true)
+// ─── AktivToggle ─────────────────────────────────────────────────────────────
+
+function AktivToggle({ pruefung, onToggle }) {
+  const [modal, setModal] = useState(false)
+  const [modus, setModus] = useState(pruefung.aktiv_von || pruefung.aktiv_bis ? 'zeitraum' : 'manuell')
+  const [von, setVon] = useState(pruefung.aktiv_von ? pruefung.aktiv_von.slice(0,16) : '')
+  const [bis, setBis] = useState(pruefung.aktiv_bis ? pruefung.aktiv_bis.slice(0,16) : '')
   const [saving, setSaving] = useState(false)
 
-  useEffect(() => {
-    supabase.from('fragen').select('*').eq('pruefung_id', pruefung.id).order('reihenfolge').then(({ data }) => { setFragen((data ?? []).map(f => ({ ...f, antworten: f.antworten ?? [] }))); setLoading(false) })
-  }, [])
-
-  function addFrage() { setFragen(f => [...f, { id: 'neu_' + Date.now(), pruefung_id: pruefung.id, frage_text: '', typ: 'multiple_choice', antworten: [{ text: '', richtig: false }, { text: '', richtig: false }, { text: '', richtig: false }, { text: '', richtig: false }], punkte: 1, reihenfolge: f.length }]) }
-  function updateFrage(id, field, value) { setFragen(fs => fs.map(f => f.id === id ? { ...f, [field]: value } : f)) }
-  function updateAntwort(frageId, idx, field, value) { setFragen(fs => fs.map(f => { if (f.id !== frageId) return f; const antworten = [...f.antworten]; antworten[idx] = { ...antworten[idx], [field]: value }; return { ...f, antworten } })) }
-  function toggleRichtig(frageId, idx) {
-    setFragen(fs => fs.map(f => {
-      if (f.id !== frageId) return f
-      const antworten = f.antworten.map((a, i) => {
-        if (f.typ === 'mehrfachauswahl') return i === idx ? { ...a, richtig: !a.richtig } : a
-        return { ...a, richtig: i === idx }
-      })
-      return { ...f, antworten }
-    }))
-  }
-  function removeFrage(id) { setFragen(fs => fs.filter(f => f.id !== id)) }
+  const jetzt = new Date()
+  const laeuft = pruefung.aktiv_von || pruefung.aktiv_bis
+    ? (!pruefung.aktiv_von || new Date(pruefung.aktiv_von) <= jetzt) && (!pruefung.aktiv_bis || new Date(pruefung.aktiv_bis) >= jetzt)
+    : pruefung.aktiv
 
   async function handleSave() {
-    if (!form.titel) return alert('Titel erforderlich')
     setSaving(true)
-    await supabase.from('pruefungen').update({ titel: form.titel, beschreibung: form.beschreibung || null, bestehens_prozent: form.bestehens_prozent }).eq('id', pruefung.id)
-    await supabase.from('fragen').delete().eq('pruefung_id', pruefung.id)
-    if (fragen.length > 0) await supabase.from('fragen').insert(fragen.map(({ id, isNeu, ...f }, i) => ({ ...f, pruefung_id: pruefung.id, reihenfolge: i })))
-    setSaving(false)
-    onBack()
+    if (modus === 'zeitraum') {
+      await supabase.from('pruefungen').update({ aktiv: true, aktiv_von: von ? new Date(von).toISOString() : null, aktiv_bis: bis ? new Date(bis).toISOString() : null }).eq('id', pruefung.id)
+    } else {
+      await supabase.from('pruefungen').update({ aktiv: !laeuft, aktiv_von: null, aktiv_bis: null }).eq('id', pruefung.id)
+    }
+    setSaving(false); setModal(false); onToggle()
   }
 
-  if (loading) return <div className="loading-page"><div className="spinner"></div></div>
+  return (
+    <>
+      {laeuft ? (
+        <button className="btn btn-sm btn-secondary" onClick={async () => { await supabase.from('pruefungen').update({ aktiv: false, aktiv_von: null, aktiv_bis: null }).eq('id', pruefung.id); onToggle() }}>Deaktivieren</button>
+      ) : (
+        <button className="btn btn-sm btn-primary" onClick={() => setModal(true)}>Aktivieren</button>
+      )}
+      {modal && (
+        <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && setModal(false)}>
+          <div className="modal" style={{ maxWidth: 440 }}>
+            <div className="modal-header">
+              <h3>Pruefung aktivieren</h3>
+              <button className="btn btn-ghost btn-sm" onClick={() => setModal(false)}>x</button>
+            </div>
+            <div className="form-group">
+              <label>Aktivierungsmodus</label>
+              <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                <button type="button" className={`btn btn-sm ${modus === 'manuell' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setModus('manuell')}>Sofort aktiv</button>
+                <button type="button" className={`btn btn-sm ${modus === 'zeitraum' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setModus('zeitraum')}>Mit Zeitraum</button>
+              </div>
+            </div>
+            {modus === 'manuell' ? (
+              <div className="alert alert-info" style={{ fontSize: 13 }}>Pruefung wird sofort aktiviert — ohne Zeitbegrenzung.</div>
+            ) : (
+              <>
+                <div className="form-group"><label>Aktiv von (optional)</label><input type="datetime-local" value={von} onChange={e => setVon(e.target.value)} /></div>
+                <div className="form-group"><label>Aktiv bis (optional)</label><input type="datetime-local" value={bis} onChange={e => setBis(e.target.value)} /></div>
+                <div style={{ fontSize: 12, color: 'var(--gray-400)' }}>Leer lassen = kein Limit in diese Richtung</div>
+              </>
+            )}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+              <button className="btn btn-secondary" onClick={() => setModal(false)}>Abbrechen</button>
+              <button className="btn btn-primary" onClick={handleSave} disabled={saving}>{saving ? 'Speichern...' : 'Speichern'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
+// ─── WachenToggle ─────────────────────────────────────────────────────────────
+
+function WachenToggle({ pruefung, onToggle }) {
+  const [modal, setModal] = useState(false)
+  const [wehren, setWehren] = useState([])
+  const [auswahl, setAuswahl] = useState(pruefung.sichtbar_fuer_wehren ?? null)
+  const [modus, setModus] = useState(pruefung.sichtbar_fuer_wehren ? 'ausgewaehlte' : 'alle')
+  const [saving, setSaving] = useState(false)
+  const { profile: myProfile } = useAuth()
+  const nurEigeneWache = myProfile?.rolle === 'wehrleiter'
+
+  async function oeffnen() {
+    let wehrQuery = supabase.from('wehren').select('id,name').order('name')
+    if (nurEigeneWache && myProfile?.wehr_id) wehrQuery = wehrQuery.eq('id', myProfile.wehr_id)
+    const { data } = await wehrQuery
+    setWehren(data ?? [])
+    if (nurEigeneWache && myProfile?.wehr_id) {
+      const istEnthalten = pruefung.sichtbar_fuer_wehren === null || (pruefung.sichtbar_fuer_wehren ?? []).includes(myProfile.wehr_id)
+      setAuswahl(istEnthalten ? [myProfile.wehr_id] : [])
+      setModus('ausgewaehlte')
+    } else {
+      setAuswahl(pruefung.sichtbar_fuer_wehren ?? [])
+      setModus(pruefung.sichtbar_fuer_wehren ? 'ausgewaehlte' : 'alle')
+    }
+    setModal(true)
+  }
+
+  function toggleWehr(id) { setAuswahl(a => (a ?? []).includes(id) ? (a ?? []).filter(x => x !== id) : [...(a ?? []), id]) }
+
+  async function handleSave() {
+    setSaving(true)
+    let neueWehren
+    if (modus === 'alle') {
+      neueWehren = null
+    } else if (nurEigeneWache && myProfile?.wehr_id) {
+      const istChecked = (auswahl ?? []).includes(myProfile.wehr_id)
+      const aktuelle = pruefung.sichtbar_fuer_wehren
+      if (istChecked) {
+        neueWehren = aktuelle === null ? null : [...new Set([...aktuelle, myProfile.wehr_id])]
+      } else {
+        if (aktuelle === null) {
+          const { data: alleWehren } = await supabase.from('wehren').select('id')
+          neueWehren = (alleWehren ?? []).map(w => w.id).filter(id => id !== myProfile.wehr_id)
+        } else {
+          neueWehren = aktuelle.filter(id => id !== myProfile.wehr_id)
+        }
+      }
+    } else {
+      neueWehren = auswahl?.length > 0 ? auswahl : []
+    }
+    await supabase.from('pruefungen').update({ sichtbar_fuer_wehren: neueWehren }).eq('id', pruefung.id)
+    setModal(false); setSaving(false); onToggle()
+  }
 
   return (
-    <div>
-      <div className="page-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <button className="btn btn-ghost btn-sm" onClick={onBack}>← Zurueck</button>
-          <h1>Pruefung bearbeiten</h1>
-        </div>
-        <button className="btn btn-primary" onClick={handleSave} disabled={saving}>{saving ? 'Speichern...' : 'Speichern'}</button>
-      </div>
-      <div className="card" style={{ marginBottom: 20 }}>
-        <h3 style={{ marginBottom: 16 }}>Grunddaten</h3>
-        <div className="form-group"><label>Titel</label><input value={form.titel} onChange={e => setForm(f => ({ ...f, titel: e.target.value }))} /></div>
-        <div className="form-group"><label>Beschreibung</label><textarea value={form.beschreibung} onChange={e => setForm(f => ({ ...f, beschreibung: e.target.value }))} rows={2} /></div>
-        <div className="form-group"><label>Bestehensgrenze (%)</label><input type="number" min="1" max="100" value={form.bestehens_prozent} onChange={e => setForm(f => ({ ...f, bestehens_prozent: parseInt(e.target.value) }))} style={{ maxWidth: 100 }} /></div>
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-        <h3>Fragen ({fragen.length})</h3>
-        <button className="btn btn-secondary btn-sm" onClick={addFrage}>+ Frage hinzufuegen</button>
-      </div>
-      {fragen.length === 0 && <div className="card" style={{ textAlign: 'center', color: 'var(--gray-400)', padding: 32 }}><p>Keine Fragen</p></div>}
-      {fragen.map((frage, fi) => (
-        <div key={frage.id} className="card" style={{ marginBottom: 12 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--gray-400)' }}>Frage {fi + 1}</span>
-            <select value={frage.typ} onChange={e => updateFrage(frage.id, 'typ', e.target.value)} style={{ maxWidth: 220 }}>
-              <option value="multiple_choice">Multiple Choice (1 richtig)</option>
-              <option value="mehrfachauswahl">Mehrfachauswahl (mehrere richtig)</option>
-              <option value="wahr_falsch">Wahr / Falsch</option>
-            </select>
-            <button className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto', color: 'var(--red)' }} onClick={() => removeFrage(frage.id)}>Entfernen</button>
-          </div>
-          <div className="form-group"><label>Fragetext</label><input value={frage.frage_text} onChange={e => updateFrage(frage.id, 'frage_text', e.target.value)} placeholder="Fragetext..." /></div>
-          <label style={{ marginBottom: 8, display: 'block' }}>
-            Antworten {frage.typ === 'mehrfachauswahl' ? '(Checkboxen: mehrere richtig moeglich)' : '(Radio: eine richtige Antwort)'}
-          </label>
-          {frage.antworten.map((a, ai) => (
-            <div key={ai} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <input
-                type={frage.typ === 'mehrfachauswahl' ? 'checkbox' : 'radio'}
-                checked={a.richtig ?? false}
-                onChange={() => toggleRichtig(frage.id, ai)}
-                style={{ width: 'auto', flexShrink: 0 }}
-                name={frage.typ !== 'mehrfachauswahl' ? `frage-${frage.id}` : undefined}
-              />
-              {frage.typ === 'wahr_falsch' ? <span style={{ fontSize: 14 }}>{ai === 0 ? 'Wahr' : 'Falsch'}</span> : <input value={a.text ?? ''} onChange={e => updateAntwort(frage.id, ai, 'text', e.target.value)} placeholder={`Antwort ${ai + 1}`} />}
+    <>
+      <button className="btn btn-sm btn-secondary" onClick={oeffnen} title="Sichtbarkeit fuer Wachen einstellen">🏠 Wachen</button>
+      {modal && (
+        <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && setModal(false)}>
+          <div className="modal" style={{ maxWidth: 480 }}>
+            <div className="modal-header">
+              <h3>Sichtbarkeit: {pruefung.titel}</h3>
+              <button className="btn btn-ghost btn-sm" onClick={() => setModal(false)}>x</button>
             </div>
-          ))}
+            <div className="form-group">
+              <label>Pruefung sichtbar fuer</label>
+              {nurEigeneWache ? (
+                <div className="alert alert-info" style={{ marginTop: 6, fontSize: 13 }}>Als Wehrleiter koennen Sie Pruefungen nur fuer Ihre eigene Wache freigeben.</div>
+              ) : (
+                <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                  <button type="button" className={`btn btn-sm ${modus === 'alle' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setModus('alle')}>Alle Wachen</button>
+                  <button type="button" className={`btn btn-sm ${modus === 'ausgewaehlte' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setModus('ausgewaehlte')}>Nur bestimmte</button>
+                </div>
+              )}
+            </div>
+            {modus === 'ausgewaehlte' && (
+              <div className="form-group">
+                <label>Wachen auswaehlen</label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 }}>
+                  {wehren.map(w => {
+                    const aktiv = (auswahl ?? []).includes(w.id)
+                    return (
+                      <label key={w.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 8, border: `1px solid ${aktiv ? 'var(--red)' : 'var(--gray-200)'}`, cursor: 'pointer', background: aktiv ? 'var(--red-pale)' : 'white' }}>
+                        <input type="checkbox" checked={aktiv} onChange={() => toggleWehr(w.id)} style={{ width: 'auto' }} />
+                        <span style={{ fontWeight: aktiv ? 500 : 400, color: aktiv ? 'var(--red-dark)' : 'var(--gray-700)' }}>{w.name}</span>
+                      </label>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+              <button className="btn btn-secondary" onClick={() => setModal(false)}>Abbrechen</button>
+              <button className="btn btn-primary" onClick={handleSave} disabled={saving}>{saving ? 'Speichern...' : 'Speichern'}</button>
+            </div>
+          </div>
         </div>
-      ))}
-    </div>
+      )}
+    </>
   )
 }

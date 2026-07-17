@@ -79,18 +79,24 @@ ALTER TABLE lehrgang_zuweisungen    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lehrgang_fortschritt    ENABLE ROW LEVEL SECURITY;
 
 -- Vorbereitungen: alle eingeloggten User lesen, Admin schreibt
+DROP POLICY IF EXISTS "lv_read"  ON lehrgang_vorbereitungen;
+DROP POLICY IF EXISTS "lv_admin" ON lehrgang_vorbereitungen;
 CREATE POLICY "lv_read"   ON lehrgang_vorbereitungen FOR SELECT TO authenticated USING (true);
 CREATE POLICY "lv_admin"  ON lehrgang_vorbereitungen FOR ALL    TO authenticated
   USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND rolle IN ('wehrleiter','gemeindebrandmeister')))
   WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND rolle IN ('wehrleiter','gemeindebrandmeister')));
 
 -- Themen: wie Vorbereitungen
+DROP POLICY IF EXISTS "lt_read"  ON lehrgang_themen;
+DROP POLICY IF EXISTS "lt_admin" ON lehrgang_themen;
 CREATE POLICY "lt_read"   ON lehrgang_themen FOR SELECT TO authenticated USING (true);
 CREATE POLICY "lt_admin"  ON lehrgang_themen FOR ALL    TO authenticated
   USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND rolle IN ('wehrleiter','gemeindebrandmeister')))
   WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND rolle IN ('wehrleiter','gemeindebrandmeister')));
 
 -- Fragen: nur freigegebene für normale User; Admin sieht alle
+DROP POLICY IF EXISTS "lf_read_freigegeben" ON lehrgang_fragen;
+DROP POLICY IF EXISTS "lf_admin"            ON lehrgang_fragen;
 CREATE POLICY "lf_read_freigegeben" ON lehrgang_fragen FOR SELECT TO authenticated
   USING (freigegeben = true OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND rolle IN ('wehrleiter','gemeindebrandmeister')));
 CREATE POLICY "lf_admin" ON lehrgang_fragen FOR ALL TO authenticated
@@ -98,12 +104,16 @@ CREATE POLICY "lf_admin" ON lehrgang_fragen FOR ALL TO authenticated
   WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND rolle IN ('wehrleiter','gemeindebrandmeister')));
 
 -- Dokumente: alle lesen, Admin schreibt
+DROP POLICY IF EXISTS "ld_read"  ON lehrgang_dokumente;
+DROP POLICY IF EXISTS "ld_admin" ON lehrgang_dokumente;
 CREATE POLICY "ld_read"  ON lehrgang_dokumente FOR SELECT TO authenticated USING (true);
 CREATE POLICY "ld_admin" ON lehrgang_dokumente FOR ALL    TO authenticated
   USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND rolle IN ('wehrleiter','gemeindebrandmeister')))
   WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND rolle IN ('wehrleiter','gemeindebrandmeister')));
 
 -- Zuweisungen: User sieht eigene; Admin sieht + verwaltet alle
+DROP POLICY IF EXISTS "lz_eigene" ON lehrgang_zuweisungen;
+DROP POLICY IF EXISTS "lz_admin"  ON lehrgang_zuweisungen;
 CREATE POLICY "lz_eigene" ON lehrgang_zuweisungen FOR SELECT TO authenticated
   USING (user_id = auth.uid() OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND rolle IN ('wehrleiter','gemeindebrandmeister')));
 CREATE POLICY "lz_admin"  ON lehrgang_zuweisungen FOR ALL TO authenticated
@@ -111,6 +121,9 @@ CREATE POLICY "lz_admin"  ON lehrgang_zuweisungen FOR ALL TO authenticated
   WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND rolle IN ('wehrleiter','gemeindebrandmeister')));
 
 -- Fortschritt: User verwaltet eigenen; Admin liest alle
+DROP POLICY IF EXISTS "fp_eigene_select" ON lehrgang_fortschritt;
+DROP POLICY IF EXISTS "fp_eigene_insert" ON lehrgang_fortschritt;
+DROP POLICY IF EXISTS "fp_eigene_update" ON lehrgang_fortschritt;
 CREATE POLICY "fp_eigene_select" ON lehrgang_fortschritt FOR SELECT TO authenticated
   USING (user_id = auth.uid() OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND rolle IN ('wehrleiter','gemeindebrandmeister')));
 CREATE POLICY "fp_eigene_insert" ON lehrgang_fortschritt FOR INSERT TO authenticated

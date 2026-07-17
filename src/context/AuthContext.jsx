@@ -3,6 +3,13 @@ import { supabase } from '../lib/supabase'
 
 const AuthContext = createContext({})
 
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/')
+  const raw = atob(base64)
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)))
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [profile, setProfile] = useState(null)
@@ -32,6 +39,37 @@ export function AuthProvider({ children }) {
       .single()
     setProfile(data)
     setLoading(false)
+    if (data) registerPush(userId)
+  }
+
+  async function registerPush(userId) {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return
+    try {
+      const reg = await navigator.serviceWorker.register('/sw.js')
+      await navigator.serviceWorker.ready
+
+      let sub = await reg.pushManager.getSubscription()
+      if (!sub) {
+        const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY
+        if (!vapidKey) { console.warn('[Push] VITE_VAPID_PUBLIC_KEY fehlt'); return }
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(vapidKey),
+        })
+      }
+
+      const json = sub.toJSON()
+      const { error } = await supabase.from('push_subscriptions').upsert({
+        user_id: userId,
+        endpoint: json.endpoint,
+        p256dh: json.keys?.p256dh,
+        auth: json.keys?.auth,
+      }, { onConflict: 'user_id,endpoint' })
+      if (error) console.warn('[Push] Subscription speichern fehlgeschlagen:', error.message)
+      else console.info('[Push] Subscription gespeichert ✓')
+    } catch (err) {
+      console.warn('[Push] Registrierung fehlgeschlagen:', err.message)
+    }
   }
 
   async function signIn(email, password) {

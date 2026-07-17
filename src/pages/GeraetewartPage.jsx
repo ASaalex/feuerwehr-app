@@ -615,6 +615,31 @@ export default function GeraetewartPage() {
     }
   }
 
+  function exportListe() {
+    if (liste.length === 0) return
+    const name = `${profile?.vorname ?? ''} ${profile?.nachname ?? ''}`.trim()
+    const daten = {
+      erstellt_am: new Date().toISOString(),
+      erstellt_von: name,
+      eintraege: liste.map(e => ({
+        seriennummer: e.seriennummer,
+        pruefung: e.artName,
+        notiz: e.notiz,
+        datum: e.datum,
+        uhrzeit: e.uhrzeit,
+      })),
+    }
+    const blob = new Blob([JSON.stringify(daten, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `pruefprotokoll_${new Date().toISOString().slice(0, 10)}.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
   const gruppen = pruefungsarten
     .map(art => ({ art, eintraege: liste.filter(e => e.artId === art.id) }))
     .filter(g => g.eintraege.length > 0)
@@ -995,8 +1020,8 @@ export default function GeraetewartPage() {
         </div>
       )}
 
-      {/* Mail-Button */}
-      <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+      {/* Mail- und Export-Button */}
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
         <button
           onClick={mailSenden}
           className="btn btn-primary"
@@ -1005,6 +1030,15 @@ export default function GeraetewartPage() {
         >
           <IconMail />
           {mailStatus === 'sending' ? 'Wird gesendet...' : 'Protokoll per E-Mail senden'}
+        </button>
+        <button
+          onClick={exportListe}
+          className="btn btn-secondary"
+          disabled={liste.length === 0}
+          style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+          title="Liste als JSON-Datei herunterladen"
+        >
+          <IconDownload /> Als JSON exportieren
         </button>
         {mailStatus === 'ok' && (
           <span style={{ fontSize: 13, color: 'green', fontWeight: 500 }}>✓ Gesendet, Liste geleert</span>
@@ -1184,5 +1218,12 @@ function IconMail({ size = 16 }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
     <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
     <polyline points="22,6 12,13 2,6"/>
+  </svg>
+}
+
+function IconDownload({ size = 16 }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <path d="M12 3v12"/><polyline points="7,10 12,15 17,10"/>
+    <path d="M4 19h16"/>
   </svg>
 }

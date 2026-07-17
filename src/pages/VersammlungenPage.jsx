@@ -47,6 +47,7 @@ export default function VersammlungenPage() {
   const [editModal, setEditModal] = useState(null)   // { ...versammlung }
   const [detailModal, setDetailModal] = useState(null) // abgeschlossene Versammlung lesen
   const [msg, setMsg] = useState('')
+  const [pdfUrls, setPdfUrls] = useState({}) // id → signedUrl, vorab geladen
 
   useEffect(() => { laden() }, [])
 
@@ -57,6 +58,17 @@ export default function VersammlungenPage() {
       .order('datum', { ascending: false })
     setVersammlungen(data ?? [])
     setLoading(false)
+
+    // Signed URLs für alle PDFs vorab laden (iOS-kompatibel: Link liegt bereits beim Tippen vor)
+    const mitPdf = (data ?? []).filter(v => v.pdf_pfad)
+    if (mitPdf.length > 0) {
+      const urls = {}
+      await Promise.all(mitPdf.map(async v => {
+        const { data: sd } = await supabase.storage.from('dokumente').createSignedUrl(v.pdf_pfad, 3600)
+        if (sd?.signedUrl) urls[v.id] = sd.signedUrl
+      }))
+      setPdfUrls(urls)
+    }
   }
 
   async function abschliessen(v) {
@@ -73,8 +85,36 @@ export default function VersammlungenPage() {
     laden()
   }
 
+  const [pdfModal, setPdfModal] = useState(false)
+  const [suche, setSuche] = useState('')
+  const [sortSpalte, setSortSpalte] = useState('datum')
+  const [sortAsc, setSortAsc] = useState(false)
+
+  function sortToggle(spalte) {
+    if (sortSpalte === spalte) setSortAsc(a => !a)
+    else { setSortSpalte(spalte); setSortAsc(false) }
+  }
+
+  async function pdfOeffnen(v) {
+    const { data } = await supabase.storage.from('dokumente').createSignedUrl(v.pdf_pfad, 120)
+    if (data?.signedUrl) window.open(data.signedUrl, '_blank')
+  }
+
   const entwuerfe = versammlungen.filter(v => v.status === 'entwurf')
-  const abgeschlossen = versammlungen.filter(v => v.status === 'abgeschlossen')
+  const abgeschlossen = versammlungen
+    .filter(v => v.status === 'abgeschlossen')
+    .filter(v => !suche.trim() || v.name.toLowerCase().includes(suche.toLowerCase()) ||
+      format(new Date(v.datum), 'dd.MM.yyyy').includes(suche))
+    .sort((a, b) => {
+      let va = sortSpalte === 'datum' ? a.datum : a.name.toLowerCase()
+      let vb = sortSpalte === 'datum' ? b.datum : b.name.toLowerCase()
+      return sortAsc ? (va > vb ? 1 : -1) : (va < vb ? 1 : -1)
+    })
+
+  function SortIcon({ spalte }) {
+    if (sortSpalte !== spalte) return <span style={{ color: 'var(--gray-300)', marginLeft: 4 }}>↕</span>
+    return <span style={{ color: 'var(--red)', marginLeft: 4 }}>{sortAsc ? '↑' : '↓'}</span>
+  }
 
   if (loading) return <div className="loading-page"><div className="spinner" /></div>
 
@@ -86,26 +126,33 @@ export default function VersammlungenPage() {
           <p style={{ marginTop: 4 }}>Protokolle zu Dienstbesprechungen und Versammlungen</p>
         </div>
         {msg && <div className="alert alert-success" style={{ margin: 0, padding: '8px 14px' }}>{msg}</div>}
-        {kannAufnehmen && (
-          <button className="btn btn-primary" onClick={() => setAufnahmeModal(true)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
-            Neue Versammlung
-          </button>
-        )}
+        <div style={{ display: 'flex', gap: 8 }}>
+          {kannAufnehmen && (
+            <button className="btn btn-secondary" onClick={() => setPdfModal(true)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              📎 PDF hochladen
+            </button>
+          )}
+          {kannAufnehmen && (
+            <button className="btn btn-primary" onClick={() => setAufnahmeModal(true)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
+              Neue Versammlung
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Entwürfe */}
       {kannAufnehmen && entwuerfe.length > 0 && (
-        <div style={{ marginBottom: 32 }}>
+        <div style={{ marginBottom: 24 }}>
           <h3 style={{ fontSize: 13, fontWeight: 600, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
             Entwürfe ({entwuerfe.length})
           </h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {entwuerfe.map(v => (
-              <div key={v.id} className="card" style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-                <div style={{ fontSize: 22, flexShrink: 0 }}>📝</div>
+              <div key={v.id} className="card" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+                <div style={{ fontSize: 20, flexShrink: 0 }}>📝</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--gray-800)' }}>{v.name}</div>
+                  <div style={{ fontWeight: 600, fontSize: 14 }}>{v.name}</div>
                   <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 2 }}>
                     {format(new Date(v.datum), 'dd.MM.yyyy', { locale: de })}
                     {v.erstellt_von && ` · ${v.erstellt_von.vorname} ${v.erstellt_von.nachname}`}
@@ -113,17 +160,11 @@ export default function VersammlungenPage() {
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                  <button className="btn btn-sm btn-secondary" onClick={() => setEditModal({ ...v })}>
-                    ✏️ Bearbeiten
-                  </button>
+                  <button className="btn btn-sm btn-secondary" onClick={() => setEditModal({ ...v })}>✏️ Bearbeiten</button>
                   {isGbm && v.protokoll_text && (
-                    <button className="btn btn-sm btn-primary" onClick={() => abschliessen(v)}>
-                      ✓ Abschließen
-                    </button>
+                    <button className="btn btn-sm btn-primary" onClick={() => abschliessen(v)}>✓ Abschließen</button>
                   )}
-                  <button className="btn btn-sm btn-danger" onClick={() => loeschen(v)}>
-                    🗑
-                  </button>
+                  <button className="btn btn-sm btn-danger" onClick={() => loeschen(v)}>🗑</button>
                 </div>
               </div>
             ))}
@@ -131,42 +172,101 @@ export default function VersammlungenPage() {
         </div>
       )}
 
-      {/* Abgeschlossene Protokolle */}
+      {/* Protokolle als Tabelle */}
       <div>
-        <h3 style={{ fontSize: 13, fontWeight: 600, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
-          Protokolle ({abgeschlossen.length})
-        </h3>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
+          <h3 style={{ fontSize: 13, fontWeight: 600, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0 }}>
+            Protokolle ({abgeschlossen.length}{suche ? ' gefunden' : ''})
+          </h3>
+          <input
+            value={suche}
+            onChange={e => setSuche(e.target.value)}
+            placeholder="🔍 Suchen…"
+            style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid var(--gray-200)', fontSize: 13, minWidth: 200, outline: 'none' }}
+          />
+        </div>
+
         {abgeschlossen.length === 0 ? (
           <div className="card" style={{ textAlign: 'center', padding: 40 }}>
             <div style={{ fontSize: 40, marginBottom: 12 }}>📋</div>
-            <p style={{ color: 'var(--gray-400)' }}>Noch keine abgeschlossenen Protokolle vorhanden.</p>
+            <p style={{ color: 'var(--gray-400)' }}>{suche ? 'Keine Treffer.' : 'Noch keine abgeschlossenen Protokolle vorhanden.'}</p>
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {abgeschlossen.map(v => (
-              <div key={v.id} className="card" style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', cursor: 'pointer' }}
-                onClick={() => setDetailModal(v)}>
-                <div style={{ fontSize: 22, flexShrink: 0 }}>📄</div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--gray-800)' }}>{v.name}</div>
-                  <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 2 }}>
-                    {format(new Date(v.datum), 'dd.MM.yyyy', { locale: de })}
-                    {' · '}
-                    <span style={{ fontFamily: 'var(--mono)', fontSize: 11 }}>{dateiname(v.datum, v.name)}</span>
-                  </div>
-                </div>
-                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
-                  <button className="btn btn-sm btn-secondary" onClick={() => druckeProtokoll(v)}>
-                    🖨️ PDF
-                  </button>
-                  {isGbm && (
-                    <button className="btn btn-sm btn-danger" onClick={() => loeschen(v)}>
-                      🗑
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+              <thead>
+                <tr style={{ background: 'var(--gray-50)', borderBottom: '1px solid var(--gray-200)' }}>
+                  <th onClick={() => sortToggle('datum')} style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600, fontSize: 12, color: 'var(--gray-500)', cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}>
+                    Datum <SortIcon spalte="datum" />
+                  </th>
+                  <th onClick={() => sortToggle('name')} style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600, fontSize: 12, color: 'var(--gray-500)', cursor: 'pointer', userSelect: 'none' }}>
+                    Name <SortIcon spalte="name" />
+                  </th>
+                  <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600, fontSize: 12, color: 'var(--gray-500)', width: 70 }}>Typ</th>
+                  <th style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 600, fontSize: 12, color: 'var(--gray-500)', width: 140 }}>Aktionen</th>
+                </tr>
+              </thead>
+              <tbody>
+                {abgeschlossen.map((v, i) => {
+                  const pdfUrl = pdfUrls[v.id]
+                  return (
+                  <tr key={v.id}
+                    style={{ borderBottom: i < abgeschlossen.length - 1 ? '1px solid var(--gray-100)' : 'none', cursor: 'pointer', transition: 'background 0.1s' }}
+                    onMouseEnter={e => e.currentTarget.style.background = 'var(--gray-50)'}
+                    onMouseLeave={e => e.currentTarget.style.background = ''}
+                    onClick={() => v.pdf_pfad ? (pdfUrl && window.open(pdfUrl, '_blank')) : setDetailModal(v)}>
+                    <td style={{ padding: '11px 14px', color: 'var(--gray-600)', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
+                      {format(new Date(v.datum), 'dd.MM.yyyy', { locale: de })}
+                    </td>
+                    <td style={{ padding: '11px 14px', fontWeight: 500, color: 'var(--gray-800)' }}>
+                      {v.pdf_pfad && pdfUrl
+                        ? (
+                          <a href={pdfUrl} target="_blank" rel="noreferrer"
+                            style={{ color: 'inherit', textDecoration: 'none' }}
+                            onClick={e => e.stopPropagation()}>
+                            {v.name}
+                            {v.erstellt_von && (
+                              <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--gray-400)', marginLeft: 8 }}>
+                                {v.erstellt_von.vorname} {v.erstellt_von.nachname}
+                              </span>
+                            )}
+                          </a>
+                        ) : (
+                          <>
+                            {v.name}
+                            {v.erstellt_von && (
+                              <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--gray-400)', marginLeft: 8 }}>
+                                {v.erstellt_von.vorname} {v.erstellt_von.nachname}
+                              </span>
+                            )}
+                          </>
+                        )
+                      }
+                    </td>
+                    <td style={{ padding: '11px 14px' }}>
+                      {v.pdf_pfad
+                        ? <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: '#fef3c7', color: '#92400e' }}>PDF</span>
+                        : <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: '#ede9fe', color: '#5b21b6' }}>Text</span>
+                      }
+                    </td>
+                    <td style={{ padding: '11px 14px', textAlign: 'right' }} onClick={e => e.stopPropagation()}>
+                      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                        {v.pdf_pfad
+                          ? pdfUrl
+                            ? <a href={pdfUrl} target="_blank" rel="noreferrer" className="btn btn-sm btn-secondary" style={{ textDecoration: 'none' }}>📄 Öffnen</a>
+                            : <button className="btn btn-sm btn-secondary" disabled>⏳</button>
+                          : <button className="btn btn-sm btn-secondary" onClick={() => druckeProtokoll(v)}>🖨️ PDF</button>
+                        }
+                        {isGbm && (
+                          <button className="btn btn-sm btn-danger" onClick={() => loeschen(v)}>🗑</button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
@@ -180,7 +280,16 @@ export default function VersammlungenPage() {
         />
       )}
 
-      {/* Edit-Modal (GBM bearbeitet Protokoll) */}
+      {/* PDF-Upload-Modal */}
+      {pdfModal && (
+        <PdfUploadModal
+          onClose={() => setPdfModal(false)}
+          onSaved={() => { setPdfModal(false); laden(); setMsg('PDF hochgeladen ✓'); setTimeout(() => setMsg(''), 3000) }}
+          profile={profile}
+        />
+      )}
+
+      {/* Edit-Modal */}
       {editModal && (
         <EditModal
           versammlung={editModal}
@@ -189,7 +298,7 @@ export default function VersammlungenPage() {
         />
       )}
 
-      {/* Detail-Modal (Lesen) */}
+      {/* Detail-Modal (Text-Protokoll lesen) */}
       {detailModal && (
         <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && setDetailModal(null)}>
           <div className="modal" style={{ maxWidth: 720, maxHeight: '88vh', display: 'flex', flexDirection: 'column' }}>
@@ -587,6 +696,71 @@ function AufnahmeModal({ onClose, onSaved, profile }) {
               </button>
             )}
           </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── PDF-Upload-Modal ─────────────────────────────────────────────────────────
+function PdfUploadModal({ onClose, onSaved, profile }) {
+  const [name, setName] = useState('')
+  const [datum, setDatum] = useState(new Date().toISOString().slice(0, 10))
+  const [datei, setDatei] = useState(null)
+  const [uploading, setUploading] = useState(false)
+  const [fehler, setFehler] = useState('')
+  const fileRef = useRef(null)
+
+  async function hochladen() {
+    if (!datei || !name.trim()) return
+    if (datei.size > 50 * 1024 * 1024) { setFehler('Datei zu groß (max. 50 MB)'); return }
+    setUploading(true); setFehler('')
+    const pfad = `versammlungen/${Date.now()}-${datei.name}`
+    const { error: se } = await supabase.storage.from('dokumente').upload(pfad, datei)
+    if (se) { setFehler('Upload-Fehler: ' + se.message); setUploading(false); return }
+    const { error: de } = await supabase.from('versammlungen').insert({
+      name: name.trim(), datum, status: 'abgeschlossen',
+      pdf_pfad: pfad, erstellt_von: profile.id,
+      abgeschlossen_am: new Date().toISOString(),
+    })
+    if (de) { setFehler('Speicher-Fehler: ' + de.message); setUploading(false); return }
+    onSaved()
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ maxWidth: 480 }}>
+        <div className="modal-header">
+          <h3 style={{ margin: 0 }}>PDF-Protokoll hochladen</h3>
+          <button className="btn btn-ghost btn-sm" onClick={onClose}>✕</button>
+        </div>
+        <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div className="form-group" style={{ margin: 0 }}>
+            <label>Bezeichnung</label>
+            <input value={name} onChange={e => setName(e.target.value)} placeholder="z.B. Dienstbesprechung Wache Nohra" autoFocus />
+          </div>
+          <div className="form-group" style={{ margin: 0 }}>
+            <label>Datum des Protokolls</label>
+            <input type="date" value={datum} onChange={e => setDatum(e.target.value)} style={{ maxWidth: 200 }} />
+          </div>
+          <div className="form-group" style={{ margin: 0 }}>
+            <label>PDF-Datei</label>
+            <input ref={fileRef} type="file" accept=".pdf,application/pdf"
+              onChange={e => setDatei(e.target.files[0] ?? null)}
+              style={{ fontSize: 14 }} />
+            {datei && (
+              <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 4 }}>
+                {datei.name} · {(datei.size / 1024 / 1024).toFixed(1)} MB
+              </div>
+            )}
+          </div>
+          {fehler && <div className="alert alert-error" style={{ margin: 0 }}>{fehler}</div>}
+        </div>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', padding: '14px 20px', borderTop: '1px solid var(--gray-100)' }}>
+          <button className="btn btn-secondary" onClick={onClose}>Abbrechen</button>
+          <button className="btn btn-primary" onClick={hochladen} disabled={!datei || !name.trim() || uploading}>
+            {uploading ? '⏳ Wird hochgeladen…' : '📎 Hochladen'}
+          </button>
         </div>
       </div>
     </div>

@@ -28,6 +28,7 @@ export default function DokumentePage() {
   const [auslagenModal, setAuslagenModal] = useState(false)
   const [verdienstModal, setVerdienstModal] = useState(false)
   const [mailDruck, setMailDruck] = useState({}) // { [dok.id]: 'sending' | 'ok' | 'err' | msg }
+  const [signedUrls, setSignedUrls] = useState({}) // { [dok.id]: signedUrl } — vorab geladen für iOS
 
   useEffect(() => { fetchDokumente() }, [])
 
@@ -35,6 +36,16 @@ export default function DokumentePage() {
     const { data } = await supabase.from('dokumente').select('*, hochgeladen_von:profiles(vorname,nachname)').order('erstellt_am', { ascending: false })
     setDokumente(data ?? [])
     setLoading(false)
+
+    // Signed URLs sofort für alle Dokumente laden (iOS Safari / PWA braucht direkten Link)
+    if (data?.length) {
+      const urls = {}
+      await Promise.all(data.map(async dok => {
+        const { data: sd } = await supabase.storage.from('dokumente').createSignedUrl(dok.datei_pfad, 3600)
+        if (sd?.signedUrl) urls[dok.id] = sd.signedUrl
+      }))
+      setSignedUrls(urls)
+    }
   }
 
   async function handleUpload(e) {
@@ -200,7 +211,13 @@ export default function DokumentePage() {
                       {KATEGORIEN.find(k => k.value === dok.kategorie)?.label}
                     </span>
                   </div>
-                  <div style={{ fontWeight: 500, fontSize: 14, color: 'var(--gray-700)', lineHeight: 1.4 }}>{dok.titel}</div>
+                  {signedUrls[dok.id]
+                    ? <a href={signedUrls[dok.id]} target="_blank" rel="noreferrer"
+                        style={{ fontWeight: 500, fontSize: 14, color: 'var(--gray-700)', lineHeight: 1.4, textDecoration: 'none', display: 'block' }}>
+                        {dok.titel}
+                      </a>
+                    : <div style={{ fontWeight: 500, fontSize: 14, color: 'var(--gray-700)', lineHeight: 1.4 }}>{dok.titel}</div>
+                  }
                   {dok.beschreibung && <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 4, lineHeight: 1.5 }}>{dok.beschreibung}</div>}
                 </div>
               </div>
@@ -228,9 +245,12 @@ export default function DokumentePage() {
                       ✏️
                     </button>
                   )}
-                  <button className="btn btn-sm btn-secondary" onClick={() => handleDownload(dok)} title="Oeffnen">
-                    ↓
-                  </button>
+                  {signedUrls[dok.id]
+                    ? <a href={signedUrls[dok.id]} target="_blank" rel="noreferrer"
+                        className="btn btn-sm btn-secondary" title="Öffnen"
+                        style={{ textDecoration: 'none' }}>↓</a>
+                    : <button className="btn btn-sm btn-secondary" title="Wird geladen…" disabled>↓</button>
+                  }
                   <button
                     className="btn btn-sm btn-secondary"
                     onClick={() => handleMailDruck(dok)}

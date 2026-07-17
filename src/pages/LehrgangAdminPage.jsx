@@ -1,6 +1,39 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
+import * as pdfjsLib from 'pdfjs-dist'
+import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
+
+async function extrahierePdfText(datei) {
+  const arrayBuffer = await datei.arrayBuffer()
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
+  let text = ''
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const seite = await pdf.getPage(i)
+    const inhalt = await seite.getTextContent()
+    text += inhalt.items.map(item => item.str).join(' ') + '\n'
+  }
+  return text.trim()
+}
+
+// Rendert PDF-Seiten als Base64-Bilder (für eingescannte PDFs)
+async function pdfSeitenAlsBilder(datei, maxSeiten = 15) {
+  const arrayBuffer = await datei.arrayBuffer()
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
+  const bilder = []
+  const anzahl = Math.min(pdf.numPages, maxSeiten)
+  for (let i = 1; i <= anzahl; i++) {
+    const seite = await pdf.getPage(i)
+    const viewport = seite.getViewport({ scale: 1.5 })
+    const canvas = document.createElement('canvas')
+    canvas.width = viewport.width
+    canvas.height = viewport.height
+    await seite.render({ canvasContext: canvas.getContext('2d'), viewport }).promise
+    bilder.push(canvas.toDataURL('image/jpeg', 0.8).split(',')[1])
+  }
+  return bilder
+}
 
 export default function LehrgangAdminPage() {
   const { profile } = useAuth()
@@ -68,7 +101,7 @@ export default function LehrgangAdminPage() {
 
   async function ladeZuweisungen() {
     const { data: z } = await supabase.from('lehrgang_zuweisungen')
-      .select('*, profiles(id,vorname,nachname,rolle)').eq('vorbereitung_id', aktiver.id)
+      .select('id, user_id, vorbereitung_id').eq('vorbereitung_id', aktiver.id)
     setZuweisungen(z ?? [])
     if (!kamerade.length) {
       const { data: k } = await supabase.from('profiles')
@@ -145,18 +178,20 @@ export default function LehrgangAdminPage() {
   async function kiGenerierenStarten(thema) {
     setKiLaedt(true)
     try {
-      // Dokument-Texte aus Storage lesen (nur Metadaten hier, Textextraktion in Edge Fn)
-      const dokTexte = dokumente.map(d => `Dokument: ${d.titel} (${d.quelle ?? 'intern'})`).join('\n')
-      // Regelwerke aus DB
       const { data: rw } = await supabase.from('regelwerke')
-        .select('titel,inhalt_text').eq('aktiv', true).not('inhalt_text', 'is', null).limit(3)
+        .select('titel,inhalt_text').eq('aktiv', true).not('inhalt_text', 'is', null).limit(5)
       const rwTexte = (rw ?? []).map(r => r.inhalt_text?.slice(0, 3000) ?? '').filter(Boolean)
+
+      if (!rwTexte.length) {
+        zeig('⚠️ Keine Regelwerke/Dokumente mit Text gefunden. Bitte zuerst Dokumente hochladen.', 7000)
+        setKiLaedt(false); return
+      }
 
       const { data, error } = await supabase.functions.invoke('generate-lehrgang-fragen', {
         body: {
           thema_titel: thema.titel,
           lehrgang_name: aktiver.name,
-          dokument_texte: dokTexte ? [dokTexte] : [],
+          dokument_texte: [],
           regelwerk_texte: rwTexte,
           anzahl: 6,
         }
@@ -182,16 +217,19 @@ export default function LehrgangAdminPage() {
   async function kiKomplettGenerieren() {
     setKiLaedt(true)
     try {
-      const dokTexte = dokumente.map(d => `Dokument: ${d.titel} (${d.quelle ?? 'intern'})`).join('\n')
       const { data: rw } = await supabase.from('regelwerke')
         .select('titel,inhalt_text').eq('aktiv', true).not('inhalt_text', 'is', null).limit(5)
       const rwTexte = (rw ?? []).map(r => r.inhalt_text?.slice(0, 4000) ?? '').filter(Boolean)
+      if (!rwTexte.length) {
+        zeig('⚠️ Keine Regelwerke/Dokumente mit Text gefunden. Bitte zuerst Dokumente hochladen oder Dienstvorschriften hinterlegen.', 7000)
+        setKiLaedt(false); return
+      }
 
       const { data, error } = await supabase.functions.invoke('generate-lehrgang-fragen', {
         body: {
           _aktion: 'generiere_komplett',
           lehrgang_name: aktiver.name,
-          dokument_texte: dokTexte ? [dokTexte] : [],
+          dokument_texte: [],
           regelwerk_texte: rwTexte,
         }
       })
@@ -237,18 +275,78 @@ export default function LehrgangAdminPage() {
 
   async function dokumentHochladen() {
     if (!dokForm.datei || !dokForm.titel.trim()) return
+    const maxMB = 50
+    if (dokForm.datei.size > maxMB * 1024 * 1024) {
+      zeig(`Datei zu groß (max. ${maxMB} MB). Bitte PDF verkleinern oder aufteilen.`, 6000)
+      return
+    }
     setUploading(true)
+    zeig('⏳ PDF wird verarbeitet…', 30000)
+
+    // 1. Text extrahieren (vor Upload, damit wir die datei noch haben)
+    let inhaltsText = null
+    const istPdf = dokForm.datei.name.toLowerCase().endsWith('.pdf')
+    if (istPdf) {
+      try {
+        inhaltsText = await extrahierePdfText(dokForm.datei)
+        // Eingescanntes PDF: zu wenig Text → Vision-OCR via KI
+        if (!inhaltsText || inhaltsText.length < 200) {
+          zeig('⏳ Eingescanntes PDF erkannt – KI liest die Seiten…', 60000)
+          try {
+            const bilder = await pdfSeitenAlsBilder(dokForm.datei)
+            const { data: ocrData } = await supabase.functions.invoke('pdf-ocr', {
+              body: { bilder, titel: dokForm.titel.trim() }
+            })
+            if (ocrData?.text) inhaltsText = ocrData.text
+          } catch (e) {
+            console.warn('Vision-OCR fehlgeschlagen:', e)
+          }
+        }
+      } catch {
+        // Text-Extraktion optional — Upload trotzdem fortsetzen
+      }
+    }
+
+    // 2. In Storage hochladen (dokumente-Bucket)
     const ext = dokForm.datei.name.split('.').pop()
     const pfad = `lehrgaenge/${aktiver.id}/${Date.now()}.${ext}`
     const { error: se } = await supabase.storage.from('dokumente').upload(pfad, dokForm.datei)
-    if (se) { zeig('Upload-Fehler: ' + se.message); setUploading(false); return }
+    if (se) {
+      const hint = se.message?.includes('size') || se.message?.includes('exceeded')
+        ? ' → Bucket-Limit in Supabase Dashboard erhöhen: Storage → Buckets → dokumente → Edit'
+        : ''
+      zeig('Upload-Fehler: ' + se.message + hint, 8000)
+      setUploading(false); return
+    }
+
+    // 3. Lehrgang-Dokument eintragen
     await supabase.from('lehrgang_dokumente').insert({
-      vorbereitung_id: aktiver.id, titel: dokForm.titel.trim(),
-      quelle: dokForm.quelle.trim() || null, datei_pfad: pfad,
+      vorbereitung_id: aktiver.id,
+      titel: dokForm.titel.trim(),
+      quelle: dokForm.quelle.trim() || null,
+      datei_pfad: pfad,
     })
+
+    // 4. Auch in regelwerke eintragen (damit KI-Generierung den Text nutzt)
+    if (inhaltsText) {
+      await supabase.from('regelwerke').insert({
+        titel: `${aktiver.name} – ${dokForm.titel.trim()}`,
+        beschreibung: `Automatisch aus Lehrgang-Upload hinzugefügt (${dokForm.quelle.trim() || 'intern'})`,
+        datei_pfad: pfad,
+        datei_name: dokForm.datei.name,
+        inhalt_text: inhaltsText,
+        aktiv: true,
+        erstellt_von: profile.id,
+      })
+    }
+
     setDokForm({ titel: '', quelle: '', datei: null })
     if (fileRef.current) fileRef.current.value = ''
-    await ladeDokumente(); setUploading(false); zeig('Dokument hochgeladen.')
+    await ladeDokumente()
+    setUploading(false)
+    zeig(inhaltsText
+      ? `✅ Dokument hochgeladen · ${inhaltsText.length.toLocaleString()} Zeichen für KI gespeichert`
+      : '✅ Dokument hochgeladen (kein Text extrahierbar)')
   }
 
   async function dokumentLoeschen(dok) {
@@ -264,13 +362,16 @@ export default function LehrgangAdminPage() {
   }
 
   async function zuweisenToggle(userId) {
-    const existing = zuweisungen.find(z => z.user_id === userId)
+    const { data: existing } = await supabase.from('lehrgang_zuweisungen')
+      .select('id').eq('user_id', userId).eq('vorbereitung_id', aktiver.id).maybeSingle()
     if (existing) {
-      await supabase.from('lehrgang_zuweisungen').delete().eq('id', existing.id)
+      const { error } = await supabase.from('lehrgang_zuweisungen').delete().eq('id', existing.id)
+      if (error) { zeig('Fehler beim Entfernen: ' + error.message, 6000); return }
     } else {
-      await supabase.from('lehrgang_zuweisungen').insert({
+      const { error } = await supabase.from('lehrgang_zuweisungen').insert({
         user_id: userId, vorbereitung_id: aktiver.id, zugewiesen_von: profile.id,
       })
+      if (error) { zeig('Fehler beim Zuweisen: ' + error.message, 6000); return }
     }
     await ladeZuweisungen()
   }
@@ -561,7 +662,8 @@ function FrageFormular({ form, onChange, onSave }) {
   const setAntwort = (i, k, v) => onChange(p => {
     const a = [...p.antworten]
     a[i] = { ...a[i], [k]: v }
-    if (k === 'richtig' && v) a.forEach((x, j) => { if (j !== i) a[j] = { ...a[j], richtig: false } })
+    // Ja/Nein: only one answer can be correct (radio behavior)
+    if (k === 'richtig' && v && p.typ === 'ja_nein') a.forEach((x, j) => { if (j !== i) a[j] = { ...a[j], richtig: false } })
     return { ...p, antworten: a }
   })
 
@@ -596,10 +698,10 @@ function FrageFormular({ form, onChange, onSave }) {
           <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--gray-500)' }}>Antworten (✓ = richtig)</div>
           {form.antworten.map((a, i) => (
             <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <input type="checkbox" checked={a.richtig} onChange={e => setAntwort(i, 'richtig', e.target.checked)} style={{ flexShrink: 0, accentColor: 'var(--red)' }} />
+              <input type="checkbox" checked={a.richtig} onChange={e => setAntwort(i, 'richtig', e.target.checked)} style={{ flexShrink: 0, width: 'auto', accentColor: 'var(--red)' }} />
               {form.typ === 'ja_nein'
                 ? <span style={{ flex: 1, fontSize: 13, color: 'var(--gray-600)' }}>{a.text}</span>
-                : <input className="form-control" value={a.text} onChange={e => setAntwort(i, 'text', e.target.value)} placeholder={`Antwort ${i + 1}`} />
+                : <input className="form-control" style={{ flex: 1, minWidth: 0 }} value={a.text} onChange={e => setAntwort(i, 'text', e.target.value)} placeholder={`Antwort ${i + 1}`} />
               }
             </div>
           ))}

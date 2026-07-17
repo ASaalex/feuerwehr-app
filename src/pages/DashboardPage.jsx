@@ -54,9 +54,17 @@ export default function DashboardPage() {
       })(),
       supabase.from('dokumente').select('*', { count: 'exact', head: true }).neq('kategorie', 'ausbildung'),
 supabase.from('pruefungen').select('id,aktiv,aktiv_von,aktiv_bis,sichtbar_fuer_wehren,wehr_id'),
-supabase.from('aufgaben').select('*', { count: 'exact', head: true })
-        .in('status', ['offen', 'in_arbeit'])
-        .or(`zugewiesen_an.eq.${profile?.id},zugewiesen_an_wehr.eq.${profile?.wehr_id || '00000000-0000-0000-0000-000000000000'}`),
+(() => {
+        // Offene Aufgaben diesen Monat: fällig bis Monatsende ODER ohne Fälligkeitsdatum
+        // Zuweisung: direkt, Wache ODER Junction-Tabelle (aufgaben_zuweisungen)
+        const now = new Date()
+        const monatsEnde = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59).toISOString()
+        const wehrId = profile?.wehr_id || '00000000-0000-0000-0000-000000000000'
+        return supabase.from('aufgaben').select('id', { count: 'exact', head: true })
+          .neq('status', 'erledigt')
+          .or(`faellig_am.is.null,faellig_am.lte.${monatsEnde}`)
+          .or(`zugewiesen_an.eq.${profile?.id},zugewiesen_an_wehr.eq.${wehrId},erstellt_von.eq.${profile?.id}`)
+      })(),
       supabase.from('aufgaben')
         .select('*, erstellt_von:profiles!aufgaben_erstellt_von_fkey(vorname,nachname)')
         .eq('zugewiesen_an', profile?.id)
@@ -238,7 +246,7 @@ supabase.from('aufgaben').select('*', { count: 'exact', head: true })
         {/* Aufgaben */}
         {aufgabenAktiv ? (
           <StatKachel
-            label="Offene & in Arbeit"
+            label="Offen diesen Monat"
             wert={stats.aufgaben}
             farbe="#FAEEDA"
             textfarbe="#633806"
