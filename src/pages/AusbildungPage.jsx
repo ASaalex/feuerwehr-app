@@ -267,6 +267,26 @@ export default function AusbildungPage() {
         </div>
       </Link>
 
+      {/* Planspiel Banner */}
+      <Link to="/ausbildung/planspiel" style={{ textDecoration: 'none', display: 'block', marginBottom: 16 }}>
+        <div style={{
+          background: 'linear-gradient(135deg, #065f46 0%, #047857 100%)',
+          borderRadius: 12, padding: '16px 20px',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+          cursor: 'pointer', transition: 'opacity 150ms',
+        }}
+          onMouseEnter={e => e.currentTarget.style.opacity = '0.92'}
+          onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+        >
+          <div>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>Taktische Übung</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: 'white', marginBottom: 4 }}>🗺️ Planspiel</div>
+            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.75)' }}>Kartenbasierte Szenarien auf Satellitenbild · Fahrzeuge, Trupps &amp; Schlauchleitungen</div>
+          </div>
+          <div style={{ fontSize: 28, opacity: 0.8 }}>🚒</div>
+        </div>
+      </Link>
+
       {/* Wissensfrage Banner */}
       <div style={{ marginBottom: 20 }}>
         <div style={{
