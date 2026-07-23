@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -28,8 +28,8 @@ const PUNKT_TYPEN = [
   { id: 'pin',       name: 'Markierung', emoji: '📍', farbe: '#DC2626' },
 ]
 const LINIE_TYPEN = [
-  { id: 'b_schlauch', name: 'B-Schlauch', farbe: '#2563EB', breite: 5 },
-  { id: 'c_schlauch', name: 'C-Schlauch', farbe: '#16A34A', breite: 3 },
+  { id: 'b_schlauch', farbe: '#2563EB', breite: 5 },
+  { id: 'c_schlauch', farbe: '#16A34A', breite: 3 },
 ]
 const ZONE_TYPEN = [
   { id: 'absperrung',     farbe: '#DC2626' },
@@ -58,95 +58,86 @@ function elFarbe(el) {
 export default function PlanspielAnzeigePage() {
   const { id } = useParams()
   const [session, setSession] = useState(null)
-  const [karte, setKarte] = useState(null)
   const [lageUpdates, setLageUpdates] = useState([])
   const [letzteAktualisierung, setLetzteAktualisierung] = useState(null)
-  const [neuesMeldung, setNeuesMeldung] = useState(null)
+  const [neuesMeldungId, setNeuesMeldungId] = useState(null)
 
-  const mapContainer = useRef(null)
   const mapRef = useRef(null)
   const markerRefs = useRef({})
   const linienRefs = useRef({})
   const zonenRefs = useRef({})
-  const karteRef = useRef(null)
+  const prevLageCountRef = useRef(0)
 
-  // Daten laden (initial + alle 10 Sek.)
-  useEffect(() => {
-    laden()
-    const interval = setInterval(laden, 10000)
-    return () => clearInterval(interval)
-  }, [id])
-
-  async function laden() {
-    const { data } = await supabase
-      .from('planspiel_sessions')
-      .select('*, szenario:szenarien(titel, anfangs_meldung)')
-      .eq('id', id)
-      .single()
-    if (!data) return
-
-    setSession(data)
-
-    const neueUpdates = data.lage_updates ?? []
-    setLageUpdates(prev => {
-      // Neue Meldung erkannt → kurz hervorheben
-      if (prev.length > 0 && neueUpdates.length > prev.length) {
-        setNeuesMeldung(neueUpdates[0]?.id)
-        setTimeout(() => setNeuesMeldung(null), 4000)
-      }
-      return neueUpdates
-    })
-
-    setKarte(data.kartenzustand ?? { elemente: [], linien: [], zonen: [] })
-    setLetzteAktualisierung(new Date())
-  }
-
-  // Karte einmalig initialisieren
-  useEffect(() => {
-    if (!mapContainer.current || mapRef.current) return
-    const map = L.map(mapContainer.current, { zoomControl: true, attributionControl: true })
+  // Callback-Ref: initialisiert die Karte sobald der div im DOM ist
+  const mapContainer = useCallback((node) => {
+    if (!node || mapRef.current) return
+    const map = L.map(node, { zoomControl: true })
+    map.setView([51.1657, 10.4515], 13) // Fallback-Center bis Session geladen
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
       maxZoom: 19,
     }).addTo(map)
     mapRef.current = map
-  }, [mapContainer.current])
+  }, [])
 
-  // Karte auf Session-Center setzen (nur einmal)
-  useEffect(() => {
-    if (!session || !mapRef.current) return
-    const center = session.map_center ?? { lng: 10.4515, lat: 51.1657, zoom: 14 }
-    mapRef.current.setView([center.lat, center.lng], center.zoom ?? 14)
-  }, [session?.id])
+  // Daten laden und Karte aktualisieren
+  async function laden() {
+    const { data, error } = await supabase
+      .from('planspiel_sessions')
+      .select('*, szenario:szenarien(titel, anfangs_meldung)')
+      .eq('id', id)
+      .single()
+    if (error || !data) return
 
-  // Kartenzustand synchron halten
-  useEffect(() => {
+    // Session-State setzen
+    setSession(data)
+    setLetzteAktualisierung(new Date())
+
+    // Karte auf Session-Center zentrieren (nur beim ersten Laden)
     const map = mapRef.current
-    if (!map || !karte) return
-    karteRef.current = karte
+    if (map && data.map_center && prevLageCountRef.current === 0) {
+      const c = data.map_center
+      map.setView([c.lat, c.lng], c.zoom ?? 14)
+    }
 
+    // Lage-Updates
+    const updates = data.lage_updates ?? []
+    if (prevLageCountRef.current > 0 && updates.length > prevLageCountRef.current) {
+      const neueId = updates[0]?.id
+      setNeuesMeldungId(neueId)
+      setTimeout(() => setNeuesMeldungId(null), 4000)
+    }
+    prevLageCountRef.current = updates.length
+    setLageUpdates(updates)
+
+    // Kartenzustand rendern
+    if (map) aktualisiereKarte(map, data.kartenzustand ?? { elemente: [], linien: [], zonen: [] })
+  }
+
+  function aktualisiereKarte(map, karte) {
     // Marker
     const aktuelleIds = new Set(karte.elemente.map(e => e.id))
-    Object.entries(markerRefs.current).forEach(([id, m]) => {
-      if (!aktuelleIds.has(id)) { m.remove(); delete markerRefs.current[id] }
+    Object.entries(markerRefs.current).forEach(([mid, m]) => {
+      if (!aktuelleIds.has(mid)) { m.remove(); delete markerRefs.current[mid] }
     })
     karte.elemente.forEach(el => {
+      const icon = L.divIcon({
+        className: '',
+        html: `<div style="background:${elFarbe(el)};color:white;border-radius:6px;padding:3px 7px;font-size:18px;box-shadow:0 2px 6px rgba(0,0,0,0.4);border:2px solid white;display:flex;align-items:center;gap:4px;white-space:nowrap;user-select:none;"><span>${elEmoji(el)}</span><span style="font-size:10px;font-weight:700;">${elName(el)}</span></div>`,
+        iconAnchor: [0, 0],
+      })
       if (!markerRefs.current[el.id]) {
-        const icon = L.divIcon({
-          className: '',
-          html: `<div style="background:${elFarbe(el)};color:white;border-radius:6px;padding:3px 7px;font-size:18px;box-shadow:0 2px 6px rgba(0,0,0,0.4);border:2px solid white;display:flex;align-items:center;gap:4px;white-space:nowrap;user-select:none;"><span>${elEmoji(el)}</span><span style="font-size:10px;font-weight:700;">${elName(el)}</span></div>`,
-          iconAnchor: [0, 0],
-        })
         markerRefs.current[el.id] = L.marker(ll(el.position), { icon, draggable: false }).addTo(map)
       } else {
+        markerRefs.current[el.id].setIcon(icon)
         markerRefs.current[el.id].setLatLng(ll(el.position))
       }
     })
 
     // Linien
     const linienIds = new Set(karte.linien.map(l => l.id))
-    Object.entries(linienRefs.current).forEach(([id, layer]) => {
-      if (!linienIds.has(id)) { layer.remove(); delete linienRefs.current[id] }
+    Object.entries(linienRefs.current).forEach(([lid, layer]) => {
+      if (!linienIds.has(lid)) { layer.remove(); delete linienRefs.current[lid] }
     })
     karte.linien.forEach(l => {
       if (!linienRefs.current[l.id]) {
@@ -157,8 +148,8 @@ export default function PlanspielAnzeigePage() {
 
     // Zonen
     const zonenIds = new Set(karte.zonen.map(z => z.id))
-    Object.entries(zonenRefs.current).forEach(([id, layer]) => {
-      if (!zonenIds.has(id)) { layer.remove(); delete zonenRefs.current[id] }
+    Object.entries(zonenRefs.current).forEach(([zid, layer]) => {
+      if (!zonenIds.has(zid)) { layer.remove(); delete zonenRefs.current[zid] }
     })
     karte.zonen.forEach(z => {
       if (!zonenRefs.current[z.id]) {
@@ -166,70 +157,100 @@ export default function PlanspielAnzeigePage() {
         zonenRefs.current[z.id] = L.polygon(z.punkte.map(ll), { color: typ.farbe, fillOpacity: 0.2, weight: 2 }).addTo(map)
       }
     })
-  }, [karte])
+  }
+
+  // Initial laden + Interval
+  useEffect(() => {
+    // Kurz warten bis mapContainer-Callback die Karte erstellt hat
+    const t = setTimeout(() => {
+      laden()
+      const interval = setInterval(laden, 10000)
+      return () => clearInterval(interval)
+    }, 300)
+
+    return () => {
+      clearTimeout(t)
+      mapRef.current?.remove()
+      mapRef.current = null
+    }
+  }, [id])
 
   if (!session) return (
-    <div className="loading-page"><div className="spinner"></div><span>Lade Planspiel…</span></div>
+    <div className="loading-page">
+      <div className="spinner"></div>
+      <span>Lade Planspiel…</span>
+    </div>
   )
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 60px)', position: 'relative' }}>
-      {/* Schmaler Header */}
+    <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 60px)' }}>
+      {/* Header */}
       <div style={{ background: '#1F2937', color: 'white', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
         <span style={{ fontSize: 18 }}>🗺️</span>
         <span style={{ fontWeight: 700, fontSize: 15 }}>{session.titel}</span>
-        {session.szenario && <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', background: 'rgba(255,255,255,0.1)', borderRadius: 4, padding: '2px 8px' }}>{session.szenario.titel}</span>}
+        {session.szenario && (
+          <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', background: 'rgba(255,255,255,0.1)', borderRadius: 4, padding: '2px 8px' }}>
+            {session.szenario.titel}
+          </span>
+        )}
         <div style={{ flex: 1 }} />
         {letzteAktualisierung && (
           <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>
-            Aktualisiert: {format(letzteAktualisierung, 'HH:mm:ss', { locale: de })} · alle 10 Sek.
+            Stand: {format(letzteAktualisierung, 'HH:mm:ss', { locale: de })} · alle 10 Sek.
           </span>
         )}
       </div>
 
-      {/* Szenario-Meldung */}
+      {/* Szenario-Lage */}
       {session.szenario?.anfangs_meldung && (
         <div style={{ background: '#FEF9EC', borderBottom: '1px solid #FCD34D', padding: '8px 16px', fontSize: 13, color: '#92400E', flexShrink: 0 }}>
           <strong>Lage:</strong> {session.szenario.anfangs_meldung}
         </div>
       )}
 
-      {/* Hauptbereich: Karte + Lage-Panel */}
+      {/* Karte + Panel */}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-
-        {/* Karte */}
-        <div ref={mapContainer} style={{ flex: 1, minWidth: 0 }} />
+        <div ref={mapContainer} style={{ flex: 1, minWidth: 0, minHeight: 0 }} />
 
         {/* Lage-Updates Panel */}
-        <div style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column', background: '#1F2937', borderLeft: '2px solid #374151' }}>
-          <div style={{ padding: '12px 16px', borderBottom: '1px solid #374151' }}>
-            <span style={{ color: 'white', fontWeight: 700, fontSize: 13, textTransform: 'uppercase', letterSpacing: '0.06em' }}>⚡ Lagemeldungen</span>
+        <div style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column', background: '#111827', borderLeft: '2px solid #374151' }}>
+          <div style={{ padding: '12px 16px', borderBottom: '1px solid #374151', flexShrink: 0 }}>
+            <span style={{ color: 'white', fontWeight: 700, fontSize: 13, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              ⚡ Lagemeldungen
+            </span>
           </div>
-          <div style={{ flex: 1, overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+
+          <div style={{ flex: 1, overflowY: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
             {lageUpdates.length === 0 ? (
-              <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: 13, textAlign: 'center', marginTop: 24 }}>Noch keine Meldungen</p>
+              <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: 13, textAlign: 'center', marginTop: 32 }}>
+                Noch keine Meldungen
+              </p>
             ) : lageUpdates.map((u, i) => (
               <div key={u.id} style={{
                 borderRadius: 8,
                 padding: '10px 12px',
-                background: u.id === neuesMeldung
-                  ? 'rgba(251, 191, 36, 0.25)'
+                background: u.id === neuesMeldungId
+                  ? 'rgba(251,191,36,0.2)'
                   : i === 0 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.05)',
-                border: u.id === neuesMeldung
-                  ? '1px solid #FBBF24'
-                  : i === 0 ? '1px solid rgba(255,255,255,0.2)' : '1px solid rgba(255,255,255,0.08)',
-                transition: 'background 0.5s, border 0.5s',
+                border: `1px solid ${u.id === neuesMeldungId ? '#FBBF24' : i === 0 ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.07)'}`,
+                transition: 'background 0.5s, border-color 0.5s',
               }}>
-                <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span>{format(new Date(u.zeit), 'HH:mm', { locale: de })} Uhr</span>
-                  {i === 0 && <span style={{ background: '#DC2626', color: 'white', fontSize: 9, fontWeight: 700, borderRadius: 3, padding: '1px 5px', letterSpacing: '0.05em' }}>NEU</span>}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
+                  <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>
+                    {format(new Date(u.zeit), 'HH:mm', { locale: de })} Uhr
+                  </span>
+                  {i === 0 && (
+                    <span style={{ background: '#DC2626', color: 'white', fontSize: 9, fontWeight: 700, borderRadius: 3, padding: '1px 5px', letterSpacing: '0.05em' }}>
+                      NEU
+                    </span>
+                  )}
                 </div>
-                <div style={{ fontSize: 13, color: 'white', lineHeight: 1.5 }}>{u.text}</div>
+                <div style={{ fontSize: 14, color: 'white', lineHeight: 1.5 }}>{u.text}</div>
               </div>
             ))}
           </div>
-          {/* Anzahl Meldungen */}
-          <div style={{ padding: '8px 16px', borderTop: '1px solid #374151', fontSize: 11, color: 'rgba(255,255,255,0.35)', textAlign: 'center' }}>
+
+          <div style={{ padding: '8px 16px', borderTop: '1px solid #374151', fontSize: 11, color: 'rgba(255,255,255,0.3)', textAlign: 'center', flexShrink: 0 }}>
             {lageUpdates.length} Meldung{lageUpdates.length !== 1 ? 'en' : ''} gesamt
           </div>
         </div>
