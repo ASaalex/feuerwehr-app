@@ -30,6 +30,7 @@ import LehrgangAdminPage from './pages/LehrgangAdminPage'
 import LehrgangUebersichtPage from './pages/LehrgangUebersichtPage'
 import LehrgangLernPage from './pages/LehrgangLernPage'
 import PlanspielPage from './pages/PlanspielPage'
+import PlanspielAnzeigePage from './pages/PlanspielAnzeigePage'
 import './index.css'
 
 function GbmRoute({ children }) {
@@ -122,6 +123,7 @@ function AppRoutes() {
         <Route path="ausbildung/lehrgang" element={<ProtectedRoute><LehrgangUebersichtPage /></ProtectedRoute>} />
         <Route path="ausbildung/lehrgang/:id" element={<ProtectedRoute><LehrgangLernPage /></ProtectedRoute>} />
         <Route path="ausbildung/planspiel" element={<ProtectedRoute><PlanspielPage /></ProtectedRoute>} />
+        <Route path="ausbildung/planspiel/:id/anzeige" element={<ProtectedRoute><PlanspielAnzeigePage /></ProtectedRoute>} />
         <Route path="szenarien" element={<ProtectedRoute adminOnly><SzenarienAdminPage /></ProtectedRoute>} />
         <Route path="regelwerke" element={<ProtectedRoute adminOnly><RegelwerkeAdminPage /></ProtectedRoute>} />
         <Route path="lehrgang-admin" element={<ProtectedRoute adminOnly><LehrgangAdminPage /></ProtectedRoute>} />

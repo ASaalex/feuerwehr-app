@@ -551,6 +551,14 @@ function PlanspielAktiv({ session, kannLeiten, onBack }) {
           <span style={{ fontWeight: 600, fontSize: 15 }}>🗺️ {session.titel}</span>
           {session.szenario && <span className="badge badge-amber" style={{ marginLeft: 8, fontSize: 11 }}>{session.szenario.titel}</span>}
         </div>
+        <button
+          className="btn btn-sm"
+          style={{ background: '#065f46', color: 'white', border: 'none' }}
+          onClick={() => window.open(`/ausbildung/planspiel/${session.id}/anzeige`, '_blank')}
+          title="Öffnet die Kamera-Ansicht für Beamer / zweiten Bildschirm"
+        >
+          📺 Anzeigeansicht
+        </button>
         {kannLeiten && !istAbgeschlossen && (
           <div style={{ display: 'flex', gap: 6 }}>
             <button className="btn btn-sm btn-secondary" onClick={() => speichern(false)} disabled={saving}>
