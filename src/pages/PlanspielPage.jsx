@@ -298,7 +298,10 @@ function PlanspielNeu({ profile, onBack }) {
 
 function PlanspielAktiv({ session, kannLeiten, onBack }) {
   const [phasen, setPhasen] = useState(session.phasen ?? [])
-  const [karte, setKarte] = useState(session.kartenzustand ?? { elemente: [], linien: [], zonen: [] })
+  const [karte, setKarte] = useState(() => {
+    const k = session.kartenzustand ?? {}
+    return { elemente: [], linien: [], zonen: [], wetterinfo: {}, ...k }
+  })
   const [lageUpdates, setLageUpdates] = useState(session.lage_updates ?? [])
   const [neuesUpdate, setNeuesUpdate] = useState('')
   const [aktivePhasenId, setAktivePhasenId] = useState(session.phasen?.find(p => p.aktiv)?.id ?? session.phasen?.[0]?.id)
@@ -659,6 +662,46 @@ function PlanspielAktiv({ session, kannLeiten, onBack }) {
                 {/* Lage */}
                 {seitenleiste === 'lage' && (
                   <div>
+                    {/* Übungsdaten / Wetter */}
+                    {kannLeiten && !istAbgeschlossen && (
+                      <div style={{ marginBottom: 14, padding: '10px 12px', background: 'var(--gray-50)', borderRadius: 8, border: '1px solid var(--gray-200)' }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>🌤 Übungsdaten</div>
+                        <div style={{ display: 'grid', gap: 6 }}>
+                          <div>
+                            <label style={{ fontSize: 11, color: 'var(--gray-500)', display: 'block', marginBottom: 2 }}>Datum</label>
+                            <input type="date" value={karte.wetterinfo?.datum ?? ''} onChange={e => setKarte(k => ({ ...k, wetterinfo: { ...k.wetterinfo, datum: e.target.value } }))} style={{ fontSize: 12, padding: '4px 8px', width: '100%' }} />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: 11, color: 'var(--gray-500)', display: 'block', marginBottom: 2 }}>Wetterlage</label>
+                            <select value={karte.wetterinfo?.wetterlage ?? ''} onChange={e => setKarte(k => ({ ...k, wetterinfo: { ...k.wetterinfo, wetterlage: e.target.value } }))} style={{ fontSize: 12, padding: '4px 8px', width: '100%' }}>
+                              <option value="">– wählen –</option>
+                              {['Sonnig ☀️','Leicht bewölkt 🌤','Bewölkt ⛅','Bedeckt ☁️','Regen 🌧','Gewitter ⛈','Nebel 🌫','Schnee ❄️'].map(w => <option key={w} value={w}>{w}</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <label style={{ fontSize: 11, color: 'var(--gray-500)', display: 'block', marginBottom: 2 }}>Windrichtung</label>
+                            <select value={karte.wetterinfo?.windrichtung ?? ''} onChange={e => setKarte(k => ({ ...k, wetterinfo: { ...k.wetterinfo, windrichtung: e.target.value } }))} style={{ fontSize: 12, padding: '4px 8px', width: '100%' }}>
+                              <option value="">– wählen –</option>
+                              {['N','NO','O','SO','S','SW','W','NW'].map(w => <option key={w} value={w}>{w}</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <label style={{ fontSize: 11, color: 'var(--gray-500)', display: 'block', marginBottom: 2 }}>Windstärke</label>
+                            <select value={karte.wetterinfo?.windstaerke ?? ''} onChange={e => setKarte(k => ({ ...k, wetterinfo: { ...k.wetterinfo, windstaerke: e.target.value } }))} style={{ fontSize: 12, padding: '4px 8px', width: '100%' }}>
+                              <option value="">– wählen –</option>
+                              {['Windstill','Leichte Brise','Mäßiger Wind','Frischer Wind','Starker Wind','Sturm'].map(w => <option key={w} value={w}>{w}</option>)}
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    {/* Wetter-Anzeige (read-only) */}
+                    {(istAbgeschlossen || !kannLeiten) && karte.wetterinfo && Object.values(karte.wetterinfo).some(Boolean) && (
+                      <WetterKarte wetterinfo={karte.wetterinfo} />
+                    )}
+
+                    {/* Lagemeldungen */}
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>⚡ Lagemeldungen</div>
                     {kannLeiten && !istAbgeschlossen && (
                       <div style={{ marginBottom: 12 }}>
                         <textarea value={neuesUpdate} onChange={e => setNeuesUpdate(e.target.value)} placeholder="Neue Lagemeldung eingeben..." rows={2} style={{ fontSize: 12, marginBottom: 6 }} />
@@ -785,4 +828,24 @@ function elNameVonWerkzeug(w) {
   if (w.typ === 'fahrzeug') return FAHRZEUG_TYPEN.find(f => f.id === w.subtyp)?.name ?? ''
   if (w.typ === 'trupp')   return TRUPP_TYPEN.find(t => t.id === w.subtyp)?.name ?? ''
   return PUNKT_TYPEN.find(p => p.id === w.subtyp)?.name ?? ''
+}
+
+export function WetterKarte({ wetterinfo, dark = false }) {
+  if (!wetterinfo || !Object.values(wetterinfo).some(Boolean)) return null
+  const zeilen = [
+    wetterinfo.datum && { label: '📅 Datum', wert: new Date(wetterinfo.datum).toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) },
+    wetterinfo.wetterlage && { label: '🌤 Wetter', wert: wetterinfo.wetterlage },
+    wetterinfo.windrichtung && { label: '🧭 Wind aus', wert: wetterinfo.windrichtung + (wetterinfo.windstaerke ? ` · ${wetterinfo.windstaerke}` : '') },
+  ].filter(Boolean)
+
+  return (
+    <div style={{ borderRadius: 8, padding: '10px 12px', marginBottom: 10, background: dark ? 'rgba(255,255,255,0.1)' : 'var(--gray-50)', border: `1px solid ${dark ? 'rgba(255,255,255,0.2)' : 'var(--gray-200)'}` }}>
+      {zeilen.map(z => (
+        <div key={z.label} style={{ display: 'flex', gap: 8, marginBottom: 4, fontSize: 12 }}>
+          <span style={{ color: dark ? 'rgba(255,255,255,0.5)' : 'var(--gray-400)', minWidth: 80 }}>{z.label}</span>
+          <span style={{ color: dark ? 'white' : 'var(--gray-700)', fontWeight: 500 }}>{z.wert}</span>
+        </div>
+      ))}
+    </div>
+  )
 }

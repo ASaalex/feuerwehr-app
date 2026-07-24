@@ -5,6 +5,7 @@ import 'leaflet/dist/leaflet.css'
 import { supabase } from '../lib/supabase'
 import { format } from 'date-fns'
 import { de } from 'date-fns/locale'
+import { WetterKarte } from './PlanspielPage'
 
 const FAHRZEUG_TYPEN = [
   { id: 'lf10',  name: 'LF 10',  emoji: '🚒', farbe: '#DC2626' },
@@ -59,20 +60,26 @@ export default function PlanspielAnzeigePage() {
   const { id } = useParams()
   const [session, setSession] = useState(null)
   const [lageUpdates, setLageUpdates] = useState([])
+  const [phasen, setPhasen] = useState([])
+  const [wetterinfo, setWetterinfo] = useState(null)
   const [letzteAktualisierung, setLetzteAktualisierung] = useState(null)
   const [neuesMeldungId, setNeuesMeldungId] = useState(null)
 
+  // Karte
   const mapRef = useRef(null)
   const markerRefs = useRef({})
   const linienRefs = useRef({})
   const zonenRefs = useRef({})
-  const prevLageCountRef = useRef(0)
+  // Merken ob Karte schon zentriert wurde
+  const hatZentriert = useRef(false)
+  // Letzter Lage-Count für Neu-Erkennung
+  const prevLageCountRef = useRef(-1)
 
-  // Callback-Ref: initialisiert die Karte sobald der div im DOM ist
+  // Callback-Ref: Karte initialisieren sobald der div im DOM ist
   const mapContainer = useCallback((node) => {
     if (!node || mapRef.current) return
     const map = L.map(node, { zoomControl: true })
-    map.setView([51.1657, 10.4515], 13) // Fallback-Center bis Session geladen
+    map.setView([51.1657, 10.4515], 13)
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
       maxZoom: 19,
@@ -80,8 +87,8 @@ export default function PlanspielAnzeigePage() {
     mapRef.current = map
   }, [])
 
-  // Daten laden und Karte aktualisieren
   async function laden() {
+    const map = mapRef.current
     const { data, error } = await supabase
       .from('planspiel_sessions')
       .select('*, szenario:szenarien(titel, anfangs_meldung)')
@@ -89,20 +96,24 @@ export default function PlanspielAnzeigePage() {
       .single()
     if (error || !data) return
 
-    // Session-State setzen
     setSession(data)
     setLetzteAktualisierung(new Date())
+    setPhasen(data.phasen ?? [])
 
-    // Karte auf Session-Center zentrieren (nur beim ersten Laden)
-    const map = mapRef.current
-    if (map && data.map_center && prevLageCountRef.current === 0) {
+    // Karte einmalig auf Session-Center setzen
+    if (map && data.map_center && !hatZentriert.current) {
       const c = data.map_center
       map.setView([c.lat, c.lng], c.zoom ?? 14)
+      hatZentriert.current = true
     }
 
-    // Lage-Updates
+    // Wetterinfo
+    const wi = data.kartenzustand?.wetterinfo
+    setWetterinfo(wi && Object.values(wi).some(Boolean) ? wi : null)
+
+    // Lage-Updates — neue Meldung erkennen
     const updates = data.lage_updates ?? []
-    if (prevLageCountRef.current > 0 && updates.length > prevLageCountRef.current) {
+    if (prevLageCountRef.current >= 0 && updates.length > prevLageCountRef.current) {
       const neueId = updates[0]?.id
       setNeuesMeldungId(neueId)
       setTimeout(() => setNeuesMeldungId(null), 4000)
@@ -115,12 +126,16 @@ export default function PlanspielAnzeigePage() {
   }
 
   function aktualisiereKarte(map, karte) {
+    const elemente = karte.elemente ?? []
+    const linien   = karte.linien   ?? []
+    const zonen    = karte.zonen    ?? []
+
     // Marker
-    const aktuelleIds = new Set(karte.elemente.map(e => e.id))
+    const aktuelleIds = new Set(elemente.map(e => e.id))
     Object.entries(markerRefs.current).forEach(([mid, m]) => {
       if (!aktuelleIds.has(mid)) { m.remove(); delete markerRefs.current[mid] }
     })
-    karte.elemente.forEach(el => {
+    elemente.forEach(el => {
       const icon = L.divIcon({
         className: '',
         html: `<div style="background:${elFarbe(el)};color:white;border-radius:6px;padding:3px 7px;font-size:18px;box-shadow:0 2px 6px rgba(0,0,0,0.4);border:2px solid white;display:flex;align-items:center;gap:4px;white-space:nowrap;user-select:none;"><span>${elEmoji(el)}</span><span style="font-size:10px;font-weight:700;">${elName(el)}</span></div>`,
@@ -135,11 +150,11 @@ export default function PlanspielAnzeigePage() {
     })
 
     // Linien
-    const linienIds = new Set(karte.linien.map(l => l.id))
+    const linienIds = new Set(linien.map(l => l.id))
     Object.entries(linienRefs.current).forEach(([lid, layer]) => {
       if (!linienIds.has(lid)) { layer.remove(); delete linienRefs.current[lid] }
     })
-    karte.linien.forEach(l => {
+    linien.forEach(l => {
       if (!linienRefs.current[l.id]) {
         const typ = LINIE_TYPEN.find(x => x.id === l.typ) ?? LINIE_TYPEN[0]
         linienRefs.current[l.id] = L.polyline(l.punkte.map(ll), { color: typ.farbe, weight: typ.breite ?? 3 }).addTo(map)
@@ -147,11 +162,11 @@ export default function PlanspielAnzeigePage() {
     })
 
     // Zonen
-    const zonenIds = new Set(karte.zonen.map(z => z.id))
+    const zonenIds = new Set(zonen.map(z => z.id))
     Object.entries(zonenRefs.current).forEach(([zid, layer]) => {
       if (!zonenIds.has(zid)) { layer.remove(); delete zonenRefs.current[zid] }
     })
-    karte.zonen.forEach(z => {
+    zonen.forEach(z => {
       if (!zonenRefs.current[z.id]) {
         const typ = ZONE_TYPEN.find(x => x.id === z.typ) ?? { farbe: '#DC2626' }
         zonenRefs.current[z.id] = L.polygon(z.punkte.map(ll), { color: typ.farbe, fillOpacity: 0.2, weight: 2 }).addTo(map)
@@ -159,21 +174,20 @@ export default function PlanspielAnzeigePage() {
     })
   }
 
-  // Initial laden + Interval
+  // Initial laden + Interval — kein setTimeout, callback-ref garantiert map ist bereit
   useEffect(() => {
-    // Kurz warten bis mapContainer-Callback die Karte erstellt hat
-    const t = setTimeout(() => {
-      laden()
-      const interval = setInterval(laden, 10000)
-      return () => clearInterval(interval)
-    }, 300)
-
+    laden()
+    const interval = setInterval(laden, 10000)
     return () => {
-      clearTimeout(t)
-      mapRef.current?.remove()
-      mapRef.current = null
+      clearInterval(interval)
+      if (mapRef.current) { mapRef.current.remove(); mapRef.current = null }
+      hatZentriert.current = false
+      prevLageCountRef.current = -1
     }
   }, [id])
+
+  // Aktive Phase für Anzeige
+  const aktivPhase = phasen.find(p => p.aktiv && !p.abgeschlossen) ?? phasen.find(p => !p.abgeschlossen)
 
   if (!session) return (
     <div className="loading-page">
@@ -195,7 +209,7 @@ export default function PlanspielAnzeigePage() {
         )}
         <div style={{ flex: 1 }} />
         {letzteAktualisierung && (
-          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>
+          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>
             Stand: {format(letzteAktualisierung, 'HH:mm:ss', { locale: de })} · alle 10 Sek.
           </span>
         )}
@@ -208,30 +222,66 @@ export default function PlanspielAnzeigePage() {
         </div>
       )}
 
-      {/* Karte + Panel */}
+      {/* Karte + rechtes Panel */}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <div ref={mapContainer} style={{ flex: 1, minWidth: 0, minHeight: 0 }} />
 
-        {/* Lage-Updates Panel */}
-        <div style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column', background: '#111827', borderLeft: '2px solid #374151' }}>
-          <div style={{ padding: '12px 16px', borderBottom: '1px solid #374151', flexShrink: 0 }}>
-            <span style={{ color: 'white', fontWeight: 700, fontSize: 13, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-              ⚡ Lagemeldungen
-            </span>
-          </div>
+        {/* Rechtes Panel */}
+        <div style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column', background: '#111827', borderLeft: '2px solid #374151', overflowY: 'auto' }}>
 
-          <div style={{ flex: 1, overflowY: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {/* Wetterinfo */}
+          {wetterinfo && (
+            <div style={{ padding: '12px 12px 0' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>🌤 Übungsdaten</div>
+              <WetterKarte wetterinfo={wetterinfo} dark />
+            </div>
+          )}
+
+          {/* Aktive Phase + Checkpunkte */}
+          {aktivPhase && (
+            <div style={{ padding: '12px 12px 0' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+                📋 Phase: {aktivPhase.name}
+              </div>
+              {/* Phasen-Fortschrittsleiste */}
+              <div style={{ display: 'flex', gap: 3, marginBottom: 10 }}>
+                {phasen.map(p => (
+                  <div key={p.id} title={p.name} style={{ flex: 1, height: 4, borderRadius: 2, background: p.abgeschlossen ? '#16A34A' : p.id === aktivPhase.id ? '#FBBF24' : 'rgba(255,255,255,0.15)' }} />
+                ))}
+              </div>
+              {/* Checkpunkte */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 10 }}>
+                {aktivPhase.checkpunkte.map(cp => (
+                  <div key={cp.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '6px 8px', borderRadius: 6, background: cp.erledigt ? 'rgba(22,163,74,0.2)' : 'rgba(255,255,255,0.06)', border: `1px solid ${cp.erledigt ? 'rgba(22,163,74,0.4)' : 'rgba(255,255,255,0.1)'}` }}>
+                    <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>{cp.erledigt ? '✅' : '⬜'}</span>
+                    <span style={{ fontSize: 12, color: cp.erledigt ? 'rgba(255,255,255,0.5)' : 'white', textDecoration: cp.erledigt ? 'line-through' : 'none', lineHeight: 1.4 }}>{cp.text}</span>
+                  </div>
+                ))}
+                {aktivPhase.checkpunkte.length === 0 && (
+                  <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)', textAlign: 'center', padding: '8px 0' }}>Keine Checkpunkte</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Divider */}
+          {(wetterinfo || aktivPhase) && (
+            <div style={{ height: 1, background: '#374151', margin: '0 12px 0' }} />
+          )}
+
+          {/* Lagemeldungen */}
+          <div style={{ padding: '12px 12px 0', flexShrink: 0 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+              ⚡ Lagemeldungen
+            </div>
+          </div>
+          <div style={{ flex: 1, overflowY: 'auto', padding: '0 12px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
             {lageUpdates.length === 0 ? (
-              <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: 13, textAlign: 'center', marginTop: 32 }}>
-                Noch keine Meldungen
-              </p>
+              <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: 13, textAlign: 'center', marginTop: 16 }}>Noch keine Meldungen</p>
             ) : lageUpdates.map((u, i) => (
               <div key={u.id} style={{
-                borderRadius: 8,
-                padding: '10px 12px',
-                background: u.id === neuesMeldungId
-                  ? 'rgba(251,191,36,0.2)'
-                  : i === 0 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.05)',
+                borderRadius: 8, padding: '10px 12px',
+                background: u.id === neuesMeldungId ? 'rgba(251,191,36,0.2)' : i === 0 ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.05)',
                 border: `1px solid ${u.id === neuesMeldungId ? '#FBBF24' : i === 0 ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.07)'}`,
                 transition: 'background 0.5s, border-color 0.5s',
               }}>
@@ -245,12 +295,13 @@ export default function PlanspielAnzeigePage() {
                     </span>
                   )}
                 </div>
-                <div style={{ fontSize: 14, color: 'white', lineHeight: 1.5 }}>{u.text}</div>
+                <div style={{ fontSize: 13, color: 'white', lineHeight: 1.5 }}>{u.text}</div>
               </div>
             ))}
           </div>
 
-          <div style={{ padding: '8px 16px', borderTop: '1px solid #374151', fontSize: 11, color: 'rgba(255,255,255,0.3)', textAlign: 'center', flexShrink: 0 }}>
+          {/* Footer */}
+          <div style={{ padding: '8px 16px', borderTop: '1px solid #374151', fontSize: 11, color: 'rgba(255,255,255,0.25)', textAlign: 'center', flexShrink: 0 }}>
             {lageUpdates.length} Meldung{lageUpdates.length !== 1 ? 'en' : ''} gesamt
           </div>
         </div>
