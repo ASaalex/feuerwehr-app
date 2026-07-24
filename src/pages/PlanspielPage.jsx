@@ -319,12 +319,34 @@ function PlanspielAktiv({ session, kannLeiten, onBack }) {
   // Refs für closures in Event-Listenern
   const karteRef = useRef(karte)
   useEffect(() => { karteRef.current = karte }, [karte])
+  const phasenRef = useRef(phasen)
+  useEffect(() => { phasenRef.current = phasen }, [phasen])
+  const lageUpdatesRef = useRef(lageUpdates)
+  useEffect(() => { lageUpdatesRef.current = lageUpdates }, [lageUpdates])
   const werkzeugRef = useRef(werkzeug)
   useEffect(() => { werkzeugRef.current = werkzeug }, [werkzeug])
   const zeichnePunkteRef = useRef(zeichnePunkte)
   useEffect(() => { zeichnePunkteRef.current = zeichnePunkte }, [zeichnePunkte])
 
   const istAbgeschlossen = session.status === 'abgeschlossen'
+
+  // Auto-Speichern alle 8 Sekunden (damit Anzeigeansicht aktuell bleibt)
+  useEffect(() => {
+    if (istAbgeschlossen || !kannLeiten) return
+    const interval = setInterval(async () => {
+      const map = mapRef.current
+      const center = map
+        ? { lng: map.getCenter().lng, lat: map.getCenter().lat, zoom: map.getZoom() }
+        : session.map_center
+      await supabase.from('planspiel_sessions').update({
+        kartenzustand: karteRef.current,
+        phasen: phasenRef.current,
+        lage_updates: lageUpdatesRef.current,
+        map_center: center,
+      }).eq('id', session.id)
+    }, 8000)
+    return () => clearInterval(interval)
+  }, [istAbgeschlossen, kannLeiten, session.id])
 
   // Karte initialisieren
   useEffect(() => {
