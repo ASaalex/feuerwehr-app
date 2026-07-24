@@ -91,7 +91,7 @@ function phasenVonStandard() {
     ...p,
     aktiv: p.id === 'wache',
     abgeschlossen: false,
-    checkpunkte: p.checkpunkte.map((t, i) => ({ id: p.id + '_' + i, text: t, erledigt: false })),
+    checkpunkte: p.checkpunkte.map((t, i) => ({ id: p.id + '_' + i, text: t, status: null })),
     extra: [],
   }))
 }
@@ -526,14 +526,19 @@ function PlanspielAktiv({ session, kannLeiten, onBack }) {
   function checkpunktToggle(phasenId, cpId) {
     if (!kannLeiten) return
     setPhasen(ps => ps.map(p => p.id !== phasenId ? p : {
-      ...p, checkpunkte: p.checkpunkte.map(cp => cp.id === cpId ? { ...cp, erledigt: !cp.erledigt } : cp)
+      ...p, checkpunkte: p.checkpunkte.map(cp => {
+        if (cp.id !== cpId) return cp
+        const cur = cp.status ?? (cp.erledigt ? 'richtig' : null)
+        const next = cur === null ? 'richtig' : cur === 'richtig' ? 'falsch' : null
+        return { ...cp, status: next }
+      })
     }))
   }
 
   function addCheckpunkt(phasenId) {
     if (!neuerCheckpunkt.trim()) return
     setPhasen(ps => ps.map(p => p.id !== phasenId ? p : {
-      ...p, checkpunkte: [...p.checkpunkte, { id: Date.now() + '', text: neuerCheckpunkt.trim(), erledigt: false }]
+      ...p, checkpunkte: [...p.checkpunkte, { id: Date.now() + '', text: neuerCheckpunkt.trim(), status: null }]
     }))
     setNeuerCheckpunkt('')
   }
@@ -628,18 +633,31 @@ function PlanspielAktiv({ session, kannLeiten, onBack }) {
                       <div onClick={() => setAktivePhasenId(p.id)} style={{ padding: '8px 12px', background: istAktiv ? 'var(--red-pale)' : p.abgeschlossen ? '#EAFAF1' : 'var(--gray-50)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span>{p.abgeschlossen ? '✅' : istAktiv ? '▶' : '○'}</span>
                         <span style={{ flex: 1, fontWeight: 600, fontSize: 13, color: istAktiv ? 'var(--red-dark)' : 'var(--gray-700)' }}>{p.name}</span>
-                        {p.checkpunkte.length > 0 && <span style={{ fontSize: 11, color: 'var(--gray-400)' }}>{erledigt}/{p.checkpunkte.length}</span>}
+                        {p.checkpunkte.length > 0 && <span style={{ fontSize: 11, color: 'var(--gray-400)' }}>{p.checkpunkte.filter(c => (c.status ?? (c.erledigt ? 'richtig' : null)) !== null).length}/{p.checkpunkte.length}</span>}
                       </div>
                       {istAktiv && (
                         <div style={{ padding: '8px 12px' }}>
-                          {p.checkpunkte.map(cp => (
-                            <label key={cp.id} onClick={() => checkpunktToggle(p.id, cp.id)} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '6px 0', cursor: kannLeiten ? 'pointer' : 'default', borderBottom: '1px solid var(--gray-100)' }}>
-                              <div style={{ width: 18, height: 18, borderRadius: 4, border: `2px solid ${cp.erledigt ? 'var(--red)' : 'var(--gray-300)'}`, background: cp.erledigt ? 'var(--red)' : 'white', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 1 }}>
-                                {cp.erledigt && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20,6 9,17 4,12"/></svg>}
+                          {p.checkpunkte.map(cp => {
+                            const st = cp.status ?? (cp.erledigt ? 'richtig' : null)
+                            return (
+                              <div key={cp.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '7px 0', borderBottom: '1px solid var(--gray-100)' }}>
+                                <span style={{ fontSize: 12, flex: 1, color: st === null ? 'var(--gray-700)' : 'var(--gray-400)', lineHeight: 1.4, paddingTop: 2 }}>{cp.text}</span>
+                                {kannLeiten && !istAbgeschlossen && (
+                                  <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                                    <button onClick={() => checkpunktToggle(p.id, cp.id)} title="Richtig → Falsch → Offen" style={{ width: 28, height: 28, borderRadius: 6, border: `2px solid ${st === 'richtig' ? '#16A34A' : 'var(--gray-300)'}`, background: st === 'richtig' ? '#16A34A' : 'white', cursor: 'pointer', fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                      {st === 'richtig' ? <span style={{ color: 'white' }}>✓</span> : <span style={{ color: 'var(--gray-300)' }}>✓</span>}
+                                    </button>
+                                    <button onClick={() => setPhasen(ps => ps.map(p2 => p2.id !== p.id ? p2 : { ...p2, checkpunkte: p2.checkpunkte.map(c => c.id !== cp.id ? c : { ...c, status: st === 'falsch' ? null : 'falsch' }) }))} title="Als vergessen/falsch markieren" style={{ width: 28, height: 28, borderRadius: 6, border: `2px solid ${st === 'falsch' ? '#DC2626' : 'var(--gray-300)'}`, background: st === 'falsch' ? '#DC2626' : 'white', cursor: 'pointer', fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                      {st === 'falsch' ? <span style={{ color: 'white' }}>✗</span> : <span style={{ color: 'var(--gray-300)' }}>✗</span>}
+                                    </button>
+                                  </div>
+                                )}
+                                {(!kannLeiten || istAbgeschlossen) && st !== null && (
+                                  <span style={{ fontSize: 16 }}>{st === 'richtig' ? '✅' : '❌'}</span>
+                                )}
                               </div>
-                              <span style={{ fontSize: 12, color: cp.erledigt ? 'var(--gray-400)' : 'var(--gray-700)', textDecoration: cp.erledigt ? 'line-through' : 'none', lineHeight: 1.4 }}>{cp.text}</span>
-                            </label>
-                          ))}
+                            )
+                          })}
                           {kannLeiten && !istAbgeschlossen && (
                             <>
                               <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>

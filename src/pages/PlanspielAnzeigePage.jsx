@@ -38,6 +38,9 @@ const ZONE_TYPEN = [
   { id: 'abschnitt',     farbe: '#7C3AED' },
 ]
 
+// Windrichtung → Grad (Pfeil zeigt wohin der Wind weht)
+const WIND_DEG = { N: 180, NO: 225, O: 270, SO: 315, S: 0, SW: 45, W: 90, NW: 135 }
+
 const ll = ([lng, lat]) => [lat, lng]
 
 function elEmoji(el) {
@@ -58,24 +61,22 @@ function elFarbe(el) {
 
 export default function PlanspielAnzeigePage() {
   const { id } = useParams()
-  const [session, setSession] = useState(null)
+  const [session, setSession]       = useState(null)
+  const [phasen, setPhasen]         = useState([])
   const [lageUpdates, setLageUpdates] = useState([])
-  const [phasen, setPhasen] = useState([])
   const [wetterinfo, setWetterinfo] = useState(null)
-  const [letzteAktualisierung, setLetzteAktualisierung] = useState(null)
+  const [letzteAkt, setLetzteAkt]   = useState(null)
   const [neuesMeldungId, setNeuesMeldungId] = useState(null)
+  const [anzeigePhaseIdx, setAnzeigePhaseIdx] = useState(0) // für Navigation
 
-  // Karte
-  const mapRef = useRef(null)
-  const markerRefs = useRef({})
-  const linienRefs = useRef({})
-  const zonenRefs = useRef({})
-  // Merken ob Karte schon zentriert wurde
+  const mapRef       = useRef(null)
+  const markerRefs   = useRef({})
+  const linienRefs   = useRef({})
+  const zonenRefs    = useRef({})
   const hatZentriert = useRef(false)
-  // Letzter Lage-Count für Neu-Erkennung
-  const prevLageCountRef = useRef(-1)
+  const prevLageLen  = useRef(-1)
 
-  // Callback-Ref: Karte initialisieren sobald der div im DOM ist
+  // Callback-Ref: Leaflet-Karte initialisieren sobald div im DOM
   const mapContainer = useCallback((node) => {
     if (!node || mapRef.current) return
     const map = L.map(node, { zoomControl: true })
@@ -87,42 +88,37 @@ export default function PlanspielAnzeigePage() {
     mapRef.current = map
   }, [])
 
-  async function laden() {
-    const map = mapRef.current
-    const { data, error } = await supabase
-      .from('planspiel_sessions')
-      .select('*, szenario:szenarien(titel, anfangs_meldung)')
-      .eq('id', id)
-      .single()
-    if (error || !data) return
-
+  function verarbeite(data) {
     setSession(data)
-    setLetzteAktualisierung(new Date())
-    setPhasen(data.phasen ?? [])
+    setLetzteAkt(new Date())
 
-    // Karte einmalig auf Session-Center setzen
-    if (map && data.map_center && !hatZentriert.current) {
-      const c = data.map_center
-      map.setView([c.lat, c.lng], c.zoom ?? 14)
-      hatZentriert.current = true
-    }
+    const neuePhasen = data.phasen ?? []
+    setPhasen(neuePhasen)
 
-    // Wetterinfo
+    // Anzeigeindex beim ersten Laden auf aktive Phase setzen
+    const aktivIdx = neuePhasen.findIndex(p => p.aktiv && !p.abgeschlossen)
+    if (prevLageLen.current === -1 && aktivIdx >= 0) setAnzeigePhaseIdx(aktivIdx)
+
     const wi = data.kartenzustand?.wetterinfo
     setWetterinfo(wi && Object.values(wi).some(Boolean) ? wi : null)
 
-    // Lage-Updates — neue Meldung erkennen
     const updates = data.lage_updates ?? []
-    if (prevLageCountRef.current >= 0 && updates.length > prevLageCountRef.current) {
-      const neueId = updates[0]?.id
-      setNeuesMeldungId(neueId)
+    if (prevLageLen.current >= 0 && updates.length > prevLageLen.current) {
+      setNeuesMeldungId(updates[0]?.id)
       setTimeout(() => setNeuesMeldungId(null), 4000)
     }
-    prevLageCountRef.current = updates.length
+    prevLageLen.current = updates.length
     setLageUpdates(updates)
 
-    // Kartenzustand rendern
-    if (map) aktualisiereKarte(map, data.kartenzustand ?? { elemente: [], linien: [], zonen: [] })
+    const map = mapRef.current
+    if (map) {
+      if (!hatZentriert.current && data.map_center) {
+        const c = data.map_center
+        map.setView([c.lat, c.lng], c.zoom ?? 14)
+        hatZentriert.current = true
+      }
+      aktualisiereKarte(map, data.kartenzustand ?? { elemente: [], linien: [], zonen: [] })
+    }
   }
 
   function aktualisiereKarte(map, karte) {
@@ -130,7 +126,6 @@ export default function PlanspielAnzeigePage() {
     const linien   = karte.linien   ?? []
     const zonen    = karte.zonen    ?? []
 
-    // Marker
     const aktuelleIds = new Set(elemente.map(e => e.id))
     Object.entries(markerRefs.current).forEach(([mid, m]) => {
       if (!aktuelleIds.has(mid)) { m.remove(); delete markerRefs.current[mid] }
@@ -149,10 +144,9 @@ export default function PlanspielAnzeigePage() {
       }
     })
 
-    // Linien
     const linienIds = new Set(linien.map(l => l.id))
-    Object.entries(linienRefs.current).forEach(([lid, layer]) => {
-      if (!linienIds.has(lid)) { layer.remove(); delete linienRefs.current[lid] }
+    Object.entries(linienRefs.current).forEach(([lid, l]) => {
+      if (!linienIds.has(lid)) { l.remove(); delete linienRefs.current[lid] }
     })
     linien.forEach(l => {
       if (!linienRefs.current[l.id]) {
@@ -161,10 +155,9 @@ export default function PlanspielAnzeigePage() {
       }
     })
 
-    // Zonen
     const zonenIds = new Set(zonen.map(z => z.id))
-    Object.entries(zonenRefs.current).forEach(([zid, layer]) => {
-      if (!zonenIds.has(zid)) { layer.remove(); delete zonenRefs.current[zid] }
+    Object.entries(zonenRefs.current).forEach(([zid, z]) => {
+      if (!zonenIds.has(zid)) { z.remove(); delete zonenRefs.current[zid] }
     })
     zonen.forEach(z => {
       if (!zonenRefs.current[z.id]) {
@@ -174,27 +167,53 @@ export default function PlanspielAnzeigePage() {
     })
   }
 
-  // Initial laden + Interval — kein setTimeout, callback-ref garantiert map ist bereit
   useEffect(() => {
-    laden()
-    const interval = setInterval(laden, 10000)
+    // Initial laden
+    supabase.from('planspiel_sessions')
+      .select('*, szenario:szenarien(titel, anfangs_meldung)')
+      .eq('id', id).single()
+      .then(({ data }) => { if (data) verarbeite(data) })
+
+    // Realtime-Subscription für sofortige Updates
+    const channel = supabase
+      .channel(`planspiel-anzeige-${id}`)
+      .on('postgres_changes', {
+        event: 'UPDATE', schema: 'public', table: 'planspiel_sessions', filter: `id=eq.${id}`
+      }, async () => {
+        // Payload enthält keine Joins → frisch nachladen
+        const { data } = await supabase
+          .from('planspiel_sessions')
+          .select('*, szenario:szenarien(titel, anfangs_meldung)')
+          .eq('id', id).single()
+        if (data) verarbeite(data)
+      })
+      .subscribe()
+
+    // Fallback-Polling alle 30 Sek. (falls Realtime-Verbindung abbricht)
+    const fallback = setInterval(async () => {
+      const { data } = await supabase
+        .from('planspiel_sessions')
+        .select('*, szenario:szenarien(titel, anfangs_meldung)')
+        .eq('id', id).single()
+      if (data) verarbeite(data)
+    }, 30000)
+
     return () => {
-      clearInterval(interval)
+      supabase.removeChannel(channel)
+      clearInterval(fallback)
       if (mapRef.current) { mapRef.current.remove(); mapRef.current = null }
       hatZentriert.current = false
-      prevLageCountRef.current = -1
+      prevLageLen.current = -1
     }
   }, [id])
 
-  // Aktive Phase für Anzeige
-  const aktivPhase = phasen.find(p => p.aktiv && !p.abgeschlossen) ?? phasen.find(p => !p.abgeschlossen)
+  const anzeigePhase = phasen[anzeigePhaseIdx]
 
   if (!session) return (
-    <div className="loading-page">
-      <div className="spinner"></div>
-      <span>Lade Planspiel…</span>
-    </div>
+    <div className="loading-page"><div className="spinner"></div><span>Lade Planspiel…</span></div>
   )
+
+  const windDeg = wetterinfo?.windrichtung ? (WIND_DEG[wetterinfo.windrichtung] ?? 0) : null
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 60px)' }}>
@@ -208,76 +227,130 @@ export default function PlanspielAnzeigePage() {
           </span>
         )}
         <div style={{ flex: 1 }} />
-        {letzteAktualisierung && (
-          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>
-            Stand: {format(letzteAktualisierung, 'HH:mm:ss', { locale: de })} · alle 10 Sek.
-          </span>
-        )}
+        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>
+          {letzteAkt ? `Stand: ${format(letzteAkt, 'HH:mm:ss', { locale: de })}` : 'Verbinde…'}
+        </span>
       </div>
 
-      {/* Szenario-Lage */}
       {session.szenario?.anfangs_meldung && (
         <div style={{ background: '#FEF9EC', borderBottom: '1px solid #FCD34D', padding: '8px 16px', fontSize: 13, color: '#92400E', flexShrink: 0 }}>
           <strong>Lage:</strong> {session.szenario.anfangs_meldung}
         </div>
       )}
 
-      {/* Karte + rechtes Panel */}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        <div ref={mapContainer} style={{ flex: 1, minWidth: 0, minHeight: 0 }} />
+        {/* Karte mit Wind-Overlay */}
+        <div style={{ flex: 1, minWidth: 0, minHeight: 0, position: 'relative' }}>
+          <div ref={mapContainer} style={{ width: '100%', height: '100%' }} />
+
+          {/* Wind-Indikator */}
+          {windDeg !== null && (
+            <div style={{
+              position: 'absolute', top: 70, left: 12, zIndex: 1000,
+              background: 'rgba(17,24,39,0.85)', backdropFilter: 'blur(6px)',
+              borderRadius: 10, padding: '10px 14px',
+              border: '1px solid rgba(255,255,255,0.15)', color: 'white',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
+              minWidth: 80, boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+            }}>
+              <svg width="44" height="44" viewBox="0 0 44 44" style={{ transform: `rotate(${windDeg}deg)`, transition: 'transform 0.5s' }}>
+                {/* Pfeil-Körper */}
+                <line x1="22" y1="38" x2="22" y2="8" stroke="white" strokeWidth="3" strokeLinecap="round"/>
+                {/* Pfeilspitze */}
+                <polygon points="22,4 15,16 29,16" fill="white"/>
+                {/* Richtungsmarkierung (kleine Striche) */}
+                <line x1="22" y1="38" x2="14" y2="30" stroke="rgba(255,255,255,0.5)" strokeWidth="2" strokeLinecap="round"/>
+                <line x1="22" y1="38" x2="30" y2="30" stroke="rgba(255,255,255,0.5)" strokeWidth="2" strokeLinecap="round"/>
+              </svg>
+              <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.05em' }}>
+                Wind aus {wetterinfo.windrichtung}
+              </div>
+              {wetterinfo.windstaerke && (
+                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', textAlign: 'center' }}>
+                  {wetterinfo.windstaerke}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* Rechtes Panel */}
-        <div style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column', background: '#111827', borderLeft: '2px solid #374151', overflowY: 'auto' }}>
+        <div style={{ width: 310, flexShrink: 0, display: 'flex', flexDirection: 'column', background: '#111827', borderLeft: '2px solid #374151' }}>
 
           {/* Wetterinfo */}
           {wetterinfo && (
-            <div style={{ padding: '12px 12px 0' }}>
+            <div style={{ padding: '10px 12px', borderBottom: '1px solid #374151', flexShrink: 0 }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>🌤 Übungsdaten</div>
               <WetterKarte wetterinfo={wetterinfo} dark />
             </div>
           )}
 
-          {/* Aktive Phase + Checkpunkte */}
-          {aktivPhase && (
-            <div style={{ padding: '12px 12px 0' }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
-                📋 Phase: {aktivPhase.name}
+          {/* Phasen-Navigation */}
+          {phasen.length > 0 && (
+            <div style={{ padding: '10px 12px', borderBottom: '1px solid #374151', flexShrink: 0 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+                📋 Phasen
               </div>
-              {/* Phasen-Fortschrittsleiste */}
+              {/* Fortschrittsbalken */}
               <div style={{ display: 'flex', gap: 3, marginBottom: 10 }}>
-                {phasen.map(p => (
-                  <div key={p.id} title={p.name} style={{ flex: 1, height: 4, borderRadius: 2, background: p.abgeschlossen ? '#16A34A' : p.id === aktivPhase.id ? '#FBBF24' : 'rgba(255,255,255,0.15)' }} />
+                {phasen.map((p, i) => (
+                  <button key={p.id} onClick={() => setAnzeigePhaseIdx(i)} title={p.name} style={{
+                    flex: 1, height: 6, borderRadius: 3, border: 'none', cursor: 'pointer',
+                    background: i === anzeigePhaseIdx ? '#FBBF24' : p.abgeschlossen ? '#16A34A' : p.aktiv ? 'rgba(251,191,36,0.4)' : 'rgba(255,255,255,0.15)',
+                    transition: 'background 0.3s',
+                  }} />
                 ))}
               </div>
-              {/* Checkpunkte */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 10 }}>
-                {aktivPhase.checkpunkte.map(cp => (
-                  <div key={cp.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '6px 8px', borderRadius: 6, background: cp.erledigt ? 'rgba(22,163,74,0.2)' : 'rgba(255,255,255,0.06)', border: `1px solid ${cp.erledigt ? 'rgba(22,163,74,0.4)' : 'rgba(255,255,255,0.1)'}` }}>
-                    <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>{cp.erledigt ? '✅' : '⬜'}</span>
-                    <span style={{ fontSize: 12, color: cp.erledigt ? 'rgba(255,255,255,0.5)' : 'white', textDecoration: cp.erledigt ? 'line-through' : 'none', lineHeight: 1.4 }}>{cp.text}</span>
-                  </div>
-                ))}
-                {aktivPhase.checkpunkte.length === 0 && (
-                  <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)', textAlign: 'center', padding: '8px 0' }}>Keine Checkpunkte</p>
-                )}
+              {/* Navigation */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button onClick={() => setAnzeigePhaseIdx(i => Math.max(0, i - 1))} disabled={anzeigePhaseIdx === 0} style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.2)', background: 'transparent', color: anzeigePhaseIdx === 0 ? 'rgba(255,255,255,0.2)' : 'white', cursor: anzeigePhaseIdx === 0 ? 'default' : 'pointer', fontSize: 14 }}>←</button>
+                <div style={{ flex: 1, textAlign: 'center' }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'white' }}>{anzeigePhase?.name}</div>
+                  <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>{anzeigePhaseIdx + 1} / {phasen.length}</div>
+                </div>
+                <button onClick={() => setAnzeigePhaseIdx(i => Math.min(phasen.length - 1, i + 1))} disabled={anzeigePhaseIdx === phasen.length - 1} style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.2)', background: 'transparent', color: anzeigePhaseIdx === phasen.length - 1 ? 'rgba(255,255,255,0.2)' : 'white', cursor: anzeigePhaseIdx === phasen.length - 1 ? 'default' : 'pointer', fontSize: 14 }}>→</button>
               </div>
-            </div>
-          )}
 
-          {/* Divider */}
-          {(wetterinfo || aktivPhase) && (
-            <div style={{ height: 1, background: '#374151', margin: '0 12px 0' }} />
+              {/* Checkpunkte der gewählten Phase */}
+              {anzeigePhase && (
+                <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {anzeigePhase.checkpunkte.length === 0 && (
+                    <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)', textAlign: 'center', padding: '6px 0' }}>Keine Checkpunkte</p>
+                  )}
+                  {anzeigePhase.checkpunkte.map(cp => {
+                    const st = cp.status ?? (cp.erledigt ? 'richtig' : null)
+                    if (st === null) return null // noch nicht bewertet → nicht zeigen
+                    return (
+                      <div key={cp.id} style={{
+                        display: 'flex', alignItems: 'flex-start', gap: 8, padding: '6px 8px', borderRadius: 6,
+                        background: st === 'richtig' ? 'rgba(22,163,74,0.2)' : 'rgba(220,38,38,0.2)',
+                        border: `1px solid ${st === 'richtig' ? 'rgba(22,163,74,0.4)' : 'rgba(220,38,38,0.4)'}`,
+                        animation: 'fadeIn 0.3s ease',
+                      }}>
+                        <span style={{ fontSize: 15, flexShrink: 0 }}>{st === 'richtig' ? '✅' : '❌'}</span>
+                        <span style={{ fontSize: 12, color: 'white', lineHeight: 1.4 }}>{cp.text}</span>
+                      </div>
+                    )
+                  })}
+                  {anzeigePhase.checkpunkte.every(cp => (cp.status ?? (cp.erledigt ? 'richtig' : null)) === null) && (
+                    <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)', textAlign: 'center', padding: '4px 0' }}>
+                      Warte auf Ausbilder-Bewertung…
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
           )}
 
           {/* Lagemeldungen */}
-          <div style={{ padding: '12px 12px 0', flexShrink: 0 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+          <div style={{ padding: '10px 12px 4px', flexShrink: 0 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
               ⚡ Lagemeldungen
             </div>
           </div>
-          <div style={{ flex: 1, overflowY: 'auto', padding: '0 12px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ flex: 1, overflowY: 'auto', padding: '6px 12px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
             {lageUpdates.length === 0 ? (
-              <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: 13, textAlign: 'center', marginTop: 16 }}>Noch keine Meldungen</p>
+              <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: 13, textAlign: 'center', marginTop: 12 }}>Noch keine Meldungen</p>
             ) : lageUpdates.map((u, i) => (
               <div key={u.id} style={{
                 borderRadius: 8, padding: '10px 12px',
@@ -285,23 +358,16 @@ export default function PlanspielAnzeigePage() {
                 border: `1px solid ${u.id === neuesMeldungId ? '#FBBF24' : i === 0 ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.07)'}`,
                 transition: 'background 0.5s, border-color 0.5s',
               }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
-                  <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>
-                    {format(new Date(u.zeit), 'HH:mm', { locale: de })} Uhr
-                  </span>
-                  {i === 0 && (
-                    <span style={{ background: '#DC2626', color: 'white', fontSize: 9, fontWeight: 700, borderRadius: 3, padding: '1px 5px', letterSpacing: '0.05em' }}>
-                      NEU
-                    </span>
-                  )}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                  <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>{format(new Date(u.zeit), 'HH:mm', { locale: de })} Uhr</span>
+                  {i === 0 && <span style={{ background: '#DC2626', color: 'white', fontSize: 9, fontWeight: 700, borderRadius: 3, padding: '1px 5px' }}>NEU</span>}
                 </div>
                 <div style={{ fontSize: 13, color: 'white', lineHeight: 1.5 }}>{u.text}</div>
               </div>
             ))}
           </div>
 
-          {/* Footer */}
-          <div style={{ padding: '8px 16px', borderTop: '1px solid #374151', fontSize: 11, color: 'rgba(255,255,255,0.25)', textAlign: 'center', flexShrink: 0 }}>
+          <div style={{ padding: '6px 16px', borderTop: '1px solid #374151', fontSize: 11, color: 'rgba(255,255,255,0.25)', textAlign: 'center', flexShrink: 0 }}>
             {lageUpdates.length} Meldung{lageUpdates.length !== 1 ? 'en' : ''} gesamt
           </div>
         </div>
