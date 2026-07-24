@@ -70,9 +70,14 @@ const TRUPP_TYPEN = [
 ]
 
 const PUNKT_TYPEN = [
-  { id: 'hydrant',   name: 'Hydrant',    emoji: '💧', farbe: '#2563EB' },
-  { id: 'verteiler', name: 'Verteiler',  emoji: '🔵', farbe: '#0891B2' },
-  { id: 'pin',       name: 'Markierung', emoji: '📍', farbe: '#DC2626' },
+  { id: 'hydrant',    name: 'Hydrant',      emoji: '💧', farbe: '#2563EB' },
+  { id: 'verteiler',  name: 'Verteiler',    emoji: '🔵', farbe: '#0891B2' },
+  { id: 'brandherd',  name: 'Brandherd',    emoji: '🔥', farbe: '#DC2626' },
+  { id: 'pkw',        name: 'PKW',          emoji: '🚗', farbe: '#6B7280' },
+  { id: 'lkw',        name: 'LKW',          emoji: '🚛', farbe: '#374151' },
+  { id: 'person',     name: 'Person/Opfer', emoji: '👤', farbe: '#7C3AED' },
+  { id: 'gefahrstoff',name: 'Gefahrstoff',  emoji: '☢️', farbe: '#F59E0B' },
+  { id: 'pin',        name: 'Markierung',   emoji: '📍', farbe: '#DC2626' },
 ]
 
 const LINIE_TYPEN = [
@@ -81,9 +86,11 @@ const LINIE_TYPEN = [
 ]
 
 const ZONE_TYPEN = [
-  { id: 'absperrung',     name: 'Absperrbereich',     farbe: '#DC2626' },
-  { id: 'bereitstellung', name: 'Bereitstellungsraum', farbe: '#D97706' },
-  { id: 'abschnitt',     name: 'Einsatzabschnitt',    farbe: '#7C3AED' },
+  { id: 'absperrung',    name: 'Absperrbereich',      farbe: '#DC2626', fill: 0.15, dash: false },
+  { id: 'bereitstellung',name: 'Bereitstellungsraum', farbe: '#D97706', fill: 0.15, dash: false },
+  { id: 'abschnitt',    name: 'Einsatzabschnitt',    farbe: '#7C3AED', fill: 0.15, dash: false },
+  { id: 'rauch',        name: 'Rauchsäule',          farbe: '#6B7280', fill: 0.3,  dash: true  },
+  { id: 'fluessigkeit', name: 'Auslauffläche',        farbe: '#92400E', fill: 0.3,  dash: true  },
 ]
 
 function phasenVonStandard() {
@@ -333,7 +340,7 @@ function PlanspielAktiv({ session, kannLeiten, onBack }) {
 
   const istAbgeschlossen = session.status === 'abgeschlossen'
 
-  // Auto-Speichern alle 8 Sekunden (damit Anzeigeansicht aktuell bleibt)
+  // Auto-Speichern alle 3 Sekunden
   useEffect(() => {
     if (istAbgeschlossen || !kannLeiten) return
     const interval = setInterval(async () => {
@@ -347,7 +354,7 @@ function PlanspielAktiv({ session, kannLeiten, onBack }) {
         lage_updates: lageUpdatesRef.current,
         map_center: center,
       }).eq('id', session.id)
-    }, 8000)
+    }, 3000)
     return () => clearInterval(interval)
   }, [istAbgeschlossen, kannLeiten, session.id])
 
@@ -448,7 +455,7 @@ function PlanspielAktiv({ session, kannLeiten, onBack }) {
     karte.zonen.forEach(z => {
       if (!zonenRefs.current[z.id]) {
         const typ = ZONE_TYPEN.find(x => x.id === z.typ) ?? ZONE_TYPEN[0]
-        zonenRefs.current[z.id] = L.polygon(z.punkte.map(ll), { color: typ.farbe, fillOpacity: 0.2, weight: 2 }).addTo(map)
+        zonenRefs.current[z.id] = L.polygon(z.punkte.map(ll), { color: typ.farbe, fillOpacity: typ.fill ?? 0.2, weight: 2, dashArray: typ.dash ? '8 6' : null }).addTo(map)
       }
     })
   }, [karte.zonen])
@@ -560,8 +567,9 @@ function PlanspielAktiv({ session, kannLeiten, onBack }) {
     setSaving(true)
     const map = mapRef.current
     const center = map ? { lng: map.getCenter().lng, lat: map.getCenter().lat, zoom: map.getZoom() } : session.map_center
+    // karte direkt aus State (nicht karteRef) um Race-Conditions zu vermeiden
     await supabase.from('planspiel_sessions').update({
-      kartenzustand: karteRef.current,
+      kartenzustand: karte,
       phasen,
       lage_updates: lageUpdates,
       map_center: center,
@@ -778,11 +786,15 @@ function PlanspielAktiv({ session, kannLeiten, onBack }) {
               {FAHRZEUG_TYPEN.map(ft => <WerkzeugButton key={ft.id} aktiv={werkzeug?.subtyp === ft.id} onClick={() => { setWerkzeug({ typ: 'fahrzeug', subtyp: ft.id }); setZeichnePunkte([]) }} label={ft.name} emoji={ft.emoji} />)}
               <Sep>Trupps</Sep>
               {TRUPP_TYPEN.map(tt => <WerkzeugButton key={tt.id} aktiv={werkzeug?.subtyp === tt.id} onClick={() => { setWerkzeug({ typ: 'trupp', subtyp: tt.id }); setZeichnePunkte([]) }} label={tt.name} emoji={tt.emoji} />)}
-              <Sep>Punkte</Sep>
-              {PUNKT_TYPEN.map(pt => <WerkzeugButton key={pt.id} aktiv={werkzeug?.subtyp === pt.id} onClick={() => { setWerkzeug({ typ: 'punkt', subtyp: pt.id }); setZeichnePunkte([]) }} label={pt.name} emoji={pt.emoji} />)}
+              <Sep>Objekte</Sep>
+              {PUNKT_TYPEN.filter(p => ['brandherd','gefahrstoff','person','pin'].includes(p.id)).map(pt => <WerkzeugButton key={pt.id} aktiv={werkzeug?.subtyp === pt.id} onClick={() => { setWerkzeug({ typ: 'punkt', subtyp: pt.id }); setZeichnePunkte([]) }} label={pt.name} emoji={pt.emoji} />)}
+              <Sep>Zivil</Sep>
+              {PUNKT_TYPEN.filter(p => ['pkw','lkw'].includes(p.id)).map(pt => <WerkzeugButton key={pt.id} aktiv={werkzeug?.subtyp === pt.id} onClick={() => { setWerkzeug({ typ: 'punkt', subtyp: pt.id }); setZeichnePunkte([]) }} label={pt.name} emoji={pt.emoji} />)}
+              <Sep>Wasser</Sep>
+              {PUNKT_TYPEN.filter(p => ['hydrant','verteiler'].includes(p.id)).map(pt => <WerkzeugButton key={pt.id} aktiv={werkzeug?.subtyp === pt.id} onClick={() => { setWerkzeug({ typ: 'punkt', subtyp: pt.id }); setZeichnePunkte([]) }} label={pt.name} emoji={pt.emoji} />)}
               <Sep>Leitungen</Sep>
               {LINIE_TYPEN.map(lt => <WerkzeugButton key={lt.id} aktiv={werkzeug?.subtyp === lt.id} onClick={() => { setWerkzeug({ typ: 'linie', subtyp: lt.id }); setZeichnePunkte([]) }} label={lt.name} color={lt.farbe} />)}
-              <Sep>Zonen</Sep>
+              <Sep>Flächen</Sep>
               {ZONE_TYPEN.map(zt => <WerkzeugButton key={zt.id} aktiv={werkzeug?.subtyp === zt.id} onClick={() => { setWerkzeug({ typ: 'zone', subtyp: zt.id }); setZeichnePunkte([]) }} label={zt.name} color={zt.farbe} />)}
               {(werkzeug?.typ === 'linie' || werkzeug?.typ === 'zone') && zeichnePunkte.length >= 2 && (
                 <>

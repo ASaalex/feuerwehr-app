@@ -24,9 +24,14 @@ const TRUPP_TYPEN = [
   { id: 'me', name: 'Melder',           emoji: '🧑‍🚒', farbe: '#D97706' },
 ]
 const PUNKT_TYPEN = [
-  { id: 'hydrant',   name: 'Hydrant',    emoji: '💧', farbe: '#2563EB' },
-  { id: 'verteiler', name: 'Verteiler',  emoji: '🔵', farbe: '#0891B2' },
-  { id: 'pin',       name: 'Markierung', emoji: '📍', farbe: '#DC2626' },
+  { id: 'hydrant',    name: 'Hydrant',      emoji: '💧', farbe: '#2563EB' },
+  { id: 'verteiler',  name: 'Verteiler',    emoji: '🔵', farbe: '#0891B2' },
+  { id: 'brandherd',  name: 'Brandherd',    emoji: '🔥', farbe: '#DC2626' },
+  { id: 'pkw',        name: 'PKW',          emoji: '🚗', farbe: '#6B7280' },
+  { id: 'lkw',        name: 'LKW',          emoji: '🚛', farbe: '#374151' },
+  { id: 'person',     name: 'Person/Opfer', emoji: '👤', farbe: '#7C3AED' },
+  { id: 'gefahrstoff',name: 'Gefahrstoff',  emoji: '☢️', farbe: '#F59E0B' },
+  { id: 'pin',        name: 'Markierung',   emoji: '📍', farbe: '#DC2626' },
 ]
 const LINIE_TYPEN = [
   { id: 'b_schlauch', farbe: '#2563EB', breite: 5 },
@@ -61,12 +66,14 @@ function elFarbe(el) {
 
 export default function PlanspielAnzeigePage() {
   const { id } = useParams()
-  const [session, setSession]       = useState(null)
-  const [phasen, setPhasen]         = useState([])
+  const [session, setSession]         = useState(null)
+  const [phasen, setPhasen]           = useState([])
   const [lageUpdates, setLageUpdates] = useState([])
-  const [wetterinfo, setWetterinfo] = useState(null)
-  const [letzteAkt, setLetzteAkt]   = useState(null)
+  const [wetterinfo, setWetterinfo]   = useState(null)
+  const [letzteAkt, setLetzteAkt]     = useState(null)
   const [neuesMeldungId, setNeuesMeldungId] = useState(null)
+  // Szenario einmalig beim Laden merken (für Realtime-Updates ohne Join-Fetch)
+  const szenarioRef = useRef(null)
   const [anzeigePhaseIdx, setAnzeigePhaseIdx] = useState(0) // für Navigation
 
   const mapRef       = useRef(null)
@@ -89,7 +96,10 @@ export default function PlanspielAnzeigePage() {
   }, [])
 
   function verarbeite(data) {
-    setSession(data)
+    // Szenario-Join beim ersten Laden speichern; bei späteren Updates aus Ref ergänzen
+    if (data.szenario) szenarioRef.current = data.szenario
+    const enriched = { ...data, szenario: data.szenario ?? szenarioRef.current }
+    setSession(enriched)
     setLetzteAkt(new Date())
 
     const neuePhasen = data.phasen ?? []
@@ -162,7 +172,7 @@ export default function PlanspielAnzeigePage() {
     zonen.forEach(z => {
       if (!zonenRefs.current[z.id]) {
         const typ = ZONE_TYPEN.find(x => x.id === z.typ) ?? { farbe: '#DC2626' }
-        zonenRefs.current[z.id] = L.polygon(z.punkte.map(ll), { color: typ.farbe, fillOpacity: 0.2, weight: 2 }).addTo(map)
+        zonenRefs.current[z.id] = L.polygon(z.punkte.map(ll), { color: typ.farbe, fillOpacity: typ.fill ?? 0.2, weight: 2, dashArray: typ.dash ? '8 6' : null }).addTo(map)
       }
     })
   }
@@ -174,29 +184,24 @@ export default function PlanspielAnzeigePage() {
       .eq('id', id).single()
       .then(({ data }) => { if (data) verarbeite(data) })
 
-    // Realtime-Subscription für sofortige Updates
+    // Realtime: payload.new direkt nutzen — kein Extra-Fetch, keine Race Condition
     const channel = supabase
       .channel(`planspiel-anzeige-${id}`)
       .on('postgres_changes', {
         event: 'UPDATE', schema: 'public', table: 'planspiel_sessions', filter: `id=eq.${id}`
-      }, async () => {
-        // Payload enthält keine Joins → frisch nachladen
-        const { data } = await supabase
-          .from('planspiel_sessions')
-          .select('*, szenario:szenarien(titel, anfangs_meldung)')
-          .eq('id', id).single()
-        if (data) verarbeite(data)
+      }, (payload) => {
+        if (payload.new) verarbeite(payload.new)
       })
       .subscribe()
 
-    // Fallback-Polling alle 30 Sek. (falls Realtime-Verbindung abbricht)
+    // Fallback-Polling alle 8 Sek. (falls Realtime-Verbindung nicht verfügbar)
     const fallback = setInterval(async () => {
       const { data } = await supabase
         .from('planspiel_sessions')
         .select('*, szenario:szenarien(titel, anfangs_meldung)')
         .eq('id', id).single()
       if (data) verarbeite(data)
-    }, 30000)
+    }, 8000)
 
     return () => {
       supabase.removeChannel(channel)
