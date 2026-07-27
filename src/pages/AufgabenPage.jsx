@@ -7,7 +7,9 @@ import { de } from 'date-fns/locale'
 const STATUS_LIST = ['offen', 'in_arbeit', 'erledigt']
 const STATUS_LABEL = { offen: 'Offen', in_arbeit: 'In Arbeit', erledigt: 'Erledigt' }
 const STATUS_COLOR = { offen: 'amber', in_arbeit: 'blue', erledigt: 'green' }
+const STATUS_RANK = { offen: 0, in_arbeit: 1, erledigt: 2 }
 const PRIO_COLOR = { niedrig: 'gray', mittel: 'amber', hoch: 'red' }
+const PRIO_RANK = { niedrig: 0, mittel: 1, hoch: 2 }
 
 const WIEDERHOLUNG_LABEL = {
   monatlich: '🔁 Monatlich',
@@ -35,6 +37,9 @@ export default function AufgabenPage() {
   const [zeigeErledigt, setZeigeErledigt] = useState(false)
   const [ansicht, setAnsicht] = useState('meine')
   const [detailAufgabe, setDetailAufgabe] = useState(null)
+  const [loeschenId, setLoeschenId] = useState(null)
+  const [sortBy, setSortBy] = useState('faellig_am')
+  const [sortDir, setSortDir] = useState('asc')
   const [form, setForm] = useState({
     titel: '', beschreibung: '', zuweisung_typ: 'personen',
     ausgewaehlte_personen: [],
@@ -141,19 +146,59 @@ export default function AufgabenPage() {
 
   async function statusAendern(id, status) {
     const aufgabe = aufgaben.find(a => a.id === id)
-    // Wiederkehrende Aufgabe: beim Erledigen Fälligkeit vorspringen und zurücksetzen
+    // Wiederkehrende Aufgabe: aktuelle Instanz bleibt als Historie erledigt liegen,
+    // eine neue Instanz für den nächsten Zeitraum wird als Kopie angelegt
     if (status === 'erledigt' && aufgabe?.wiederholung && aufgabe?.faellig_am) {
-      const neuFaellig = naechsteFaelligkeit(aufgabe.faellig_am, aufgabe.wiederholung)
       await supabase.from('aufgaben').update({
-        status: 'offen',
-        faellig_am: neuFaellig,
+        status: 'erledigt',
         letzte_erledigung: new Date().toISOString(),
       }).eq('id', id)
-      // Checkpunkte-Status zurücksetzen
-      const cpIds = (aufgabe._checkpunkte ?? []).map(c => c.id)
-      if (cpIds.length) {
-        await supabase.from('aufgaben_checkpunkt_status').delete().in('checkpunkt_id', cpIds)
+
+      const zugewiesenePersonenIds = zugewiesenePersonen(aufgabe).map(p => p.id)
+
+      const { data: neu, error: neuError } = await supabase.from('aufgaben').insert({
+        titel: aufgabe.titel,
+        beschreibung: aufgabe.beschreibung,
+        zugewiesen_an: null,
+        zugewiesen_an_wehr: aufgabe.zugewiesen_an_wehr?.id ?? null,
+        faellig_am: naechsteFaelligkeit(aufgabe.faellig_am, aufgabe.wiederholung),
+        prioritaet: aufgabe.prioritaet,
+        wiederholung: aufgabe.wiederholung,
+        taeglich_erinnern: aufgabe.taeglich_erinnern,
+        erstellt_von: aufgabe.erstellt_von?.id ?? profile.id,
+        wehr_id: aufgabe.wehr_id,
+      }).select().single()
+
+      if (!neuError && neu) {
+        if (zugewiesenePersonenIds.length > 0) {
+          await supabase.from('aufgaben_zuweisungen').insert(
+            zugewiesenePersonenIds.map(uid => ({ aufgabe_id: neu.id, user_id: uid }))
+          )
+        }
+
+        const { data: alteCheckpunkte } = await supabase
+          .from('aufgaben_checkpunkte')
+          .select('titel, mit_kommentar, reihenfolge')
+          .eq('aufgabe_id', id)
+          .order('reihenfolge')
+        if (alteCheckpunkte?.length > 0) {
+          await supabase.from('aufgaben_checkpunkte').insert(
+            alteCheckpunkte.map(cp => ({ ...cp, aufgabe_id: neu.id }))
+          )
+        }
+
+        const pushBody = { title: '🔔 Neue Aufgabe', body: neu.titel, url: '/aufgaben' }
+        if (zugewiesenePersonenIds.length > 0) {
+          supabase.functions.invoke('send-push-notification', {
+            body: { ...pushBody, user_ids: zugewiesenePersonenIds },
+          })
+        } else if (neu.zugewiesen_an_wehr) {
+          supabase.functions.invoke('send-push-notification', {
+            body: { ...pushBody, wehr_id: neu.zugewiesen_an_wehr },
+          })
+        }
       }
+
       await fetchData()
       return
     }
@@ -174,9 +219,18 @@ export default function AufgabenPage() {
     }
   }
 
-  async function loeschen(id) {
-    if (!confirm('Aufgabe wirklich löschen?')) return
-    await supabase.from('aufgaben').delete().eq('id', id)
+  function loeschen(id) {
+    setLoeschenId(id)
+  }
+
+  async function loeschenBestaetigt() {
+    const id = loeschenId
+    setLoeschenId(null)
+    const { error } = await supabase.from('aufgaben').delete().eq('id', id)
+    if (error) {
+      alert('Löschen fehlgeschlagen: ' + error.message)
+      return
+    }
     setAufgaben(a => a.filter(x => x.id !== id))
     if (detailAufgabe?.id === id) setDetailAufgabe(null)
   }
@@ -205,6 +259,23 @@ export default function AufgabenPage() {
       return istMirZugewiesen(a) || a.erstellt_von?.id === profile?.id
     }
     return true
+  })
+
+  function sortKlick(feld) {
+    if (sortBy === feld) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortBy(feld); setSortDir('asc') }
+  }
+  const sortPfeil = (feld) => sortBy !== feld ? '' : (sortDir === 'asc' ? ' ▲' : ' ▼')
+
+  const sortiert = [...gefiltert].sort((a, b) => {
+    let av, bv
+    if (sortBy === 'faellig_am') { av = a.faellig_am ?? '9999-99-99'; bv = b.faellig_am ?? '9999-99-99' }
+    else if (sortBy === 'titel') { av = a.titel?.toLowerCase() ?? ''; bv = b.titel?.toLowerCase() ?? '' }
+    else if (sortBy === 'prioritaet') { av = PRIO_RANK[a.prioritaet] ?? 0; bv = PRIO_RANK[b.prioritaet] ?? 0 }
+    else if (sortBy === 'status') { av = STATUS_RANK[a.status] ?? 0; bv = STATUS_RANK[b.status] ?? 0 }
+    if (av < bv) return sortDir === 'asc' ? -1 : 1
+    if (av > bv) return sortDir === 'asc' ? 1 : -1
+    return 0
   })
 
   const togglePerson = (uid) => setForm(f => ({
@@ -266,54 +337,68 @@ export default function AufgabenPage() {
           <p>Keine Aufgaben vorhanden</p>
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {gefiltert.map(a => {
-            const personen = zugewiesenePersonen(a)
-            return (
-              <div key={a.id} className="card" style={{
-                borderLeft: `3px solid ${
-                  istUeberfaellig(a) ? 'var(--red)' :
-                  a.zugewiesen_an_wehr ? '#378ADD' : 'transparent'
-                }`,
-                padding: '14px 18px 14px 15px',
-                cursor: 'pointer',
-              }} onClick={() => setDetailAufgabe(a)}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
-                      <span style={{ fontWeight: 500, fontSize: 15, color: 'var(--gray-700)' }}>{a.titel}</span>
-                      <span className={`badge badge-${PRIO_COLOR[a.prioritaet]}`} style={{ fontSize: 11 }}>{a.prioritaet}</span>
-                      {istUeberfaellig(a) && <span className="badge badge-red" style={{ fontSize: 11 }}>Überfällig</span>}
-                      {a.zugewiesen_an_wehr && <span className="badge badge-blue" style={{ fontSize: 11 }}>Ganze Wache</span>}
-                      {a.wiederholung && <span style={{ fontSize: 11, color: '#6d28d9', background: '#ede9fe', borderRadius: 4, padding: '2px 6px' }}>{WIEDERHOLUNG_LABEL[a.wiederholung]}</span>}
-                    </div>
-                    {a.beschreibung && (
-                      <p style={{ fontSize: 13, color: 'var(--gray-400)', lineHeight: 1.5, marginBottom: 6 }}>{a.beschreibung}</p>
-                    )}
-                    <div style={{ fontSize: 12, color: 'var(--gray-400)', display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                      {a.zugewiesen_an && <span>→ {a.zugewiesen_an.vorname} {a.zugewiesen_an.nachname}</span>}
-                      {personen.length > 0 && (
-                        <span>→ {personen.map(p => `${p.vorname} ${p.nachname}`).join(', ')}</span>
-                      )}
-                      {a.zugewiesen_an_wehr && <span>Wache: {a.zugewiesen_an_wehr.name}</span>}
-                      {a.faellig_am && <span>Fällig: {format(new Date(a.faellig_am), 'd. MMM', { locale: de })}</span>}
-                      {a.erstellt_von && <span>von {a.erstellt_von.vorname} {a.erstellt_von.nachname}</span>}
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0, alignItems: 'flex-end' }} onClick={e => e.stopPropagation()}>
-                    <span className={`badge badge-${STATUS_COLOR[a.status]}`}>{STATUS_LABEL[a.status]}</span>
-                    <select value={a.status} onChange={e => statusAendern(a.id, e.target.value)}
-                      style={{ width: 'auto', padding: '5px 8px', fontSize: 12 }}>
-                      {STATUS_LIST.map(s => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
-                    </select>
-                    {(isAdmin || a.erstellt_von?.id === profile?.id) && (
-                      <button className="btn btn-sm btn-danger" onClick={() => loeschen(a.id)}>Löschen</button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )
-          })}
+        <div className="card" style={{ padding: 0 }}>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th onClick={() => sortKlick('faellig_am')} style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}>Fällig{sortPfeil('faellig_am')}</th>
+                  <th onClick={() => sortKlick('titel')} style={{ cursor: 'pointer' }}>Aufgabe{sortPfeil('titel')}</th>
+                  <th className="col-hide-mobile" onClick={() => sortKlick('prioritaet')} style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}>Priorität{sortPfeil('prioritaet')}</th>
+                  <th onClick={() => sortKlick('status')} style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}>Status{sortPfeil('status')}</th>
+                  <th style={{ width: 1 }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortiert.map(a => {
+                  const personen = zugewiesenePersonen(a)
+                  return (
+                    <tr key={a.id} style={{ cursor: 'pointer' }} onClick={() => setDetailAufgabe(a)}>
+                      <td style={{ whiteSpace: 'nowrap', fontSize: 13 }}>
+                        {a.faellig_am ? format(new Date(a.faellig_am), 'd. MMM', { locale: de }) : '—'}
+                        {istUeberfaellig(a) && (
+                          <div><span className="badge badge-red" style={{ fontSize: 10 }}>Überfällig</span></div>
+                        )}
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                          <span style={{ fontWeight: 500, color: 'var(--gray-700)' }}>{a.titel}</span>
+                          <span className={`badge badge-${PRIO_COLOR[a.prioritaet]} col-hide-desktop`} style={{ fontSize: 10 }}>{a.prioritaet}</span>
+                          {a.zugewiesen_an_wehr && <span className="badge badge-blue" style={{ fontSize: 10 }}>Ganze Wache</span>}
+                          {a.wiederholung && <span style={{ fontSize: 10, color: '#6d28d9', background: '#ede9fe', borderRadius: 4, padding: '1px 5px' }}>{WIEDERHOLUNG_LABEL[a.wiederholung]}</span>}
+                        </div>
+                        <div style={{ fontSize: 12, color: 'var(--gray-400)', display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 2 }}>
+                          {a.zugewiesen_an && <span>→ {a.zugewiesen_an.vorname} {a.zugewiesen_an.nachname}</span>}
+                          {personen.length > 0 && (
+                            <span>→ {personen.map(p => `${p.vorname} ${p.nachname}`).join(', ')}</span>
+                          )}
+                          {a.zugewiesen_an_wehr && <span>Wache: {a.zugewiesen_an_wehr.name}</span>}
+                          {a.erstellt_von && <span>von {a.erstellt_von.vorname} {a.erstellt_von.nachname}</span>}
+                        </div>
+                      </td>
+                      <td className="col-hide-mobile">
+                        <span className={`badge badge-${PRIO_COLOR[a.prioritaet]}`} style={{ fontSize: 11 }}>{a.prioritaet}</span>
+                      </td>
+                      <td onClick={e => e.stopPropagation()}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
+                          <span className={`badge badge-${STATUS_COLOR[a.status]}`}>{STATUS_LABEL[a.status]}</span>
+                          <select value={a.status} onChange={e => statusAendern(a.id, e.target.value)}
+                            style={{ width: 'auto', padding: '4px 6px', fontSize: 12 }}>
+                            {STATUS_LIST.map(s => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
+                          </select>
+                        </div>
+                      </td>
+                      <td onClick={e => e.stopPropagation()}>
+                        {(isAdmin || a.erstellt_von?.id === profile?.id) && (
+                          <button className="btn btn-sm btn-danger" onClick={() => loeschen(a.id)}>Löschen</button>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -330,6 +415,15 @@ export default function AufgabenPage() {
           onRefresh={() => fetchData().then(() => {
             // Update detailAufgabe with fresh data
           })}
+        />
+      )}
+
+      {/* Lösch-Bestätigung */}
+      {loeschenId && (
+        <ConfirmModal
+          text="Aufgabe wirklich löschen?"
+          onCancel={() => setLoeschenId(null)}
+          onConfirm={loeschenBestaetigt}
         />
       )}
 
@@ -932,7 +1026,7 @@ function AufgabeDetailModal({ aufgabe, profile, isAdmin, kannErstellen, onClose,
               {(isAdmin || aufgabe.erstellt_von?.id === profile?.id) && (
                 <div style={{ borderTop: '1px solid var(--gray-100)', paddingTop: 12 }}>
                   <button className="btn btn-sm btn-danger"
-                    onClick={() => { onDelete(aufgabe.id); onClose() }}>
+                    onClick={() => onDelete(aufgabe.id)}>
                     Aufgabe löschen
                   </button>
                 </div>
@@ -977,6 +1071,20 @@ function AufgabeDetailModal({ aufgabe, profile, isAdmin, kannErstellen, onClose,
               {sending ? '…' : 'Senden'}
             </button>
           </form>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ConfirmModal({ text, onCancel, onConfirm }) {
+  return (
+    <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onCancel()}>
+      <div className="modal" style={{ width: '100%', maxWidth: 360, padding: 20 }}>
+        <p style={{ fontSize: 14, color: 'var(--gray-700)', marginBottom: 18 }}>{text}</p>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button className="btn btn-secondary btn-sm" onClick={onCancel}>Abbrechen</button>
+          <button className="btn btn-danger btn-sm" onClick={onConfirm}>Löschen</button>
         </div>
       </div>
     </div>

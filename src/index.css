@@ -176,6 +176,7 @@ td {
 }
 tr:last-child td { border-bottom: none; }
 tr:hover td { background: var(--gray-50); }
+.col-hide-desktop { display: none; }
 
 .empty-state {
   text-align: center;
@@ -343,6 +344,7 @@ tr:hover td { background: var(--gray-50); }
   table { min-width: 380px; font-size: 12px; }
   th, td { padding: 8px 10px; }
   .col-hide-mobile { display: none; }
+  .col-hide-desktop { display: inline-block; }
   .col-kontakt-mobile { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* Modals - von unten als Sheet */
