@@ -38,7 +38,7 @@ serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { wehr_id, dokument_id, datei_inhalt, datei_name, titel, email_feld, audio_inhalt, audio_name, html_body, text_body, anzahl } = body;
+    const { wehr_id, dokument_id, datei_inhalt, datei_name, titel, email_feld, audio_inhalt, audio_name, audio_pfade_liste, html_body, text_body, anzahl } = body;
     const exemplare: number = Math.max(1, parseInt(anzahl) || 1);
     // email_feld: 'drucker_email' (Standard) | 'einsatzbericht_email'
     const zielFeld = email_feld === 'einsatzbericht_email' ? 'einsatzbericht_email' : 'drucker_email';
@@ -119,12 +119,27 @@ serve(async (req) => {
       attachments.push({ filename: anhangName, content: anhangBuffer, contentType: mimeType });
     }
 
-    // Optionaler Audio-Anhang (Einsatzbericht-Sprachaufnahme)
+    // Legacy: einzelner Audio-Anhang als base64
     if (audio_inhalt && audio_name) {
       const audioBuffer = Buffer.from(audio_inhalt, "base64");
       const audioExt = (audio_name as string).split(".").pop()?.toLowerCase();
       const audioMime = audioExt === "m4a" ? "audio/mp4" : "audio/webm";
       attachments.push({ filename: audio_name, content: audioBuffer, contentType: audioMime });
+    }
+
+    // Mehrere Aufnahmen aus Supabase Storage laden und anhängen
+    if (Array.isArray(audio_pfade_liste) && audio_pfade_liste.length > 0) {
+      for (const a of audio_pfade_liste as { pfad: string; name: string }[]) {
+        const { data: audioBlob, error: aErr } = await supabase.storage
+          .from("einsatz-audio")
+          .download(a.pfad);
+        if (!aErr && audioBlob) {
+          const audioBuffer = Buffer.from(await audioBlob.arrayBuffer());
+          const ext = a.name.split(".").pop()?.toLowerCase();
+          const mime = ext === "m4a" ? "audio/mp4" : "audio/webm";
+          attachments.push({ filename: a.name, content: audioBuffer, contentType: mime });
+        }
+      }
     }
 
     // Gmail SMTP via nodemailer (Port 465, SSL)

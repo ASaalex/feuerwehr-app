@@ -71,10 +71,10 @@ export default function EinsatzberichtFormular() {
   const [fotosLaden, setFotosLaden] = useState(false)
   const fotoInputRef = useRef(null)
 
-  // Audio-Aufnahme
-  const [audioBlob, setAudioBlob] = useState(null)
-  const [audioUrl, setAudioUrl] = useState(null)
-  const [audioPfad, setAudioPfad] = useState(null)
+  // Audio-Aufnahmen (mehrere möglich)
+  // Eintrag: { id, blob?, url, pfad?, name, zeitstempel }
+  const [aufnahmen, setAufnahmen] = useState([])
+  const aufnahmenRef = useRef([])
   const [audioHochlade, setAudioHochlade] = useState(false)
   const [aufnahmeAktiv, setAufnahmeAktiv] = useState(false)
   const [aufnahmeZeit, setAufnahmeZeit] = useState(0)
@@ -91,7 +91,6 @@ export default function EinsatzberichtFormular() {
   const [autoSaveStatus, setAutoSaveStatus] = useState(null) // null | 'saving' | 'ok'
   const autoSaveTimerRef = useRef(null)
   const formRef = useRef(null)      // wird nach useState initialisiert
-  const audioPfadRef = useRef(null)
 
   const heute = new Date().toISOString().slice(0, 10)
 
@@ -207,11 +206,16 @@ export default function EinsatzberichtFormular() {
             abgeschlossen: b.abgeschlossen ?? false,
           })
 
-          // Audio aus Storage laden
-          if (b.audio_pfad) {
-            setAudioPfad(b.audio_pfad)
-            supabase.storage.from('einsatz-audio').createSignedUrl(b.audio_pfad, 3600).then(({ data }) => {
-              if (data?.signedUrl) setAudioUrl(data.signedUrl)
+          // Aufnahmen aus Storage laden (neue JSONB-Spalte + Legacy-Fallback)
+          const pfadListe = b.audio_pfade?.length
+            ? b.audio_pfade
+            : b.audio_pfad ? [{ pfad: b.audio_pfad, name: 'Aufnahme.webm', zeitstempel: b.erstellt_am }] : []
+          if (pfadListe.length > 0) {
+            Promise.all(pfadListe.map(async (a) => {
+              const { data: sd } = await supabase.storage.from('einsatz-audio').createSignedUrl(a.pfad, 3600)
+              return sd?.signedUrl ? { ...a, url: sd.signedUrl, id: a.pfad } : null
+            })).then(results => {
+              setAufnahmen(results.filter(Boolean))
             })
           }
 
@@ -246,7 +250,7 @@ export default function EinsatzberichtFormular() {
 
   // ── Refs synchron halten (Stale-Closure-Schutz) ──────────────
   useEffect(() => { formRef.current = form }, [form])
-  useEffect(() => { audioPfadRef.current = audioPfad }, [audioPfad])
+  useEffect(() => { aufnahmenRef.current = aufnahmen }, [aufnahmen])
 
   // ── Dirty-Tracking ────────────────────────────────────────────
   const isInitialLoad = useRef(true)
@@ -402,12 +406,6 @@ export default function EinsatzberichtFormular() {
 
   async function starteAufnahme() {
     try {
-      // Zeitstempel in Erläuterung einfügen
-      const istFortsetzen = audioBlob !== null
-      setForm(f => ({
-        ...f,
-        erlaeuterung: (f.erlaeuterung || '') + zeitstempelJetzt(istFortsetzen ? 'Aufnahme fortgesetzt' : 'Aufnahme gestartet'),
-      }))
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       const mimeType =
@@ -423,26 +421,39 @@ export default function EinsatzberichtFormular() {
       recorder.ondataavailable = e => { if (e.data.size > 0) audioChunksRef.current.push(e.data) }
       recorder.onstop = async () => {
         const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' })
-        if (audioUrl) URL.revokeObjectURL(audioUrl)
-        setAudioBlob(blob)
-        setAudioUrl(URL.createObjectURL(blob))
         stream.getTracks().forEach(t => t.stop())
         transkribiere(blob)
 
-        // Sofort in Supabase Storage hochladen
+        const now = new Date()
+        const ext = blob.type.includes('mp4') ? 'm4a' : 'webm'
+        const zeitstempel = now.toISOString()
+        const datumStr = now.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/\./g, '')
+        const uhrStr = now.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }).replace(':', '')
+        const name = `Aufnahme_${datumStr}_${uhrStr}.${ext}`
+        const localUrl = URL.createObjectURL(blob)
+        const tmpId = `tmp_${Date.now()}`
+
+        // Sofort lokal anzeigen
+        setAufnahmen(prev => [...prev, { id: tmpId, blob, url: localUrl, pfad: null, name, zeitstempel }])
+
+        // In Supabase Storage hochladen
         if (profile?.wehr_id) {
           setAudioHochlade(true)
-          const ext = blob.type.includes('mp4') ? 'm4a' : 'webm'
           const pfad = `${profile.wehr_id}/${Date.now()}.${ext}`
           const { error: upErr } = await supabase.storage.from('einsatz-audio').upload(pfad, blob, { contentType: blob.type })
           if (!upErr) {
-            setAudioPfad(pfad)
-            audioPfadRef.current = pfad
-            dirtyRef.current = true
-            // Sofort in DB schreiben, damit andere Geräte den Pfad sehen
-            if (autoSaveIdRef.current) {
-              await supabase.from('einsatzberichte').update({ audio_pfad: pfad }).eq('id', autoSaveIdRef.current)
-            }
+            const neueAufnahme = { id: pfad, blob, url: localUrl, pfad, name, zeitstempel }
+            setAufnahmen(prev => {
+              const aktuell = prev.map(a => a.id === tmpId ? neueAufnahme : a)
+              aufnahmenRef.current = aktuell
+              dirtyRef.current = true
+              // Sofort in DB schreiben
+              if (autoSaveIdRef.current) {
+                const dbPfade = aktuell.filter(a => a.pfad && !a.id?.startsWith('tmp_')).map(a => ({ pfad: a.pfad, name: a.name, zeitstempel: a.zeitstempel }))
+                supabase.from('einsatzberichte').update({ audio_pfade: dbPfade }).eq('id', autoSaveIdRef.current)
+              }
+              return aktuell
+            })
           }
           setAudioHochlade(false)
         }
@@ -461,11 +472,28 @@ export default function EinsatzberichtFormular() {
     clearInterval(aufnahmeTimerRef.current)
   }
 
-  function loescheAufnahme() {
+  async function loescheAufnahme(id) {
+    const a = aufnahmen.find(x => x.id === id)
+    if (!a) return
+    if (a.url?.startsWith('blob:')) URL.revokeObjectURL(a.url)
+    if (a.pfad) await supabase.storage.from('einsatz-audio').remove([a.pfad])
+    setAufnahmen(prev => {
+      const aktuell = prev.filter(x => x.id !== id)
+      aufnahmenRef.current = aktuell
+      dirtyRef.current = true
+      return aktuell
+    })
+  }
+
+  function loescheAlleAufnahmen() {
     stoppeAufnahme()
-    if (audioUrl) URL.revokeObjectURL(audioUrl)
-    setAudioBlob(null); setAudioUrl(null); setAufnahmeZeit(0)
-    setAudioPfad(null)
+    aufnahmen.forEach(a => {
+      if (a.url?.startsWith('blob:')) URL.revokeObjectURL(a.url)
+      if (a.pfad) supabase.storage.from('einsatz-audio').remove([a.pfad])
+    })
+    setAufnahmen([])
+    aufnahmenRef.current = []
+    setAufnahmeZeit(0)
     setTranskribiert(false); setTranskriptionFehler('')
     audioChunksRef.current = []
   }
@@ -538,7 +566,7 @@ export default function EinsatzberichtFormular() {
       abschluss_name: f.abschluss_name || null,
       abgeschlossen: abschliessen || f.abgeschlossen,
       ...(fotoPfade !== null ? { foto_pfade: fotoPfade.length > 0 ? fotoPfade : null } : {}),
-      ...(ap ? { audio_pfad: ap } : {}),
+      audio_pfade: aufnahmenRef.current.filter(a => a.pfad).map(a => ({ pfad: a.pfad, name: a.name, zeitstempel: a.zeitstempel })),
     }
   }
 
@@ -594,19 +622,8 @@ export default function EinsatzberichtFormular() {
       const base64 = einsatzberichtPdf({ ...form, fotoDataUrls: fotoVorschau.map(f => f.dataUrl) }, wehrData?.name || '')
       const datumStr = form.datum ? form.datum.replaceAll('-', '') : 'unbekannt'
 
-      // Audio-Aufnahme als base64 vorbereiten (falls vorhanden)
-      let audioBase64 = null
-      let audioName = null
-      if (audioBlob) {
-        audioBase64 = await new Promise((res, rej) => {
-          const reader = new FileReader()
-          reader.onload = e => res(e.target.result.split(',')[1])
-          reader.onerror = rej
-          reader.readAsDataURL(audioBlob)
-        })
-        const ext = audioBlob.type.includes('mp4') ? 'm4a' : 'webm'
-        audioName = `Einsatzbericht_Audio_${datumStr}.${ext}`
-      }
+      // Aufnahmen mit Storage-Pfad übergeben (Edge Function lädt sie herunter)
+      const audioMitPfad = aufnahmen.filter(a => a.pfad)
 
       const { data, error } = await supabase.functions.invoke('send-document-email', {
         body: {
@@ -615,7 +632,7 @@ export default function EinsatzberichtFormular() {
           datei_inhalt: base64,
           datei_name: `Einsatzbericht_${datumStr}.pdf`,
           titel: `Einsatzbericht ${form.datum || ''} – ${form.einsatzort || ''}`,
-          ...(audioBase64 ? { audio_inhalt: audioBase64, audio_name: audioName } : {}),
+          ...(audioMitPfad.length > 0 ? { audio_pfade_liste: audioMitPfad.map(a => ({ pfad: a.pfad, name: a.name })) } : {}),
         },
       })
       if (error || !data?.success) {
@@ -879,174 +896,192 @@ export default function EinsatzberichtFormular() {
 
       {/* 5. Beteiligte Organisationen */}
       <div className="card" style={{ padding: 0, marginBottom: 12, overflow: 'hidden' }}>
-        <SektionHeader nr={5} titel="Beteiligte Organisationen" fertig={orgAktiv} />
+        <SektionHeader nr={5} titel="Beteiligte Organisationen / Betroffene Personen" fertig={orgAktiv} />
         {offen[5] && (
-          <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
 
             {/* Weitere Feuerwehren */}
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                <label style={{ margin: 0, fontWeight: 600 }}>Weitere Feuerwehren</label>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 16px', background: 'var(--gray-100)', borderTop: '1px solid var(--gray-200)', borderBottom: '1px solid var(--gray-200)' }}>
+                <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--gray-500)' }}>Weitere Feuerwehren</span>
                 <button type="button" className="btn btn-sm btn-secondary" onClick={addFW}>+ Hinzufügen</button>
               </div>
-              {(form.organisationen.feuerwehren || []).map((fw, i) => (
-                <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
-                  <input value={fw.name || ''} onChange={e => setFW(i, e.target.value)}
-                    placeholder="Ortsteilfeuerwehr / Name" style={{ flex: 1 }} />
-                  <button type="button" className="btn btn-sm btn-danger" onClick={() => removeFW(i)}>✕</button>
-                </div>
-              ))}
-              {(form.organisationen.feuerwehren || []).length === 0 && (
-                <p style={{ fontSize: 13, color: 'var(--gray-400)', margin: 0 }}>Keine weiteren Feuerwehren</p>
-              )}
+              <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {(form.organisationen.feuerwehren || []).map((fw, i) => (
+                  <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <input value={fw.name || ''} onChange={e => setFW(i, e.target.value)}
+                      placeholder="Ortsteilfeuerwehr / Name" style={{ flex: 1 }} />
+                    <button type="button" className="btn btn-sm btn-danger" onClick={() => removeFW(i)}>✕</button>
+                  </div>
+                ))}
+                {(form.organisationen.feuerwehren || []).length === 0 && (
+                  <p style={{ fontSize: 13, color: 'var(--gray-400)', margin: 0 }}>Keine weiteren Feuerwehren</p>
+                )}
+              </div>
             </div>
 
             {/* Polizei */}
             <div>
-              <label style={{ fontWeight: 600, marginBottom: 8, display: 'block' }}>Polizei</label>
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Dienstgrad / Name</label>
-                  <input value={form.organisationen.polizei?.name || ''} onChange={e => setOrgNested('polizei', 'name', e.target.value)} placeholder="z.B. PHK Müller" />
-                </div>
-                <div className="form-group">
-                  <label>Aktenzeichen</label>
-                  <input value={form.organisationen.polizei?.aktenzeichen || ''} onChange={e => setOrgNested('polizei', 'aktenzeichen', e.target.value)} placeholder="Az." />
-                </div>
+              <div style={{ padding: '7px 16px', background: 'var(--gray-100)', borderTop: '1px solid var(--gray-200)', borderBottom: '1px solid var(--gray-200)' }}>
+                <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--gray-500)' }}>Polizei</span>
               </div>
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Dienststelle</label>
-                  <input value={form.organisationen.polizei?.dienststelle || ''} onChange={e => setOrgNested('polizei', 'dienststelle', e.target.value)} />
+              <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label>Dienstgrad / Name</label>
+                    <input value={form.organisationen.polizei?.name || ''} onChange={e => setOrgNested('polizei', 'name', e.target.value)} placeholder="z.B. PHK Müller" />
+                  </div>
+                  <div className="form-group">
+                    <label>Aktenzeichen</label>
+                    <input value={form.organisationen.polizei?.aktenzeichen || ''} onChange={e => setOrgNested('polizei', 'aktenzeichen', e.target.value)} placeholder="Az." />
+                  </div>
                 </div>
-                <div className="form-group" style={{ justifyContent: 'flex-end' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontWeight: 'normal', marginTop: 24 }}>
-                    <input type="checkbox" checked={form.organisationen.polizei?.autobahn || false}
-                      onChange={e => setOrgNested('polizei', 'autobahn', e.target.checked)} style={{ width: 'auto' }} />
-                    Autobahnpolizei
-                  </label>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label>Dienststelle</label>
+                    <input value={form.organisationen.polizei?.dienststelle || ''} onChange={e => setOrgNested('polizei', 'dienststelle', e.target.value)} />
+                  </div>
+                  <div className="form-group" style={{ justifyContent: 'flex-end' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontWeight: 'normal', marginTop: 24 }}>
+                      <input type="checkbox" checked={form.organisationen.polizei?.autobahn || false}
+                        onChange={e => setOrgNested('polizei', 'autobahn', e.target.checked)} style={{ width: 'auto' }} />
+                      Autobahnpolizei
+                    </label>
+                  </div>
                 </div>
               </div>
             </div>
 
             {/* Rettungsdienste */}
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                <label style={{ margin: 0, fontWeight: 600 }}>Rettungsdienst</label>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 16px', background: 'var(--gray-100)', borderTop: '1px solid var(--gray-200)', borderBottom: '1px solid var(--gray-200)' }}>
+                <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--gray-500)' }}>Rettungsdienst</span>
                 <button type="button" className="btn btn-sm btn-secondary" onClick={addRD}>+ Hinzufügen</button>
               </div>
-              {(form.organisationen.rettungsdienste || []).map((rd, i) => (
-                <div key={i} style={{ border: '1px solid var(--gray-200)', borderRadius: 8, padding: 12, marginBottom: 8 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      {['RTW', 'NEF', 'KTW', 'NAW'].map(t => (
-                        <button key={t} type="button"
-                          className={`btn btn-sm ${rd.typ === t ? 'btn-primary' : 'btn-secondary'}`}
-                          onClick={() => setRD(i, 'typ', t)}>{t}</button>
-                      ))}
+              <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {(form.organisationen.rettungsdienste || []).map((rd, i) => (
+                  <div key={i} style={{ border: '1px solid var(--gray-200)', borderRadius: 8, padding: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        {['RTW', 'NEF', 'KTW', 'NAW'].map(t => (
+                          <button key={t} type="button"
+                            className={`btn btn-sm ${rd.typ === t ? 'btn-primary' : 'btn-secondary'}`}
+                            onClick={() => setRD(i, 'typ', t)}>{t}</button>
+                        ))}
+                      </div>
+                      <button type="button" className="btn btn-sm btn-danger" onClick={() => removeRD(i)}>✕</button>
                     </div>
-                    <button type="button" className="btn btn-sm btn-danger" onClick={() => removeRD(i)}>✕</button>
-                  </div>
-                  <div className="form-row">
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>Funkkenner</label>
+                        <input value={rd.funkkenner || ''} onChange={e => setRD(i, 'funkkenner', e.target.value)} placeholder="z.B. RTW 1/83-1" />
+                      </div>
+                      <div className="form-group">
+                        <label>Gesellschaft</label>
+                        <input value={rd.gesellschaft || ''} onChange={e => setRD(i, 'gesellschaft', e.target.value)} placeholder="z.B. DRK Erfurt" />
+                      </div>
+                    </div>
                     <div className="form-group">
-                      <label>Funkkenner</label>
-                      <input value={rd.funkkenner || ''} onChange={e => setRD(i, 'funkkenner', e.target.value)} placeholder="z.B. RTW 1/83-1" />
-                    </div>
-                    <div className="form-group">
-                      <label>Gesellschaft</label>
-                      <input value={rd.gesellschaft || ''} onChange={e => setRD(i, 'gesellschaft', e.target.value)} placeholder="z.B. DRK Erfurt" />
+                      <label>Name / Besatzung</label>
+                      <input value={rd.name || ''} onChange={e => setRD(i, 'name', e.target.value)} placeholder="Name des Rettungsassistenten / Sanitäters" />
                     </div>
                   </div>
-                  <div className="form-group">
-                    <label>Name / Besatzung</label>
-                    <input value={rd.name || ''} onChange={e => setRD(i, 'name', e.target.value)} placeholder="Name des Rettungsassistenten / Sanitäters" />
-                  </div>
-                </div>
-              ))}
-              {(form.organisationen.rettungsdienste || []).length === 0 && (
-                <p style={{ fontSize: 13, color: 'var(--gray-400)', margin: 0 }}>Kein Rettungsdienst eingesetzt</p>
-              )}
+                ))}
+                {(form.organisationen.rettungsdienste || []).length === 0 && (
+                  <p style={{ fontSize: 13, color: 'var(--gray-400)', margin: 0 }}>Kein Rettungsdienst eingesetzt</p>
+                )}
+              </div>
             </div>
 
             {/* Einsatzleitung */}
             <div>
-              <label style={{ fontWeight: 600, marginBottom: 8, display: 'block' }}>Einsatzleitung</label>
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Name</label>
-                  <input value={form.organisationen.einsatzleitung?.name || ''} onChange={e => setOrgNested('einsatzleitung', 'name', e.target.value)} />
-                </div>
-                <div className="form-group">
-                  <label>Feuerwehr</label>
-                  <input value={form.organisationen.einsatzleitung?.feuerwehr || ''} onChange={e => setOrgNested('einsatzleitung', 'feuerwehr', e.target.value)} />
+              <div style={{ padding: '7px 16px', background: 'var(--gray-100)', borderTop: '1px solid var(--gray-200)', borderBottom: '1px solid var(--gray-200)' }}>
+                <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--gray-500)' }}>Einsatzleitung</span>
+              </div>
+              <div style={{ padding: '12px 16px' }}>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label>Name</label>
+                    <input value={form.organisationen.einsatzleitung?.name || ''} onChange={e => setOrgNested('einsatzleitung', 'name', e.target.value)} />
+                  </div>
+                  <div className="form-group">
+                    <label>Feuerwehr</label>
+                    <input value={form.organisationen.einsatzleitung?.feuerwehr || ''} onChange={e => setOrgNested('einsatzleitung', 'feuerwehr', e.target.value)} />
+                  </div>
                 </div>
               </div>
             </div>
 
             {/* Übergabe */}
             <div>
-              <label style={{ fontWeight: 600, marginBottom: 8, display: 'block' }}>Übergeben an</label>
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Name</label>
-                  <input value={form.organisationen.uebergabe?.name || ''} onChange={e => setOrgNested('uebergabe', 'name', e.target.value)} />
-                </div>
-                <div className="form-group">
-                  <label>Uhrzeit</label>
-                  <input type="time" value={form.organisationen.uebergabe?.uhrzeit || ''} onChange={e => setOrgNested('uebergabe', 'uhrzeit', e.target.value)} />
-                </div>
-                <div className="form-group">
-                  <label>Funktion</label>
-                  <input value={form.organisationen.uebergabe?.funktion || ''} onChange={e => setOrgNested('uebergabe', 'funktion', e.target.value)} placeholder="z.B. Polizei" />
+              <div style={{ padding: '7px 16px', background: 'var(--gray-100)', borderTop: '1px solid var(--gray-200)', borderBottom: '1px solid var(--gray-200)' }}>
+                <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--gray-500)' }}>Übergeben an</span>
+              </div>
+              <div style={{ padding: '12px 16px' }}>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label>Name</label>
+                    <input value={form.organisationen.uebergabe?.name || ''} onChange={e => setOrgNested('uebergabe', 'name', e.target.value)} />
+                  </div>
+                  <div className="form-group">
+                    <label>Uhrzeit</label>
+                    <input type="time" value={form.organisationen.uebergabe?.uhrzeit || ''} onChange={e => setOrgNested('uebergabe', 'uhrzeit', e.target.value)} />
+                  </div>
+                  <div className="form-group">
+                    <label>Funktion</label>
+                    <input value={form.organisationen.uebergabe?.funktion || ''} onChange={e => setOrgNested('uebergabe', 'funktion', e.target.value)} placeholder="z.B. Polizei" />
+                  </div>
                 </div>
               </div>
             </div>
 
             {/* Betroffene Personen */}
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                <label style={{ margin: 0, fontWeight: 600 }}>Betroffene Personen</label>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 16px', background: 'var(--gray-100)', borderTop: '1px solid var(--gray-200)', borderBottom: '1px solid var(--gray-200)' }}>
+                <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--gray-500)' }}>Betroffene Personen</span>
                 <button type="button" className="btn btn-sm btn-secondary" onClick={addPerson}>+ Hinzufügen</button>
               </div>
-              {(form.organisationen.betroffene || []).map((p, i) => (
-                <div key={i} style={{ border: '1px solid var(--gray-200)', borderRadius: 8, padding: 12, marginBottom: 8 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                    <span style={{ fontWeight: 500, fontSize: 13, color: 'var(--gray-600)' }}>Person {i + 1}</span>
-                    <button type="button" className="btn btn-sm btn-danger" onClick={() => removePerson(i)}>✕</button>
+              <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {(form.organisationen.betroffene || []).map((p, i) => (
+                  <div key={i} style={{ border: '1px solid var(--gray-200)', borderRadius: 8, padding: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <span style={{ fontWeight: 500, fontSize: 13, color: 'var(--gray-600)' }}>Person {i + 1}</span>
+                      <button type="button" className="btn btn-sm btn-danger" onClick={() => removePerson(i)}>✕</button>
+                    </div>
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>Vorname</label>
+                        <input value={p.vorname || ''} onChange={e => setPerson(i, 'vorname', e.target.value)} />
+                      </div>
+                      <div className="form-group">
+                        <label>Nachname</label>
+                        <input value={p.nachname || ''} onChange={e => setPerson(i, 'nachname', e.target.value)} />
+                      </div>
+                      <div className="form-group">
+                        <label>Geboren am</label>
+                        <input type="date" value={p.geboren || ''} onChange={e => setPerson(i, 'geboren', e.target.value)} />
+                      </div>
+                    </div>
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>Adresse</label>
+                        <input value={p.adresse || ''} onChange={e => setPerson(i, 'adresse', e.target.value)} />
+                      </div>
+                      <div className="form-group">
+                        <label>Art der Beteiligung</label>
+                        <input value={p.art || ''} onChange={e => setPerson(i, 'art', e.target.value)} placeholder="z.B. Geschädigter, Fahrer" />
+                      </div>
+                      <div className="form-group">
+                        <label>Kennzeichen</label>
+                        <input value={p.kennzeichen || ''} onChange={e => setPerson(i, 'kennzeichen', e.target.value)} />
+                      </div>
+                    </div>
                   </div>
-                  <div className="form-row">
-                    <div className="form-group">
-                      <label>Vorname</label>
-                      <input value={p.vorname || ''} onChange={e => setPerson(i, 'vorname', e.target.value)} />
-                    </div>
-                    <div className="form-group">
-                      <label>Nachname</label>
-                      <input value={p.nachname || ''} onChange={e => setPerson(i, 'nachname', e.target.value)} />
-                    </div>
-                    <div className="form-group">
-                      <label>Geboren am</label>
-                      <input type="date" value={p.geboren || ''} onChange={e => setPerson(i, 'geboren', e.target.value)} />
-                    </div>
-                  </div>
-                  <div className="form-row">
-                    <div className="form-group">
-                      <label>Adresse</label>
-                      <input value={p.adresse || ''} onChange={e => setPerson(i, 'adresse', e.target.value)} />
-                    </div>
-                    <div className="form-group">
-                      <label>Art der Beteiligung</label>
-                      <input value={p.art || ''} onChange={e => setPerson(i, 'art', e.target.value)} placeholder="z.B. Geschädigter, Fahrer" />
-                    </div>
-                    <div className="form-group">
-                      <label>Kennzeichen</label>
-                      <input value={p.kennzeichen || ''} onChange={e => setPerson(i, 'kennzeichen', e.target.value)} />
-                    </div>
-                  </div>
-                </div>
-              ))}
-              {(form.organisationen.betroffene || []).length === 0 && (
-                <p style={{ fontSize: 13, color: 'var(--gray-400)', margin: 0 }}>Keine betroffenen Personen</p>
-              )}
+                ))}
+                {(form.organisationen.betroffene || []).length === 0 && (
+                  <p style={{ fontSize: 13, color: 'var(--gray-400)', margin: 0 }}>Keine betroffenen Personen</p>
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -1073,7 +1108,7 @@ export default function EinsatzberichtFormular() {
                   </div>
                 )}
               </div>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: aufnahmen.length > 0 ? 12 : 0 }}>
                 <button
                   type="button"
                   onClick={aufnahmeAktiv ? stoppeAufnahme : starteAufnahme}
@@ -1084,25 +1119,37 @@ export default function EinsatzberichtFormular() {
                     boxShadow: aufnahmeAktiv ? '0 0 0 4px rgba(239,68,68,0.2)' : 'none',
                   }}
                 >
-                  {aufnahmeAktiv ? '⏸ Pause' : audioBlob ? '▶ Fortsetzen' : '🎙 Aufnahme starten'}
+                  {aufnahmeAktiv ? '⏹ Stopp' : '🎙 Aufnahme starten'}
                 </button>
-                {audioUrl && !aufnahmeAktiv && (
-                  <>
-                    <audio controls src={audioUrl} style={{ flex: 1, minWidth: 200, height: 36 }} />
-                    <button type="button" className="btn btn-sm btn-danger" onClick={loescheAufnahme} title="Aufnahme löschen">🗑</button>
-                  </>
+                {audioHochlade && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--gray-400)' }}>
+                    <div className="spinner" style={{ width: 12, height: 12, borderWidth: 2 }} /> Wird hochgeladen…
+                  </div>
+                )}
+                {aufnahmen.length > 1 && !aufnahmeAktiv && (
+                  <button type="button" className="btn btn-sm btn-danger" onClick={loescheAlleAufnahmen} style={{ marginLeft: 'auto' }}>
+                    🗑 Alle löschen
+                  </button>
                 )}
               </div>
-              {audioBlob && !aufnahmeAktiv && (
-                <div style={{ fontSize: 11, color: 'var(--gray-400)', marginTop: 6 }}>
-                  {audioHochlade
-                    ? '⏫ Aufnahme wird in Cloud gespeichert…'
-                    : audioPfad
-                      ? `✓ In Cloud gespeichert · ${(audioBlob.size / 1024 / 1024).toFixed(1)} MB · Von jedem Gerät abrufbar`
-                      : `✓ Lokal verfügbar · ${(audioBlob.size / 1024 / 1024).toFixed(1)} MB · Wird beim Mail-Versand angehängt`
-                  }
-                </div>
-              )}
+
+              {/* Liste aller Aufnahmen */}
+              {aufnahmen.map((a, i) => {
+                const uhr = a.zeitstempel ? new Date(a.zeitstempel).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : ''
+                const datum = a.zeitstempel ? new Date(a.zeitstempel).toLocaleDateString('de-DE') : ''
+                return (
+                  <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, background: 'white', borderRadius: 8, padding: '8px 10px', border: '1px solid var(--gray-200)' }}>
+                    <div style={{ fontSize: 11, color: 'var(--gray-400)', flexShrink: 0, minWidth: 90 }}>
+                      #{i + 1} · {datum}<br />{uhr} Uhr
+                    </div>
+                    <audio controls src={a.url} style={{ flex: 1, minWidth: 0, height: 32 }} />
+                    <div style={{ fontSize: 10, color: a.pfad ? '#16a34a' : 'var(--gray-400)', flexShrink: 0 }}>
+                      {a.pfad ? '☁' : '📱'}
+                    </div>
+                    <button type="button" className="btn btn-sm btn-danger" onClick={() => loescheAufnahme(a.id)} title="Aufnahme löschen" style={{ flexShrink: 0 }}>✕</button>
+                  </div>
+                )
+              })}
               {transkriptionLaeuft && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, fontSize: 13, color: 'var(--gray-500)' }}>
                   <div className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} />
