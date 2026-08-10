@@ -31,6 +31,8 @@ export default function GeraetewartPage() {
   const [hasTorch, setHasTorch] = useState(false)
   const [mailStatus, setMailStatus] = useState(null)
   const [wehrEmail, setWehrEmail] = useState('')
+  const [syncStatus, setSyncStatus] = useState(null) // null | 'saving' | 'ok'
+  const dbSaveTimerRef = useRef(null)
   const videoRef = useRef(null)
   const readerRef = useRef(null)
   const streamRef = useRef(null)
@@ -67,10 +69,33 @@ export default function GeraetewartPage() {
     supabase.from('wehren').select('einsatzbericht_email').eq('id', profile?.wehr_id).single().then(({ data }) => {
       setWehrEmail(data?.einsatzbericht_email ?? '')
     })
-    return () => stopScanner()
+    // Liste aus DB laden (überschreibt localStorage wenn DB-Daten vorhanden)
+    if (profile?.id) {
+      supabase.from('geraetewart_liste').select('eintraege').eq('user_id', profile.id).single().then(({ data }) => {
+        if (data?.eintraege?.length > 0) {
+          setListe(data.eintraege)
+          speichereListe(data.eintraege)
+        }
+      })
+    }
+    return () => { stopScanner(); clearTimeout(dbSaveTimerRef.current) }
   }, [])
 
-  useEffect(() => { speichereListe(liste) }, [liste])
+  // localStorage + debounced DB-Sync bei jeder Listenänderung
+  useEffect(() => {
+    speichereListe(liste)
+    if (!profile?.id) return
+    clearTimeout(dbSaveTimerRef.current)
+    dbSaveTimerRef.current = setTimeout(async () => {
+      setSyncStatus('saving')
+      await supabase.from('geraetewart_liste').upsert(
+        { user_id: profile.id, wehr_id: profile.wehr_id, eintraege: liste, updated_at: new Date().toISOString() },
+        { onConflict: 'user_id' }
+      )
+      setSyncStatus('ok')
+      setTimeout(() => setSyncStatus(null), 1500)
+    }, 1500)
+  }, [liste])
 
   async function startScanner() {
     setScanError('')
@@ -527,8 +552,15 @@ export default function GeraetewartPage() {
 
   function listeLeeren(ohneBestaetigung = false) {
     if (!ohneBestaetigung && !window.confirm(`Alle ${liste.length} Einträge wirklich löschen?\n\nDieser Vorgang kann nicht rückgängig gemacht werden.`)) return
+    clearTimeout(dbSaveTimerRef.current)
     setListe([])
     localStorage.removeItem(LS_KEY)
+    if (profile?.id) {
+      supabase.from('geraetewart_liste').upsert(
+        { user_id: profile.id, wehr_id: profile.wehr_id, eintraege: [], updated_at: new Date().toISOString() },
+        { onConflict: 'user_id' }
+      )
+    }
   }
 
   async function mailSenden() {
@@ -980,8 +1012,12 @@ export default function GeraetewartPage() {
       {liste.length > 0 && (
         <div style={{ background: 'var(--white)', border: '1px solid var(--gray-200)', borderRadius: 10, overflow: 'hidden', marginBottom: 20 }}>
           <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--gray-100)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div style={{ fontWeight: 600, fontSize: 15 }}>
-              Pruef-Liste ({liste.length} {liste.length === 1 ? 'Eintrag' : 'Eintraege'})
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{ fontWeight: 600, fontSize: 15 }}>
+                Pruef-Liste ({liste.length} {liste.length === 1 ? 'Eintrag' : 'Eintraege'})
+              </div>
+              {syncStatus === 'saving' && <span style={{ fontSize: 11, color: 'var(--gray-400)' }}>↑ Synchronisiere…</span>}
+              {syncStatus === 'ok' && <span style={{ fontSize: 11, color: '#16a34a' }}>✓ Gespeichert</span>}
             </div>
             <button onClick={listeLeeren} className="btn btn-ghost btn-sm" style={{ color: 'var(--red)', fontSize: 12 }}>
               Liste leeren

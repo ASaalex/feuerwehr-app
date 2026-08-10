@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { format } from 'date-fns'
@@ -12,11 +12,22 @@ import { renderMd, findeVorschriftInRegelwerken } from '../lib/vorschriftSuche.j
 const KATEGORIEN = [
   { value: 'ausbildung', label: 'Ausbildung' },
 ]
+const KAT_COLOR = { dienstanweisung: 'red', vorlage: 'blue', ausbildung: 'green', sonstiges: 'gray' }
 
-const KAT_COLOR = { dienstanweisung: 'red', vorlage: 'blue', ausbildung: 'green', sonstiges: 'gray' } // ausbildung behalten fuer alte Dokumente
+const TABS = [
+  { id: 'dokumente',   label: 'Dokumente',          emoji: '📁', sub: 'Ausbildungsunterlagen' },
+  { id: 'simulation',  label: 'Einsatz-Simulation',  emoji: '🎮', sub: 'KI-gestützt',           ki: true  },
+  { id: 'lehrgang',    label: 'Lehrgangsausbildung', emoji: '🎓', sub: 'Prüfungsvorbereitung'             },
+  { id: 'planspiel',   label: 'Planspiel',           emoji: '🗺️', sub: 'Taktische Übung'                 },
+  { id: 'wissen',      label: 'Wissensfrage',        emoji: '💬', sub: 'KI-gestützt',           ki: true  },
+]
 
 export default function AusbildungPage() {
   const { profile, isAdmin, isAusbilder } = useAuth()
+  const navigate = useNavigate()
+  const [activeTab, setActiveTab] = useState('dokumente')
+
+  // Dokumente
   const [dokumente, setDokumente] = useState([])
   const [loading, setLoading] = useState(true)
   const [uploadModal, setUploadModal] = useState(false)
@@ -27,6 +38,8 @@ export default function AusbildungPage() {
   const [ausbildungsModal, setAusbildungsModal] = useState(false)
   const [auslagenModal, setAuslagenModal] = useState(false)
   const [verdienstModal, setVerdienstModal] = useState(false)
+
+  // KI / Wissen
   const [kiGuthaben, setKiGuthaben] = useState(null)
   const [wissensFrage, setWissensFrage] = useState('')
   const [wissensAntwort, setWissensAntwort] = useState(null)
@@ -38,20 +51,12 @@ export default function AusbildungPage() {
   useEffect(() => { fetchDokumente(); fetchKiGuthaben(); ladeRegelwerke() }, [])
 
   async function ladeRegelwerke() {
-    const { data } = await supabase
-      .from('regelwerke')
-      .select('titel, inhalt_text')
-      .eq('aktiv', true)
-      .not('inhalt_text', 'is', null)
+    const { data } = await supabase.from('regelwerke').select('titel, inhalt_text').eq('aktiv', true).not('inhalt_text', 'is', null)
     setRegelwerke(data ?? [])
   }
 
   async function fetchKiGuthaben() {
-    const { data } = await supabase
-      .from('profiles')
-      .select('ki_guthaben_cent')
-      .eq('id', profile.id)
-      .single()
+    const { data } = await supabase.from('profiles').select('ki_guthaben_cent').eq('id', profile.id).single()
     setKiGuthaben(data?.ki_guthaben_cent ?? 0)
   }
 
@@ -70,11 +75,7 @@ export default function AusbildungPage() {
           'Authorization': `Bearer ${session?.access_token}`,
           'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
         },
-        body: JSON.stringify({
-          modus: 'wissen',
-          frage: q,
-          kamerad_id: profile?.id,
-        }),
+        body: JSON.stringify({ modus: 'wissen', frage: q, kamerad_id: profile?.id }),
       })
       const data = await res.json()
       if (data.error) {
@@ -83,7 +84,7 @@ export default function AusbildungPage() {
         setWissensAntwort(data.antwort)
         if (data.guthaben_rest_cent !== undefined) setKiGuthaben(data.guthaben_rest_cent)
       }
-    } catch (e) {
+    } catch {
       setWissensFehler('Verbindungsfehler – bitte erneut versuchen.')
     }
     setWissensLoading(false)
@@ -103,27 +104,14 @@ export default function AusbildungPage() {
     e.preventDefault()
     if (!form.datei) return
     setUploading(true)
-
     const ext = form.datei.name.split('.').pop()
     const pfad = `${profile.id}/${Date.now()}.${ext}`
-
     const { error: storageError } = await supabase.storage.from('dokumente').upload(pfad, form.datei)
-    if (storageError) {
-      alert('Upload fehlgeschlagen: ' + storageError.message)
-      setUploading(false)
-      return
-    }
-
+    if (storageError) { alert('Upload fehlgeschlagen: ' + storageError.message); setUploading(false); return }
     const { error: dbError } = await supabase.from('dokumente').insert({
-      titel: form.titel,
-      beschreibung: form.beschreibung,
-      kategorie: form.kategorie,
-      datei_pfad: pfad,
-      datei_name: form.datei.name,
-      datei_groesse: form.datei.size,
-      hochgeladen_von: profile.id,
+      titel: form.titel, beschreibung: form.beschreibung, kategorie: form.kategorie,
+      datei_pfad: pfad, datei_name: form.datei.name, datei_groesse: form.datei.size, hochgeladen_von: profile.id,
     })
-
     if (!dbError) {
       await fetchDokumente()
       setUploadModal(false)
@@ -144,15 +132,9 @@ export default function AusbildungPage() {
     if (data?.signedUrl) {
       const ext = dok.datei_name.split('.').pop()?.toLowerCase()
       if (ext === 'pdf') {
-        // PDF in neuem Tab oeffnen, Browser-Druckdialog startet automatisch
         const win = window.open(data.signedUrl, '_blank')
-        if (win) {
-          win.onload = () => {
-            try { win.print() } catch(e) {}
-          }
-        }
+        if (win) win.onload = () => { try { win.print() } catch(e) {} }
       } else {
-        // Andere Dateitypen: erst oeffnen, dann Nutzer manuell drucken lassen
         window.open(data.signedUrl, '_blank')
       }
     }
@@ -172,17 +154,18 @@ export default function AusbildungPage() {
   })
 
   const kannHochladen = isAusbilder || isAdmin
+  const keinGuthaben = kiGuthaben !== null && kiGuthaben <= 0
 
   if (loading) return <div className="loading-page"><div className="spinner"></div></div>
 
   return (
     <div>
+      {/* Header */}
       <div className="page-header">
         <div>
           <h1>Ausbildung</h1>
-          <p style={{ marginTop: 4 }}>{dokumente.length} Dokument{dokumente.length !== 1 ? 'e' : ''}</p>
         </div>
-        {kannHochladen && (
+        {activeTab === 'dokumente' && kannHochladen && (
           <button className="btn btn-primary" onClick={() => setUploadModal(true)}>
             <span>+</span> Hochladen
           </button>
@@ -191,318 +174,247 @@ export default function AusbildungPage() {
 
       {msg && <div className="alert alert-success">{msg}</div>}
 
-      {/* Einsatz-Simulation Banner */}
-      {kiGuthaben !== null && kiGuthaben <= 0 ? (
-        /* Kein Guthaben → ausgegraut, nicht klickbar */
-        <div style={{ marginBottom: 20 }}>
-          <div style={{
-            background: 'linear-gradient(135deg, #9CA3AF 0%, #6B7280 100%)',
-            borderRadius: 12, padding: '16px 20px',
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
-            opacity: 0.75, cursor: 'not-allowed',
-          }}>
-            <div>
-              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>KI-gestützt</div>
-              <div style={{ fontSize: 16, fontWeight: 700, color: 'white', marginBottom: 4 }}>🎮 Einsatz-Simulation</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ fontSize: 12, padding: '2px 10px', borderRadius: 20, background: 'rgba(255,255,255,0.2)', color: 'white', fontWeight: 600 }}>
-                  💳 0,00 € Guthaben
-                </span>
-                <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.8)' }}>– Wehrleiter um Aufladung bitten</span>
-              </div>
-            </div>
-            <div style={{ fontSize: 28, opacity: 0.5 }}>🚒</div>
-          </div>
-        </div>
-      ) : (
-        <Link to="/ausbildung/chat" style={{ textDecoration: 'none', display: 'block', marginBottom: 20 }}>
-          <div style={{
-            background: 'linear-gradient(135deg, #B91C1C 0%, #991B1B 100%)',
-            borderRadius: 12, padding: '16px 20px',
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
-            cursor: 'pointer', transition: 'opacity 150ms',
-          }}
-            onMouseEnter={e => e.currentTarget.style.opacity = '0.92'}
-            onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+      {/* Tabs */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 24, padding: 3, background: 'var(--gray-100)', borderRadius: 8, overflowX: 'auto' }}>
+        {TABS.map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`btn btn-sm ${activeTab === tab.id ? 'btn-primary' : 'btn-ghost'}`}
+            style={{ flexShrink: 0 }}
           >
-            <div>
-              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>KI-gestützt</div>
-              <div style={{ fontSize: 16, fontWeight: 700, color: 'white', marginBottom: 4 }}>🎮 Einsatz-Simulation</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)' }}>Taktisches Training mit KI-Ausbilder · Bewertung nach FwDV &amp; ThürBKG</span>
-                {kiGuthaben !== null && (
-                  <span style={{
-                    fontSize: 11, padding: '2px 9px', borderRadius: 20, fontWeight: 600,
-                    background: kiGuthaben < 20 ? 'rgba(251,191,36,0.3)' : 'rgba(255,255,255,0.2)',
-                    color: kiGuthaben < 20 ? '#FDE68A' : 'rgba(255,255,255,0.9)',
-                    border: kiGuthaben < 20 ? '1px solid rgba(251,191,36,0.5)' : '1px solid rgba(255,255,255,0.2)',
-                  }}>
-                    💳 {(kiGuthaben / 100).toFixed(2).replace('.', ',')} €
-                  </span>
-                )}
-              </div>
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Inhalt: Dokumente ── */}
+      {activeTab === 'dokumente' && (
+        <div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
+            <input
+              placeholder="Dokument suchen..."
+              value={filter.suche}
+              onChange={e => setFilter(f => ({ ...f, suche: e.target.value }))}
+              style={{ maxWidth: 260 }}
+            />
+            <div style={{ display: 'flex', gap: 6 }}>
+              {KATEGORIEN.map(k => (
+                <button key={k.value}
+                  className={`btn btn-sm ${filter.kategorie === k.value ? 'btn-primary' : 'btn-secondary'}`}
+                  onClick={() => setFilter(f => ({ ...f, kategorie: k.value }))}>
+                  {k.label}
+                </button>
+              ))}
             </div>
-            <div style={{ fontSize: 28, opacity: 0.8 }}>🚒</div>
           </div>
-        </Link>
+
+          {gefiltert.length === 0 ? (
+            <div className="empty-state card">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>
+              <p>Keine Dokumente gefunden</p>
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
+              {gefiltert.map(dok => (
+                <div key={dok.id} className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                        <FileIcon name={dok.datei_name} />
+                        <span className={`badge badge-${KAT_COLOR[dok.kategorie]}`} style={{ fontSize: 11 }}>
+                          {KATEGORIEN.find(k => k.value === dok.kategorie)?.label}
+                        </span>
+                      </div>
+                      <div style={{ fontWeight: 500, fontSize: 14, color: 'var(--gray-700)', lineHeight: 1.4 }}>{dok.titel}</div>
+                      {dok.beschreibung && <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 4, lineHeight: 1.5 }}>{dok.beschreibung}</div>}
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--gray-400)', borderTop: '1px solid var(--gray-100)', paddingTop: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>
+                      {dok.hochgeladen_von?.vorname} {dok.hochgeladen_von?.nachname}<br />
+                      {format(new Date(dok.erstellt_am), 'd. MMM yyyy', { locale: de })}
+                    </span>
+                    <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                      {(dok.titel?.toLowerCase().includes('ausbildungsnachweis') || dok.datei_name?.toLowerCase().includes('ausbildungsnachweis')) && (
+                        <button className="btn btn-sm" style={{ background: '#E1F5EE', color: '#085041', border: 'none' }} onClick={() => setAusbildungsModal(true)} title="Ausbildungsnachweis ausfüllen">✏️</button>
+                      )}
+                      {(dok.titel?.toLowerCase().includes('auslagenerstattung') || dok.datei_name?.toLowerCase().includes('auslagenerstattung')) && (
+                        <button className="btn btn-sm" style={{ background: '#E6F1FB', color: '#0C447C', border: 'none' }} onClick={() => setAuslagenModal(true)} title="Auslagenerstattung ausfüllen">✏️</button>
+                      )}
+                      {(dok.titel?.toLowerCase().includes('verdienstausfall') || dok.datei_name?.toLowerCase().includes('verdienstausfall')) && (
+                        <button className="btn btn-sm" style={{ background: '#FAEEDA', color: '#633806', border: 'none' }} onClick={() => setVerdienstModal(true)} title="Verdienstausfall ausfüllen">✏️</button>
+                      )}
+                      <button className="btn btn-sm btn-secondary" onClick={() => handleDownload(dok)} title="Öffnen">↓</button>
+                      <button className="btn btn-sm btn-secondary" onClick={() => handlePrint(dok)} title="Drucken" style={{ padding: '6px 10px' }}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <polyline points="6,9 6,2 18,2 18,9"/>
+                          <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+                          <rect x="6" y="14" width="12" height="8"/>
+                        </svg>
+                      </button>
+                      {isAdmin && (
+                        <button className="btn btn-sm btn-danger" onClick={() => handleDelete(dok)} title="Löschen">✕</button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
-      {/* Lehrgangsausbildung Banner */}
-      <Link to="/ausbildung/lehrgang" style={{ textDecoration: 'none', display: 'block', marginBottom: 16 }}>
-        <div style={{
-          background: 'linear-gradient(135deg, #1e40af 0%, #1d4ed8 100%)',
-          borderRadius: 12, padding: '16px 20px',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
-          cursor: 'pointer', transition: 'opacity 150ms',
-        }}
-          onMouseEnter={e => e.currentTarget.style.opacity = '0.92'}
-          onMouseLeave={e => e.currentTarget.style.opacity = '1'}
-        >
-          <div>
-            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>Lehrgangs-Vorbereitung</div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: 'white', marginBottom: 4 }}>🎓 Lehrgangsausbildung</div>
-            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.75)' }}>Karteikarten, Multiple-Choice &amp; KI-Auswertung · Lernfortschritt in %</div>
-          </div>
-          <div style={{ fontSize: 28, opacity: 0.8 }}>📚</div>
-        </div>
-      </Link>
-
-      {/* Planspiel Banner */}
-      <Link to="/ausbildung/planspiel" style={{ textDecoration: 'none', display: 'block', marginBottom: 16 }}>
-        <div style={{
-          background: 'linear-gradient(135deg, #065f46 0%, #047857 100%)',
-          borderRadius: 12, padding: '16px 20px',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
-          cursor: 'pointer', transition: 'opacity 150ms',
-        }}
-          onMouseEnter={e => e.currentTarget.style.opacity = '0.92'}
-          onMouseLeave={e => e.currentTarget.style.opacity = '1'}
-        >
-          <div>
-            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>Taktische Übung</div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: 'white', marginBottom: 4 }}>🗺️ Planspiel</div>
-            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.75)' }}>Kartenbasierte Szenarien auf Satellitenbild · Fahrzeuge, Trupps &amp; Schlauchleitungen</div>
-          </div>
-          <div style={{ fontSize: 28, opacity: 0.8 }}>🚒</div>
-        </div>
-      </Link>
-
-      {/* Wissensfrage Banner */}
-      <div style={{ marginBottom: 20 }}>
-        <div style={{
-          background: 'linear-gradient(135deg, #1D4ED8 0%, #1E40AF 100%)',
-          borderRadius: 12, padding: '16px 20px',
-        }}>
-          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>KI-gestützt</div>
-          <div style={{ fontSize: 16, fontWeight: 700, color: 'white', marginBottom: 4 }}>💬 Wissensfrage</div>
-          <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.75)', marginBottom: 12 }}>
-            Stelle eine Frage – KI antwortet direkt aus den Dienstvorschriften
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input
-              placeholder="z.B. Wer baut die Wasserversorgung im Löscheinsatz auf?"
-              value={wissensFrage}
-              onChange={e => { setWissensFrage(e.target.value); setWissensAntwort(null); setWissensFehler('') }}
-              onKeyDown={e => e.key === 'Enter' && stelleWissensFrage()}
-              disabled={wissensLoading || (kiGuthaben !== null && kiGuthaben <= 0)}
-              style={{
-                flex: 1,
-                background: 'rgba(255,255,255,0.15)',
-                border: '1px solid rgba(255,255,255,0.3)',
-                color: 'white',
-                borderRadius: 8,
-                padding: '9px 13px',
-                fontSize: 14,
-                outline: 'none',
-              }}
-            />
-            <button
-              onClick={stelleWissensFrage}
-              disabled={!wissensFrage.trim() || wissensLoading || (kiGuthaben !== null && kiGuthaben <= 0)}
-              style={{
-                background: 'rgba(255,255,255,0.2)',
-                border: '1px solid rgba(255,255,255,0.35)',
-                color: 'white',
-                borderRadius: 8,
-                padding: '9px 16px',
-                fontWeight: 600,
-                fontSize: 14,
-                cursor: 'pointer',
-                flexShrink: 0,
-                opacity: (!wissensFrage.trim() || wissensLoading || (kiGuthaben !== null && kiGuthaben <= 0)) ? 0.5 : 1,
-                transition: 'opacity 150ms',
-              }}
-            >
-              {wissensLoading ? '…' : 'Fragen →'}
-            </button>
-          </div>
-
-          {/* Antwort */}
-          {wissensLoading && (
-            <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, color: 'rgba(255,255,255,0.7)', fontSize: 13 }}>
-              <div style={{ width: 16, height: 16, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: 'white', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-              KI sucht in den Dienstvorschriften…
+      {/* ── Inhalt: Einsatz-Simulation ── */}
+      {activeTab === 'simulation' && (
+        <div className="card" style={{ maxWidth: 560 }}>
+          <div style={{ fontSize: 40, marginBottom: 16 }}>🎮</div>
+          <h2 style={{ marginBottom: 8 }}>Einsatz-Simulation</h2>
+          <p style={{ fontSize: 14, color: 'var(--gray-500)', lineHeight: 1.6, marginBottom: 20 }}>
+            Taktisches Training mit einem KI-Ausbilder. Du bekommst ein realistisches Einsatzszenario und gibst Befehle – die KI bewertet deine Entscheidungen nach FwDV &amp; ThürBKG und gibt strukturiertes Feedback.
+          </p>
+          {keinGuthaben ? (
+            <div style={{ padding: '12px 16px', background: '#FEF2F2', borderRadius: 8, border: '1px solid #FECACA', fontSize: 13, color: '#B91C1C', marginBottom: 16 }}>
+              💳 Kein Guthaben vorhanden – bitte den Wehrleiter um Aufladung bitten.
+            </div>
+          ) : (
+            <div style={{ padding: '10px 14px', background: '#EFF6FF', borderRadius: 8, border: '1px solid #BFDBFE', fontSize: 13, color: '#1D4ED8', marginBottom: 16 }}>
+              💳 Verfügbares Guthaben: <strong>{kiGuthaben !== null ? (kiGuthaben / 100).toFixed(2).replace('.', ',') + ' €' : '…'}</strong>
             </div>
           )}
-          {wissensFehler && (
-            <div style={{ marginTop: 10, background: 'rgba(254,202,202,0.15)', border: '1px solid rgba(254,202,202,0.3)', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#FCA5A5' }}>
-              ⚠️ {wissensFehler}
+          <button
+            className="btn btn-primary"
+            onClick={() => navigate('/ausbildung/chat')}
+            disabled={keinGuthaben}
+            style={{ fontSize: 15, padding: '12px 28px' }}
+          >
+            Simulation starten →
+          </button>
+        </div>
+      )}
+
+      {/* ── Inhalt: Lehrgangsausbildung ── */}
+      {activeTab === 'lehrgang' && (
+        <div className="card" style={{ maxWidth: 560 }}>
+          <div style={{ fontSize: 40, marginBottom: 16 }}>🎓</div>
+          <h2 style={{ marginBottom: 8 }}>Lehrgangsausbildung</h2>
+          <p style={{ fontSize: 14, color: 'var(--gray-500)', lineHeight: 1.6, marginBottom: 20 }}>
+            Bereite dich auf Lehrgänge vor mit Karteikarten und Multiple-Choice-Fragen. Dein Lernfortschritt wird in Prozent angezeigt und die KI wertet deine Freitextantworten aus.
+          </p>
+          <button
+            className="btn btn-primary"
+            onClick={() => navigate('/ausbildung/lehrgang')}
+            style={{ fontSize: 15, padding: '12px 28px' }}
+          >
+            Zur Lehrgangsausbildung →
+          </button>
+        </div>
+      )}
+
+      {/* ── Inhalt: Planspiel ── */}
+      {activeTab === 'planspiel' && (
+        <div className="card" style={{ maxWidth: 560 }}>
+          <div style={{ fontSize: 40, marginBottom: 16 }}>🗺️</div>
+          <h2 style={{ marginBottom: 8 }}>Planspiel</h2>
+          <p style={{ fontSize: 14, color: 'var(--gray-500)', lineHeight: 1.6, marginBottom: 20 }}>
+            Kartenbasierte taktische Übungen auf OpenStreetMap. Fahrzeuge, Trupps und Schlauchleitungen werden auf der Karte positioniert. Szenarien können vorgegeben werden – auf einem zweiten Bildschirm sehen die Kameraden die Lage in Echtzeit.
+          </p>
+          <button
+            className="btn btn-primary"
+            onClick={() => navigate('/ausbildung/planspiel')}
+            style={{ fontSize: 15, padding: '12px 28px' }}
+          >
+            Zum Planspiel →
+          </button>
+        </div>
+      )}
+
+      {/* ── Inhalt: Wissensfrage ── */}
+      {activeTab === 'wissen' && (
+        <div style={{ maxWidth: 680 }}>
+          <div style={{ background: 'linear-gradient(135deg, #1D4ED8 0%, #1E40AF 100%)', borderRadius: 12, padding: '20px 20px' }}>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>KI-gestützt</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: 'white', marginBottom: 6 }}>💬 Wissensfrage</div>
+            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.75)', marginBottom: 16 }}>
+              Stelle eine Frage – die KI antwortet direkt aus den Dienstvorschriften
             </div>
-          )}
-          {wissensAntwort && (
-            <div style={{ marginTop: 12, background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 8, padding: '12px 16px', fontSize: 14, color: 'white', lineHeight: 1.65 }}>
-              {(() => {
-                // Robustheit: "📖 VORSCHRIFT:\nFwDV 3..." → zusammenführen
-                const rohe = wissensAntwort.split('\n')
-                const zusammen = []
-                for (let i = 0; i < rohe.length; i++) {
-                  if (/^📖\s*(VORSCHRIFT:?\s*)$/.test(rohe[i].trim()) && i + 1 < rohe.length) {
-                    zusammen.push(rohe[i].trimEnd() + ' ' + rohe[i + 1].trim())
-                    i++
-                  } else {
-                    zusammen.push(rohe[i])
-                  }
-                }
-                return zusammen
-              })().map((zeile, i) => {
-                const trimmed = zeile.trim()
-                if (!trimmed) return <div key={i} style={{ height: 6 }} />
-                if (trimmed.startsWith('📖')) {
-                  return (
-                    <div
-                      key={i}
-                      onClick={() => oeffneWissensVorschriftModal(trimmed)}
-                      style={{
-                        background: 'rgba(255,255,255,0.1)', borderRadius: 6, padding: '6px 10px',
-                        marginBottom: 6, fontWeight: 600,
-                        cursor: 'pointer',
-                        display: 'flex', alignItems: 'flex-start', gap: 6,
-                        transition: 'background 120ms',
-                      }}
-                      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.18)' }}
-                      onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)' }}
-                      title="Tippen zum Nachschlagen"
-                    >
-                      <span style={{ flexShrink: 0 }}>📖</span>
-                      <span style={{ flex: 1 }}>{renderMd(trimmed.replace(/^📖\s*(VORSCHRIFT:?\s*)?/, ''))}</span>
-                      <span style={{ flexShrink: 0, opacity: 0.7, fontSize: 12 }}>↗</span>
-                    </div>
-                  )
-                }
-                if (trimmed.startsWith('✅')) {
-                  return (
-                    <div key={i} style={{ background: 'rgba(134,239,172,0.15)', borderRadius: 6, padding: '6px 10px', marginBottom: 6, fontWeight: 500 }}>
-                      {renderMd(trimmed)}
-                    </div>
-                  )
-                }
-                if (trimmed.startsWith('💡')) {
-                  return (
-                    <div key={i} style={{ background: 'rgba(253,224,71,0.1)', borderRadius: 6, padding: '6px 10px', marginBottom: 6 }}>
-                      {renderMd(trimmed)}
-                    </div>
-                  )
-                }
-                return <div key={i} style={{ paddingLeft: 4, marginBottom: 3 }}>{renderMd(trimmed)}</div>
-              })}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                placeholder="z.B. Wer baut die Wasserversorgung im Löscheinsatz auf?"
+                value={wissensFrage}
+                onChange={e => { setWissensFrage(e.target.value); setWissensAntwort(null); setWissensFehler('') }}
+                onKeyDown={e => e.key === 'Enter' && stelleWissensFrage()}
+                disabled={wissensLoading || keinGuthaben}
+                style={{ flex: 1, background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.3)', color: 'white', borderRadius: 8, padding: '9px 13px', fontSize: 14, outline: 'none' }}
+              />
               <button
-                onClick={() => { setWissensAntwort(null); setWissensFrage('') }}
-                style={{ marginTop: 10, background: 'transparent', border: '1px solid rgba(255,255,255,0.3)', color: 'rgba(255,255,255,0.7)', borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
+                onClick={stelleWissensFrage}
+                disabled={!wissensFrage.trim() || wissensLoading || keinGuthaben}
+                style={{ background: 'rgba(255,255,255,0.2)', border: '1px solid rgba(255,255,255,0.35)', color: 'white', borderRadius: 8, padding: '9px 16px', fontWeight: 600, fontSize: 14, cursor: 'pointer', flexShrink: 0, opacity: (!wissensFrage.trim() || wissensLoading || keinGuthaben) ? 0.5 : 1, transition: 'opacity 150ms' }}
               >
-                Neue Frage
+                {wissensLoading ? '…' : 'Fragen →'}
               </button>
             </div>
-          )}
-          {kiGuthaben !== null && kiGuthaben <= 0 && (
-            <div style={{ marginTop: 10, fontSize: 12, color: 'rgba(255,255,255,0.6)' }}>
-              💳 Kein Guthaben – Wehrleiter um Aufladung bitten
-            </div>
-          )}
-        </div>
-      </div>
 
-      {/* Filter */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
-        <input
-          placeholder="Dokument suchen..."
-          value={filter.suche}
-          onChange={e => setFilter(f => ({ ...f, suche: e.target.value }))}
-          style={{ maxWidth: 260 }}
-        />
-        <div style={{ display: 'flex', gap: 6 }}>
-          {KATEGORIEN.map(k => (
-            <button key={k.value}
-              className={`btn btn-sm ${filter.kategorie === k.value ? 'btn-primary' : 'btn-secondary'}`}
-              onClick={() => setFilter(f => ({ ...f, kategorie: k.value }))}>
-              {k.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Dokumente Grid */}
-      {gefiltert.length === 0 ? (
-        <div className="empty-state card">
-          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>
-          <p>Keine Dokumente gefunden</p>
-        </div>
-      ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
-          {gefiltert.map(dok => (
-            <div key={dok.id} className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                    <FileIcon name={dok.datei_name} />
-                    <span className={`badge badge-${KAT_COLOR[dok.kategorie]}`} style={{ fontSize: 11 }}>
-                      {KATEGORIEN.find(k => k.value === dok.kategorie)?.label}
-                    </span>
-                  </div>
-                  <div style={{ fontWeight: 500, fontSize: 14, color: 'var(--gray-700)', lineHeight: 1.4 }}>{dok.titel}</div>
-                  {dok.beschreibung && <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 4, lineHeight: 1.5 }}>{dok.beschreibung}</div>}
-                </div>
+            {wissensLoading && (
+              <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, color: 'rgba(255,255,255,0.7)', fontSize: 13 }}>
+                <div style={{ width: 16, height: 16, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: 'white', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                KI sucht in den Dienstvorschriften…
               </div>
-              <div style={{ fontSize: 12, color: 'var(--gray-400)', borderTop: '1px solid var(--gray-100)', paddingTop: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>
-                  {dok.hochgeladen_von?.vorname} {dok.hochgeladen_von?.nachname}<br />
-                  {format(new Date(dok.erstellt_am), 'd. MMM yyyy', { locale: de })}
-                </span>
-                <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                  {(dok.titel?.toLowerCase().includes('ausbildungsnachweis') || dok.datei_name?.toLowerCase().includes('ausbildungsnachweis')) && (
-                    <button className="btn btn-sm" style={{ background: '#E1F5EE', color: '#085041', border: 'none' }}
-                      onClick={() => setAusbildungsModal(true)} title="Ausbildungsnachweis ausfuellen">
-                      ✏️
-                    </button>
-                  )}
-                  {(dok.titel?.toLowerCase().includes('auslagenerstattung') || dok.datei_name?.toLowerCase().includes('auslagenerstattung')) && (
-                    <button className="btn btn-sm" style={{ background: '#E6F1FB', color: '#0C447C', border: 'none' }}
-                      onClick={() => setAuslagenModal(true)} title="Auslagenerstattung ausfuellen">
-                      ✏️
-                    </button>
-                  )}
-                  {(dok.titel?.toLowerCase().includes('verdienstausfall') || dok.datei_name?.toLowerCase().includes('verdienstausfall')) && (
-                    <button className="btn btn-sm" style={{ background: '#FAEEDA', color: '#633806', border: 'none' }}
-                      onClick={() => setVerdienstModal(true)} title="Verdienstausfall ausfuellen">
-                      ✏️
-                    </button>
-                  )}
-                  <button className="btn btn-sm btn-secondary" onClick={() => handleDownload(dok)} title="Oeffnen">
-                    ↓
-                  </button>
-                  <button className="btn btn-sm btn-secondary" onClick={() => handlePrint(dok)} title="Drucken" style={{ padding: '6px 10px' }}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <polyline points="6,9 6,2 18,2 18,9"/>
-                      <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
-                      <rect x="6" y="14" width="12" height="8"/>
-                    </svg>
-                  </button>
-                  {isAdmin && (
-                    <button className="btn btn-sm btn-danger" onClick={() => handleDelete(dok)} title="Loeschen">✕</button>
-                  )}
-                </div>
+            )}
+            {wissensFehler && (
+              <div style={{ marginTop: 10, background: 'rgba(254,202,202,0.15)', border: '1px solid rgba(254,202,202,0.3)', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#FCA5A5' }}>
+                ⚠️ {wissensFehler}
               </div>
-            </div>
-          ))}
+            )}
+            {wissensAntwort && (
+              <div style={{ marginTop: 12, background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 8, padding: '12px 16px', fontSize: 14, color: 'white', lineHeight: 1.65 }}>
+                {(() => {
+                  const rohe = wissensAntwort.split('\n')
+                  const zusammen = []
+                  for (let i = 0; i < rohe.length; i++) {
+                    if (/^📖\s*(VORSCHRIFT:?\s*)$/.test(rohe[i].trim()) && i + 1 < rohe.length) {
+                      zusammen.push(rohe[i].trimEnd() + ' ' + rohe[i + 1].trim()); i++
+                    } else {
+                      zusammen.push(rohe[i])
+                    }
+                  }
+                  return zusammen
+                })().map((zeile, i) => {
+                  const trimmed = zeile.trim()
+                  if (!trimmed) return <div key={i} style={{ height: 6 }} />
+                  if (trimmed.startsWith('📖')) {
+                    return (
+                      <div key={i} onClick={() => oeffneWissensVorschriftModal(trimmed)}
+                        style={{ background: 'rgba(255,255,255,0.1)', borderRadius: 6, padding: '6px 10px', marginBottom: 6, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'flex-start', gap: 6, transition: 'background 120ms' }}
+                        onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.18)' }}
+                        onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)' }}
+                        title="Tippen zum Nachschlagen"
+                      >
+                        <span style={{ flexShrink: 0 }}>📖</span>
+                        <span style={{ flex: 1 }}>{renderMd(trimmed.replace(/^📖\s*(VORSCHRIFT:?\s*)?/, ''))}</span>
+                        <span style={{ flexShrink: 0, opacity: 0.7, fontSize: 12 }}>↗</span>
+                      </div>
+                    )
+                  }
+                  if (trimmed.startsWith('✅')) return <div key={i} style={{ background: 'rgba(134,239,172,0.15)', borderRadius: 6, padding: '6px 10px', marginBottom: 6, fontWeight: 500 }}>{renderMd(trimmed)}</div>
+                  if (trimmed.startsWith('💡')) return <div key={i} style={{ background: 'rgba(253,224,71,0.1)', borderRadius: 6, padding: '6px 10px', marginBottom: 6 }}>{renderMd(trimmed)}</div>
+                  return <div key={i} style={{ paddingLeft: 4, marginBottom: 3 }}>{renderMd(trimmed)}</div>
+                })}
+                <button
+                  onClick={() => { setWissensAntwort(null); setWissensFrage('') }}
+                  style={{ marginTop: 10, background: 'transparent', border: '1px solid rgba(255,255,255,0.3)', color: 'rgba(255,255,255,0.7)', borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer' }}
+                >
+                  Neue Frage
+                </button>
+              </div>
+            )}
+            {keinGuthaben && (
+              <div style={{ marginTop: 10, fontSize: 12, color: 'rgba(255,255,255,0.6)' }}>
+                💳 Kein Guthaben – Wehrleiter um Aufladung bitten
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -519,38 +431,31 @@ export default function AusbildungPage() {
                 <label>Titel</label>
                 <input value={form.titel} onChange={e => setForm(f => ({ ...f, titel: e.target.value }))} placeholder="z.B. Dienstanweisung Atemschutz" required />
               </div>
-              {/* Kategorie ist immer 'ausbildung' – kein Select nötig */}
               <div className="form-group">
                 <label>Beschreibung (optional)</label>
                 <textarea value={form.beschreibung} onChange={e => setForm(f => ({ ...f, beschreibung: e.target.value }))} placeholder="Kurze Beschreibung..." rows={3} />
               </div>
               <div className="form-group">
                 <label>Datei</label>
-                <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.jpg,.png" required
-                  onChange={e => setForm(f => ({ ...f, datei: e.target.files[0] }))} />
+                <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.jpg,.png" required onChange={e => setForm(f => ({ ...f, datei: e.target.files[0] }))} />
                 <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 4 }}>PDF, Word, Excel, PowerPoint, Bilder</div>
               </div>
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
                 <button type="button" className="btn btn-secondary" onClick={() => setUploadModal(false)}>Abbrechen</button>
-                <button type="submit" className="btn btn-primary" disabled={uploading}>
-                  {uploading ? 'Wird hochgeladen...' : 'Hochladen'}
-                </button>
+                <button type="submit" className="btn btn-primary" disabled={uploading}>{uploading ? 'Wird hochgeladen...' : 'Hochladen'}</button>
               </div>
             </form>
           </div>
         </div>
       )}
+
       {ausbildungsModal && <AusbildungsnachweisModal onClose={() => setAusbildungsModal(false)} />}
       {auslagenModal && <AuslagenerstattungModal onClose={() => setAuslagenModal(false)} />}
       {verdienstModal && <VerdienstausfallModal onClose={() => setVerdienstModal(false)} />}
 
-      {/* Vorschrift-Popup (Wissensfrage) */}
+      {/* Vorschrift-Popup */}
       {wissensVorschriftModal && (
-        <div
-          className="modal-backdrop"
-          onClick={e => e.target === e.currentTarget && setWissensVorschriftModal(null)}
-          style={{ zIndex: 1100 }}
-        >
+        <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && setWissensVorschriftModal(null)} style={{ zIndex: 1100 }}>
           <div className="modal" style={{ maxWidth: 600, maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
             <div className="modal-header" style={{ flexShrink: 0 }}>
               <div>
@@ -560,7 +465,6 @@ export default function AusbildungPage() {
               </div>
               <button className="btn btn-ghost btn-sm" onClick={() => setWissensVorschriftModal(null)}>✕</button>
             </div>
-
             <div style={{ overflowY: 'auto', padding: '16px 20px', flex: 1 }}>
               {wissensVorschriftModal.abschnittText ? (
                 <div style={{ fontSize: 13, color: 'var(--gray-800)', lineHeight: 1.75, whiteSpace: 'pre-wrap', fontFamily: 'var(--mono, monospace)', background: '#F8FAFC', borderRadius: 8, padding: '12px 16px', border: '1px solid var(--gray-100)' }}>
@@ -570,7 +474,6 @@ export default function AusbildungPage() {
                 <div style={{ color: 'var(--gray-500)', fontSize: 13, textAlign: 'center', padding: '24px 0' }}>
                   <div style={{ fontSize: 28, marginBottom: 10 }}>🔍</div>
                   <div>Der genaue Abschnitt konnte im Dokument nicht gefunden werden.</div>
-                  <div style={{ fontSize: 12, marginTop: 6, color: 'var(--gray-400)' }}>Das Regelwerk ist hinterlegt – der Abschnitt liegt möglicherweise außerhalb des indexierten Bereichs.</div>
                 </div>
               ) : (
                 <div style={{ color: 'var(--gray-500)', fontSize: 13, textAlign: 'center', padding: '24px 0' }}>
@@ -580,7 +483,6 @@ export default function AusbildungPage() {
                 </div>
               )}
             </div>
-
             <div style={{ flexShrink: 0, padding: '12px 20px', borderTop: '1px solid var(--gray-100)', display: 'flex', justifyContent: 'flex-end' }}>
               <button className="btn btn-secondary" onClick={() => setWissensVorschriftModal(null)}>Schließen</button>
             </div>

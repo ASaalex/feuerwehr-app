@@ -38,7 +38,8 @@ serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { wehr_id, dokument_id, datei_inhalt, datei_name, titel, email_feld, audio_inhalt, audio_name, html_body, text_body } = body;
+    const { wehr_id, dokument_id, datei_inhalt, datei_name, titel, email_feld, audio_inhalt, audio_name, html_body, text_body, anzahl } = body;
+    const exemplare: number = Math.max(1, parseInt(anzahl) || 1);
     // email_feld: 'drucker_email' (Standard) | 'einsatzbericht_email'
     const zielFeld = email_feld === 'einsatzbericht_email' ? 'einsatzbericht_email' : 'drucker_email';
 
@@ -75,7 +76,7 @@ serve(async (req) => {
     const feldLabel = zielFeld === 'einsatzbericht_email' ? 'Einsatzbericht-E-Mail' : 'Drucker-E-Mail';
     if (!zielEmail) throw new Error(`Keine ${feldLabel} fuer Wache "${wehr.name}". Bitte in Wachen-Verwaltung eintragen.`);
 
-    const betreff = titel ? `${titel}` : `Druck: ${datei_name ?? 'Dokument'}`;
+    const betreff = titel ? `${titel}` : `Druck${exemplare > 1 ? ` (${exemplare}x)` : ''}: ${datei_name ?? 'Dokument'}`;
 
     const attachments: { filename: string; content: Buffer; contentType: string }[] = [];
 
@@ -143,7 +144,7 @@ serve(async (req) => {
       subject: betreff,
       ...(html_body
         ? { html: html_body, text: text_body ?? '' }
-        : { text: `Dokument zum Drucken: ${betreff}\n\nGesendet von der Feuerwehr-App.` }
+        : { text: `Dokument zum Drucken: ${betreff}\nAnzahl Exemplare: ${exemplare}\nDuplex-Druck (beidseitig) ist im PDF hinterlegt.\n\nGesendet von der Feuerwehr-App.` }
       ),
       attachments,
     });

@@ -40,6 +40,9 @@ export default function AufgabenPage() {
   const [loeschenId, setLoeschenId] = useState(null)
   const [sortBy, setSortBy] = useState('faellig_am')
   const [sortDir, setSortDir] = useState('asc')
+  const [zeitFilter, setZeitFilter] = useState('monat')
+  const [toast, setToast] = useState(null)
+  const toastTimerRef = useRef(null)
   const [form, setForm] = useState({
     titel: '', beschreibung: '', zuweisung_typ: 'personen',
     ausgewaehlte_personen: [],
@@ -68,7 +71,8 @@ export default function AufgabenPage() {
       .order('erstellt_am', { ascending: false })
 
     if (error) console.error('Aufgaben Fehler:', error)
-    setAufgaben(data ?? [])
+    const frisch = data ?? []
+    setAufgaben(frisch)
 
     if (kannErstellen) {
       let kQuery = supabase.from('profiles').select('id,vorname,nachname,wehr_id').eq('status', 'aktiv').order('nachname')
@@ -81,6 +85,7 @@ export default function AufgabenPage() {
     }
 
     setLoading(false)
+    return frisch
   }
 
   async function handleErstellen(e) {
@@ -144,6 +149,12 @@ export default function AufgabenPage() {
     setSaving(false)
   }
 
+  function showToast(msg, type = 'success') {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+    setToast({ msg, type })
+    toastTimerRef.current = setTimeout(() => setToast(null), 2500)
+  }
+
   async function statusAendern(id, status) {
     const aufgabe = aufgaben.find(a => a.id === id)
     // Wiederkehrende Aufgabe: aktuelle Instanz bleibt als Historie erledigt liegen,
@@ -200,11 +211,14 @@ export default function AufgabenPage() {
       }
 
       await fetchData()
+      showToast('✅ Aufgabe erledigt – nächste Instanz wurde angelegt')
       return
     }
     await supabase.from('aufgaben').update({ status }).eq('id', id)
     setAufgaben(a => a.map(x => x.id === id ? { ...x, status } : x))
     if (detailAufgabe?.id === id) setDetailAufgabe(d => ({ ...d, status }))
+    const label = STATUS_LABEL[status] ?? status
+    showToast(`✓ Status auf „${label}" gesetzt`)
 
     // Ersteller benachrichtigen wenn Aufgabe erledigt wird (und er nicht selbst geändert hat)
     if (status === 'erledigt' && aufgabe?.erstellt_von?.id && aufgabe.erstellt_von.id !== profile?.id) {
@@ -256,7 +270,20 @@ export default function AufgabenPage() {
   const gefiltert = gefiltertNachBerechtigung.filter(a => {
     if (!zeigeErledigt && a.status === 'erledigt') return false
     if (ansicht === 'meine' && kannErstellen) {
-      return istMirZugewiesen(a) || a.erstellt_von?.id === profile?.id
+      if (!istMirZugewiesen(a) && a.erstellt_von?.id !== profile?.id) return false
+    }
+    if (zeitFilter !== 'alle' && a.faellig_am) {
+      const f = new Date(a.faellig_am)
+      const now = new Date()
+      if (zeitFilter === 'ueberfaellig') {
+        const heute = new Date(); heute.setHours(0,0,0,0)
+        if (f >= heute) return false
+      } else if (zeitFilter === 'monat') {
+        if (f.getFullYear() !== now.getFullYear() || f.getMonth() !== now.getMonth()) return false
+      } else if (zeitFilter === 'naechster_monat') {
+        const nm = new Date(now.getFullYear(), now.getMonth() + 1, 1)
+        if (f.getFullYear() !== nm.getFullYear() || f.getMonth() !== nm.getMonth()) return false
+      }
     }
     return true
   })
@@ -320,6 +347,17 @@ export default function AufgabenPage() {
             ))}
           </div>
         )}
+        <div style={{ display: 'flex', gap: 4, padding: 3, background: 'var(--gray-100)', borderRadius: 8 }}>
+          {[
+            { v: 'ueberfaellig',   l: 'Überfällig' },
+            { v: 'monat',          l: 'Dieser Monat' },
+            { v: 'naechster_monat',l: 'Nächster Monat' },
+            { v: 'alle',           l: 'Alle' },
+          ].map(({ v, l }) => (
+            <button key={v} className={`btn btn-sm ${zeitFilter === v ? 'btn-primary' : 'btn-ghost'}`}
+              onClick={() => setZeitFilter(v)}>{l}</button>
+          ))}
+        </div>
         <button
           className={`btn btn-sm ${zeigeErledigt ? 'btn-primary' : 'btn-secondary'}`}
           onClick={() => setZeigeErledigt(v => !v)}
@@ -412,8 +450,8 @@ export default function AufgabenPage() {
           onClose={() => setDetailAufgabe(null)}
           onStatusChange={statusAendern}
           onDelete={loeschen}
-          onRefresh={() => fetchData().then(() => {
-            // Update detailAufgabe with fresh data
+          onRefresh={() => fetchData().then(frisch => {
+            setDetailAufgabe(d => (d ? frisch.find(x => x.id === d.id) ?? d : d))
           })}
         />
       )}
@@ -578,6 +616,21 @@ export default function AufgabenPage() {
           </div>
         </div>
       )}
+
+      {/* Toast-Benachrichtigung */}
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)',
+          background: '#065F46', color: 'white', borderRadius: 10,
+          padding: '12px 22px', fontSize: 14, fontWeight: 500,
+          boxShadow: '0 4px 16px rgba(0,0,0,0.25)', zIndex: 9999,
+          display: 'flex', alignItems: 'center', gap: 10,
+          animation: 'fadeInUp 0.2s ease',
+        }}>
+          {toast.msg}
+        </div>
+      )}
+      <style>{`@keyframes fadeInUp { from { opacity: 0; transform: translateX(-50%) translateY(12px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }`}</style>
     </div>
   )
 }
@@ -594,8 +647,55 @@ function AufgabeDetailModal({ aufgabe, profile, isAdmin, kannErstellen, onClose,
   const [checkStatus, setCheckStatus] = useState({})
   // Inline-Kommentar bei Checkpunkten: checkpunkt_id → string
   const [checkKommentare, setCheckKommentare] = useState({})
+  const [neuerCheckpunkt, setNeuerCheckpunkt] = useState('')
+  const [neuerCheckpunktKommentar, setNeuerCheckpunktKommentar] = useState(false)
+  const [bearbeiten, setBearbeiten] = useState(false)
+  const [editForm, setEditForm] = useState(null)
+  const [speichern, setSpeichern] = useState(false)
+  const [verwerfenBestaetigen, setVerwerfenBestaetigen] = useState(false)
   const bildInputRef = useRef()
   const feedEndRef = useRef()
+
+  const kannBearbeiten = isAdmin || aufgabe.erstellt_von?.id === profile?.id
+
+  function bearbeitenStart() {
+    setEditForm({
+      titel: aufgabe.titel,
+      beschreibung: aufgabe.beschreibung ?? '',
+      faellig_am: aufgabe.faellig_am ?? '',
+      prioritaet: aufgabe.prioritaet,
+      wiederholung: aufgabe.wiederholung ?? '',
+      taeglich_erinnern: aufgabe.taeglich_erinnern,
+    })
+    setBearbeiten(true)
+  }
+
+  function bearbeitenAbbrechen() {
+    setBearbeiten(false)
+    setEditForm(null)
+  }
+
+  async function bearbeitenSpeichern() {
+    setSpeichern(true)
+    const { error } = await supabase.from('aufgaben').update({
+      titel: editForm.titel,
+      beschreibung: editForm.beschreibung || null,
+      faellig_am: editForm.faellig_am || null,
+      prioritaet: editForm.prioritaet,
+      wiederholung: editForm.wiederholung || null,
+      taeglich_erinnern: editForm.taeglich_erinnern,
+    }).eq('id', aufgabe.id)
+    setSpeichern(false)
+    if (error) { alert('Speichern fehlgeschlagen: ' + error.message); return }
+    setBearbeiten(false)
+    setEditForm(null)
+    onRefresh()
+  }
+
+  function schliessenVersuch() {
+    if (bearbeiten) setVerwerfenBestaetigen(true)
+    else onClose()
+  }
 
   useEffect(() => {
     fetchAlles()
@@ -797,6 +897,43 @@ function AufgabeDetailModal({ aufgabe, profile, isAdmin, kannErstellen, onClose,
     }
   }
 
+  async function reloadCheckpunkte() {
+    const { data: cp } = await supabase.from('aufgaben_checkpunkte').select('*').eq('aufgabe_id', aufgabe.id).order('reihenfolge')
+    const cpList = cp ?? []
+    setCheckpunkte(cpList)
+    if (cpList.length > 0) {
+      const { data: statuses } = await supabase.from('aufgaben_checkpunkt_status')
+        .select('*, user:profiles(vorname,nachname)')
+        .in('checkpunkt_id', cpList.map(c => c.id))
+      const map = {}
+      ;(statuses ?? []).forEach(s => {
+        if (!map[s.checkpunkt_id]) map[s.checkpunkt_id] = []
+        map[s.checkpunkt_id].push(s)
+      })
+      setCheckStatus(map)
+    } else {
+      setCheckStatus({})
+    }
+  }
+
+  async function checkpunktHinzufuegen() {
+    const titel = neuerCheckpunkt.trim()
+    if (!titel) return
+    const { error } = await supabase.from('aufgaben_checkpunkte').insert({
+      aufgabe_id: aufgabe.id, titel, reihenfolge: checkpunkte.length, mit_kommentar: neuerCheckpunktKommentar,
+    })
+    if (error) { alert('Punkt konnte nicht hinzugefügt werden: ' + error.message); return }
+    setNeuerCheckpunkt('')
+    setNeuerCheckpunktKommentar(false)
+    await reloadCheckpunkte()
+  }
+
+  async function checkpunktEntfernen(cp) {
+    const { error } = await supabase.from('aufgaben_checkpunkte').delete().eq('id', cp.id)
+    if (error) { alert('Punkt konnte nicht entfernt werden: ' + error.message); return }
+    await reloadCheckpunkte()
+  }
+
   const rollefarbe = (rolle) => {
     if (rolle === 'wehrleiter' || rolle === 'gemeindebrandmeister') return 'var(--red)'
     if (rolle === 'ausbilder') return '#1A5276'
@@ -808,13 +945,64 @@ function AufgabeDetailModal({ aufgabe, profile, isAdmin, kannErstellen, onClose,
   const checkFortschritt = checkpunkte.filter(cp => (checkStatus[cp.id] ?? []).some(s => s.erledigt)).length
 
   return (
-    <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
+    <>
+    <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && schliessenVersuch()}>
       <div className="modal" style={{
         maxWidth: 600, width: '100%', display: 'flex', flexDirection: 'column',
         maxHeight: '92vh', padding: 0, overflow: 'hidden',
       }}>
         {/* Sticky Header */}
         <div style={{ padding: '16px 20px 12px', borderBottom: '1px solid var(--gray-100)', flexShrink: 0 }}>
+          {bearbeiten ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label>Titel</label>
+                <input value={editForm.titel} onChange={e => setEditForm(f => ({ ...f, titel: e.target.value }))} />
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label>Beschreibung</label>
+                <textarea rows={3} value={editForm.beschreibung} onChange={e => setEditForm(f => ({ ...f, beschreibung: e.target.value }))} />
+              </div>
+              <div className="form-row">
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label>Priorität</label>
+                  <select value={editForm.prioritaet} onChange={e => setEditForm(f => ({ ...f, prioritaet: e.target.value }))}>
+                    <option value="niedrig">Niedrig</option>
+                    <option value="mittel">Mittel</option>
+                    <option value="hoch">Hoch</option>
+                  </select>
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label>Fällig am</label>
+                  <input type="date" value={editForm.faellig_am} onChange={e => setEditForm(f => ({ ...f, faellig_am: e.target.value }))} />
+                </div>
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label>Wiederholung</label>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {[{ v: '', l: 'Keine' }, { v: 'monatlich', l: 'Monatlich' }, { v: 'quartal', l: 'Quartalsweise' }, { v: 'halbjährlich', l: 'Halbjährlich' }, { v: 'jährlich', l: 'Jährlich' }].map(({ v, l }) => (
+                    <button key={v} type="button"
+                      className={`btn btn-sm ${editForm.wiederholung === v ? 'btn-primary' : 'btn-secondary'}`}
+                      onClick={() => setEditForm(f => ({ ...f, wiederholung: v }))}>
+                      {v ? '🔁 ' : ''}{l}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', padding: '8px 12px', background: editForm.taeglich_erinnern ? '#eff6ff' : 'var(--gray-50)', borderRadius: 8, border: `1px solid ${editForm.taeglich_erinnern ? '#bfdbfe' : 'var(--gray-200)'}` }}>
+                <input type="checkbox" style={{ width: 'auto', flexShrink: 0 }}
+                  checked={editForm.taeglich_erinnern}
+                  onChange={e => setEditForm(f => ({ ...f, taeglich_erinnern: e.target.checked }))} />
+                <div style={{ fontSize: 13 }}>🔔 Tägliche Erinnerung</div>
+              </label>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <button className="btn btn-secondary btn-sm" onClick={bearbeitenAbbrechen} disabled={speichern}>Abbrechen</button>
+                <button className="btn btn-primary btn-sm" onClick={bearbeitenSpeichern} disabled={speichern || !editForm.titel.trim()}>
+                  {speichern ? 'Speichert…' : 'Speichern'}
+                </button>
+              </div>
+            </div>
+          ) : (
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
             <div style={{ flex: 1 }}>
               <h3 style={{ fontSize: 16, fontWeight: 600, color: 'var(--gray-700)', marginBottom: 6 }}>{aufgabe.titel}</h3>
@@ -850,8 +1038,14 @@ function AufgabeDetailModal({ aufgabe, profile, isAdmin, kannErstellen, onClose,
                 </div>
               )}
             </div>
-            <button className="btn btn-ghost btn-sm" onClick={onClose} style={{ flexShrink: 0 }}>✕</button>
+            <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+              {kannBearbeiten && (
+                <button className="btn btn-ghost btn-sm" onClick={bearbeitenStart} title="Bearbeiten">✏️</button>
+              )}
+              <button className="btn btn-ghost btn-sm" onClick={schliessenVersuch}>✕</button>
+            </div>
           </div>
+          )}
         </div>
 
         {/* Scrollbarer Hauptbereich */}
@@ -868,20 +1062,24 @@ function AufgabeDetailModal({ aufgabe, profile, isAdmin, kannErstellen, onClose,
               )}
 
               {/* Checkliste */}
-              {checkpunkte.length > 0 && (
+              {(checkpunkte.length > 0 || (kannBearbeiten && bearbeiten)) && (
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
                     <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                       Checkliste
                     </span>
-                    <span style={{ fontSize: 12, color: checkFortschritt === checkpunkte.length ? '#15803d' : 'var(--gray-400)' }}>
-                      {checkFortschritt}/{checkpunkte.length} erledigt
-                    </span>
+                    {checkpunkte.length > 0 && (
+                      <span style={{ fontSize: 12, color: checkFortschritt === checkpunkte.length ? '#15803d' : 'var(--gray-400)' }}>
+                        {checkFortschritt}/{checkpunkte.length} erledigt
+                      </span>
+                    )}
                   </div>
                   {/* Fortschrittsbalken */}
-                  <div style={{ height: 4, background: 'var(--gray-100)', borderRadius: 4, marginBottom: 10, overflow: 'hidden' }}>
-                    <div style={{ height: '100%', background: '#22c55e', borderRadius: 4, width: `${checkpunkte.length ? (checkFortschritt / checkpunkte.length) * 100 : 0}%`, transition: 'width 0.3s' }} />
-                  </div>
+                  {checkpunkte.length > 0 && (
+                    <div style={{ height: 4, background: 'var(--gray-100)', borderRadius: 4, marginBottom: 10, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', background: '#22c55e', borderRadius: 4, width: `${checkpunkte.length ? (checkFortschritt / checkpunkte.length) * 100 : 0}%`, transition: 'width 0.3s' }} />
+                    </div>
+                  )}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {checkpunkte.map(cp => {
                       const statuses = checkStatus[cp.id] ?? []
@@ -904,6 +1102,12 @@ function AufgabeDetailModal({ aufgabe, profile, isAdmin, kannErstellen, onClose,
                               color: erledigt ? '#15803d' : 'var(--gray-700)',
                               textDecoration: erledigt ? 'line-through' : 'none',
                             }}>{cp.titel}</span>
+                            {kannBearbeiten && bearbeiten && (
+                              <button onClick={() => checkpunktEntfernen(cp)} title="Punkt entfernen"
+                                style={{ flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--gray-300)', fontSize: 14, padding: '0 2px' }}>
+                                ✕
+                              </button>
+                            )}
                           </div>
                           {/* Optionales Kommentarfeld (nur sichtbar wenn nicht abgehakt und mit_kommentar) */}
                           {kommentarZeigen && (
@@ -935,6 +1139,26 @@ function AufgabeDetailModal({ aufgabe, profile, isAdmin, kannErstellen, onClose,
                       )
                     })}
                   </div>
+                  {kannBearbeiten && bearbeiten && (
+                    <div style={{ display: 'flex', gap: 6, marginTop: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <input
+                        value={neuerCheckpunkt}
+                        onChange={e => setNeuerCheckpunkt(e.target.value)}
+                        placeholder="Neuer Checklisten-Punkt…"
+                        style={{ flex: 1, minWidth: 140, fontSize: 13 }}
+                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); checkpunktHinzufuegen() } }}
+                      />
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, whiteSpace: 'nowrap', cursor: 'pointer' }}>
+                        <input type="checkbox" style={{ width: 'auto' }}
+                          checked={neuerCheckpunktKommentar}
+                          onChange={e => setNeuerCheckpunktKommentar(e.target.checked)} />
+                        Kommentar
+                      </label>
+                      <button type="button" className="btn btn-sm btn-secondary" onClick={checkpunktHinzufuegen} disabled={!neuerCheckpunkt.trim()}>
+                        + Hinzufügen
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1074,17 +1298,26 @@ function AufgabeDetailModal({ aufgabe, profile, isAdmin, kannErstellen, onClose,
         </div>
       </div>
     </div>
+    {verwerfenBestaetigen && (
+      <ConfirmModal
+        text="Ungespeicherte Änderungen verwerfen?"
+        confirmLabel="Verwerfen"
+        onCancel={() => setVerwerfenBestaetigen(false)}
+        onConfirm={() => { setVerwerfenBestaetigen(false); bearbeitenAbbrechen(); onClose() }}
+      />
+    )}
+    </>
   )
 }
 
-function ConfirmModal({ text, onCancel, onConfirm }) {
+function ConfirmModal({ text, onCancel, onConfirm, confirmLabel = 'Löschen' }) {
   return (
     <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onCancel()}>
       <div className="modal" style={{ width: '100%', maxWidth: 360, padding: 20 }}>
         <p style={{ fontSize: 14, color: 'var(--gray-700)', marginBottom: 18 }}>{text}</p>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <button className="btn btn-secondary btn-sm" onClick={onCancel}>Abbrechen</button>
-          <button className="btn btn-danger btn-sm" onClick={onConfirm}>Löschen</button>
+          <button className="btn btn-danger btn-sm" onClick={onConfirm}>{confirmLabel}</button>
         </div>
       </div>
     </div>

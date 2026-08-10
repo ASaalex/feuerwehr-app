@@ -194,23 +194,30 @@ export default function PlanspielPage() {
 
 function PlanspielNeu({ profile, onBack }) {
   const [szenarien, setSzenarien] = useState([])
+  const [standardPhasen, setStandardPhasen] = useState(null)
   const [form, setForm] = useState({ titel: '', szenario_id: '', adresse: '' })
   const [extraPhasen, setExtraPhasen] = useState([])
   const [neuePhase, setNeuePhase] = useState('')
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    supabase.from('szenarien').select('id,titel,anfangs_meldung').eq('aktiv', true).order('titel')
+    supabase.from('szenarien').select('id,titel,anfangs_meldung,kartenposition,kartenvorgabe,wetterinfo,phasen').eq('aktiv', true).order('titel')
       .then(({ data }) => setSzenarien(data ?? []))
+    supabase.from('planspiel_config').select('standard_phasen').eq('wehr_id', profile.wehr_id).maybeSingle()
+      .then(({ data }) => setStandardPhasen(data?.standard_phasen ?? null))
   }, [])
+
+  const selectedSz = szenarien.find(s => s.id === form.szenario_id)
 
   async function handleStart() {
     if (!form.titel) return alert('Titel eingeben')
     setSaving(true)
 
-    // Adresse zu Koordinaten mit Nominatim (OSM, kein API-Key nötig)
+    // Kartenposition: Szenario-Vorgabe hat Vorrang, sonst Adress-Geocoding
     let center = { lng: 10.4515, lat: 51.1657, zoom: 13 }
-    if (form.adresse.trim()) {
+    if (selectedSz?.kartenposition) {
+      center = selectedSz.kartenposition
+    } else if (form.adresse.trim()) {
       try {
         const res = await fetch(
           `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=de&q=${encodeURIComponent(form.adresse)}`,
@@ -223,10 +230,36 @@ function PlanspielNeu({ profile, onBack }) {
       } catch {}
     }
 
-    const phasen = phasenVonStandard()
+    // Phasen: Szenario > DB-Standard > hardcoded Standard
+    const phasenQuelle = selectedSz?.phasen ?? standardPhasen ?? null
+    const phasen = phasenQuelle
+      ? phasenQuelle.map((p, i) => ({
+          id: p.id || 'phase_' + Date.now() + Math.random(),
+          name: p.name,
+          emoji: p.emoji ?? '📋',
+          aktiv: i === 0,
+          abgeschlossen: false,
+          checkpunkte: (p.checkpunkte ?? []).map((t, j) => ({ id: (p.id || 'p') + '_' + j, text: t, status: null })),
+          extra: [],
+        }))
+      : phasenVonStandard()
     extraPhasen.forEach(name => {
       phasen.push({ id: 'extra_' + Date.now() + Math.random(), name, aktiv: false, abgeschlossen: false, checkpunkte: [], extra: [] })
     })
+
+    // Kartenvorgabe aus Szenario übernehmen (neue IDs um Konflikte zu vermeiden)
+    const vorgabe = selectedSz?.kartenvorgabe
+    const kartenzustand = {
+      elemente: vorgabe?.elemente?.map(e => ({
+        id: String(Date.now()) + String(Math.random()),
+        typ: 'punkt',
+        subtyp: e.typ,
+        position: e.koord ?? e.position,
+      })) ?? [],
+      linien: [],
+      zonen: vorgabe?.zonen?.map(z => ({ ...z, id: String(Date.now()) + String(Math.random()) })) ?? [],
+      wetterinfo: selectedSz?.wetterinfo ?? {},
+    }
 
     const { error } = await supabase.from('planspiel_sessions').insert({
       titel: form.titel,
@@ -236,7 +269,7 @@ function PlanspielNeu({ profile, onBack }) {
       status: 'aktiv',
       phasen,
       map_center: center,
-      kartenzustand: { elemente: [], linien: [], zonen: [] },
+      kartenzustand,
       lage_updates: [],
     })
 
@@ -269,10 +302,24 @@ function PlanspielNeu({ profile, onBack }) {
             {szenarien.map(s => <option key={s.id} value={s.id}>{s.titel}</option>)}
           </select>
         </div>
-        <div className="form-group">
-          <label>Einsatzadresse <span style={{ fontWeight: 400, color: 'var(--gray-400)', fontSize: 12 }}>(Karte wird darauf zentriert)</span></label>
-          <input value={form.adresse} onChange={e => setForm(f => ({ ...f, adresse: e.target.value }))} placeholder="z.B. Hauptstraße 1, 99310 Arnstadt" />
-        </div>
+        {selectedSz?.kartenposition && (
+          <div style={{ marginBottom: 12, padding: '8px 12px', background: '#EFF6FF', borderRadius: 8, border: '1px solid #BFDBFE', fontSize: 13, color: '#1D4ED8', display: 'flex', gap: 8, alignItems: 'center' }}>
+            <span>🗺️</span>
+            <span>
+              Dieses Szenario hat eine voreingestellte Kartenposition
+              {selectedSz.kartenvorgabe?.elemente?.length > 0 && ` · ${selectedSz.kartenvorgabe.elemente.length} Objekte`}
+              {selectedSz.kartenvorgabe?.zonen?.length > 0 && ` · ${selectedSz.kartenvorgabe.zonen.length} Zonen`}
+              {selectedSz.wetterinfo?.wetterlage && ` · ${selectedSz.wetterinfo.wetterlage}`}
+              {' — werden automatisch übernommen.'}
+            </span>
+          </div>
+        )}
+        {!selectedSz?.kartenposition && (
+          <div className="form-group">
+            <label>Einsatzadresse <span style={{ fontWeight: 400, color: 'var(--gray-400)', fontSize: 12 }}>(Karte wird darauf zentriert)</span></label>
+            <input value={form.adresse} onChange={e => setForm(f => ({ ...f, adresse: e.target.value }))} placeholder="z.B. Hauptstraße 1, 99310 Arnstadt" />
+          </div>
+        )}
       </div>
 
       <div className="card">

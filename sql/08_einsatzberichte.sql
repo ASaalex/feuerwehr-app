@@ -101,13 +101,13 @@ CREATE POLICY "Ersteller und Admin bearbeiten Berichte"
     )
   );
 
--- DELETE: Ersteller oder Admin
+-- DELETE: Ersteller oder Admin/Wehrleiter/GBM
 CREATE POLICY "Ersteller und Admin loeschen Berichte"
   ON public.einsatzberichte FOR DELETE
   USING (
     erstellt_von = auth.uid()
     OR auth.uid() IN (
-      SELECT id FROM public.profiles WHERE rolle IN ('wehrleiter', 'gemeindebrandmeister')
+      SELECT id FROM public.profiles WHERE rolle IN ('admin', 'wehrleiter', 'gemeindebrandmeister')
     )
   );
 

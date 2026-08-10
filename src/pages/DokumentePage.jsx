@@ -29,6 +29,8 @@ export default function DokumentePage() {
   const [verdienstModal, setVerdienstModal] = useState(false)
   const [mailDruck, setMailDruck] = useState({}) // { [dok.id]: 'sending' | 'ok' | 'err' | msg }
   const [signedUrls, setSignedUrls] = useState({}) // { [dok.id]: signedUrl } — vorab geladen für iOS
+  const [druckModal, setDruckModal] = useState(null) // dok-Objekt oder null
+  const [druckAnzahl, setDruckAnzahl] = useState(1)
 
   useEffect(() => { fetchDokumente() }, [])
 
@@ -121,11 +123,11 @@ export default function DokumentePage() {
     }
   }
 
-  async function handleMailDruck(dok) {
+  async function handleMailDruck(dok, anzahl = 1) {
     if (!profile?.wehr_id) return alert('Du bist keiner Wache zugeordnet.')
     setMailDruck(s => ({ ...s, [dok.id]: 'sending' }))
-    const { data, error } = await supabase.functions.invoke('resend-email', {
-      body: { dokument_id: dok.id, wehr_id: profile.wehr_id },
+    const { data, error } = await supabase.functions.invoke('send-document-email', {
+      body: { dokument_id: dok.id, wehr_id: profile.wehr_id, anzahl, duplex: true },
     })
     if (error || !data?.success) {
       const msg = data?.error || error?.message || 'Unbekannter Fehler'
@@ -253,8 +255,8 @@ export default function DokumentePage() {
                   }
                   <button
                     className="btn btn-sm btn-secondary"
-                    onClick={() => handleMailDruck(dok)}
-                    title="Per Mail an Wachen-Drucker senden"
+                    onClick={() => { setDruckAnzahl(1); setDruckModal(dok) }}
+                    title="Per Mail an Wachen-Drucker senden (Duplex)"
                     disabled={mailDruck[dok.id] === 'sending'}
                     style={{
                       padding: '6px 10px',
@@ -334,6 +336,41 @@ export default function DokumentePage() {
       {ausbildungsModal && <AusbildungsnachweisModal onClose={() => setAusbildungsModal(false)} />}
       {auslagenModal && <AuslagenerstattungModal onClose={() => setAuslagenModal(false)} />}
       {verdienstModal && <VerdienstausfallModal onClose={() => setVerdienstModal(false)} />}
+
+      {/* Druck-Modal */}
+      {druckModal && (
+        <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && setDruckModal(null)}>
+          <div className="modal" style={{ maxWidth: 360 }}>
+            <div className="modal-header">
+              <h3>An Wachen-Drucker senden</h3>
+              <button className="btn btn-ghost btn-sm" onClick={() => setDruckModal(null)}>✕</button>
+            </div>
+            <p style={{ fontSize: 14, color: 'var(--gray-500)', marginBottom: 16 }}>
+              <strong>{druckModal.titel}</strong> wird per E-Mail an den Drucker geschickt. Druck erfolgt beidseitig (Duplex).
+            </p>
+            <div className="form-group">
+              <label>Anzahl Exemplare</label>
+              <input
+                type="number"
+                min={1}
+                max={99}
+                value={druckAnzahl}
+                onChange={e => setDruckAnzahl(Math.max(1, parseInt(e.target.value) || 1))}
+                style={{ width: 80 }}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+              <button className="btn btn-secondary" onClick={() => setDruckModal(null)}>Abbrechen</button>
+              <button
+                className="btn btn-primary"
+                onClick={() => { handleMailDruck(druckModal, druckAnzahl); setDruckModal(null) }}
+              >
+                Senden
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

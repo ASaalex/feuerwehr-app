@@ -66,6 +66,7 @@ export default function EinsatzberichtFormular() {
   const [saving, setSaving] = useState(false)
   const [mailStatus, setMailStatus] = useState(null)
   const [mailModal, setMailModal] = useState(false)
+  const [verlassenModal, setVerlassenModal] = useState(false)
   const [fotoVorschau, setFotoVorschau] = useState([]) // [{file?, pfad?, dataUrl}]
   const [fotosLaden, setFotosLaden] = useState(false)
   const fotoInputRef = useRef(null)
@@ -73,6 +74,8 @@ export default function EinsatzberichtFormular() {
   // Audio-Aufnahme
   const [audioBlob, setAudioBlob] = useState(null)
   const [audioUrl, setAudioUrl] = useState(null)
+  const [audioPfad, setAudioPfad] = useState(null)
+  const [audioHochlade, setAudioHochlade] = useState(false)
   const [aufnahmeAktiv, setAufnahmeAktiv] = useState(false)
   const [aufnahmeZeit, setAufnahmeZeit] = useState(0)
   const [transkribiert, setTranskribiert] = useState(false)
@@ -81,6 +84,14 @@ export default function EinsatzberichtFormular() {
   const recorderRef = useRef(null)
   const audioChunksRef = useRef([])
   const aufnahmeTimerRef = useRef(null)
+
+  // Auto-Save
+  const autoSaveIdRef = useRef(istNeu ? null : id)
+  const dirtyRef = useRef(false)
+  const [autoSaveStatus, setAutoSaveStatus] = useState(null) // null | 'saving' | 'ok'
+  const autoSaveTimerRef = useRef(null)
+  const formRef = useRef(null)      // wird nach useState initialisiert
+  const audioPfadRef = useRef(null)
 
   const heute = new Date().toISOString().slice(0, 10)
 
@@ -196,6 +207,14 @@ export default function EinsatzberichtFormular() {
             abgeschlossen: b.abgeschlossen ?? false,
           })
 
+          // Audio aus Storage laden
+          if (b.audio_pfad) {
+            setAudioPfad(b.audio_pfad)
+            supabase.storage.from('einsatz-audio').createSignedUrl(b.audio_pfad, 3600).then(({ data }) => {
+              if (data?.signedUrl) setAudioUrl(data.signedUrl)
+            })
+          }
+
           // Fotos parallel laden
           if (b.foto_pfade?.length) {
             setFotosLaden(true)
@@ -224,6 +243,71 @@ export default function EinsatzberichtFormular() {
     }
     laden()
   }, [id])
+
+  // ── Refs synchron halten (Stale-Closure-Schutz) ──────────────
+  useEffect(() => { formRef.current = form }, [form])
+  useEffect(() => { audioPfadRef.current = audioPfad }, [audioPfad])
+
+  // ── Dirty-Tracking ────────────────────────────────────────────
+  const isInitialLoad = useRef(true)
+  useEffect(() => {
+    if (isInitialLoad.current) { isInitialLoad.current = false; return }
+    dirtyRef.current = true
+  }, [form])
+
+  // ── Auto-Save alle 30s ────────────────────────────────────────
+  useEffect(() => {
+    autoSaveTimerRef.current = setInterval(async () => {
+      if (!dirtyRef.current || !profile?.wehr_id) return
+      await stillesSpeichern()
+    }, 30000)
+    return () => clearInterval(autoSaveTimerRef.current)
+  }, [profile])
+
+  // ── beforeunload: speichern wenn dirty ────────────────────────
+  useEffect(() => {
+    async function handleBeforeUnload(e) {
+      if (!dirtyRef.current) return
+      // Synchrones Speichern per sendBeacon geht nicht bei komplexen Daten —
+      // stattdessen warnen und User entscheiden lassen
+      e.preventDefault()
+      e.returnValue = 'Es gibt ungespeicherte Änderungen. Trotzdem verlassen?'
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [])
+
+  // ── Stilles Speichern (Auto-Save) ─────────────────────────────
+  async function stillesSpeichern() {
+    if (!profile?.wehr_id) return
+    setAutoSaveStatus('saving')
+    const payload = bauePayload(false)
+    try {
+      if (!autoSaveIdRef.current) {
+        const { data, error } = await supabase.from('einsatzberichte').insert(payload).select('id').single()
+        if (!error && data?.id) autoSaveIdRef.current = data.id
+      } else {
+        await supabase.from('einsatzberichte').update(payload).eq('id', autoSaveIdRef.current)
+      }
+      dirtyRef.current = false
+      setAutoSaveStatus('ok')
+      setTimeout(() => setAutoSaveStatus(null), 2000)
+    } catch { setAutoSaveStatus(null) }
+  }
+
+  function verlassen() {
+    if (dirtyRef.current) {
+      setVerlassenModal(true)
+    } else {
+      navigate('/einsatzbericht')
+    }
+  }
+
+  async function speichernUndVerlassen() {
+    setVerlassenModal(false)
+    await stillesSpeichern()
+    navigate('/einsatzbericht')
+  }
 
   // ── Hilfsfunktionen ──────────────────────────────────────────
   function setFahrzeug(idx, field, val) {
@@ -310,10 +394,22 @@ export default function EinsatzberichtFormular() {
   }
 
   // ── Audio-Aufnahme ────────────────────────────────────────────
+  function zeitstempelJetzt(art) {
+    const now = new Date()
+    const uhr = now.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
+    return `\n[${uhr} Uhr – ${art}]\n`
+  }
+
   async function starteAufnahme() {
     try {
+      // Zeitstempel in Erläuterung einfügen
+      const istFortsetzen = audioBlob !== null
+      setForm(f => ({
+        ...f,
+        erlaeuterung: (f.erlaeuterung || '') + zeitstempelJetzt(istFortsetzen ? 'Aufnahme fortgesetzt' : 'Aufnahme gestartet'),
+      }))
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      // Opus-Codec bevorzugen: sehr effizient für Sprache (~16 kbps ≈ 120 KB/min)
       const mimeType =
         MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' :
         MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' :
@@ -325,13 +421,31 @@ export default function EinsatzberichtFormular() {
       recorderRef.current = recorder
       audioChunksRef.current = []
       recorder.ondataavailable = e => { if (e.data.size > 0) audioChunksRef.current.push(e.data) }
-      recorder.onstop = () => {
+      recorder.onstop = async () => {
         const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' })
         if (audioUrl) URL.revokeObjectURL(audioUrl)
         setAudioBlob(blob)
         setAudioUrl(URL.createObjectURL(blob))
-        transkribiere(blob)
         stream.getTracks().forEach(t => t.stop())
+        transkribiere(blob)
+
+        // Sofort in Supabase Storage hochladen
+        if (profile?.wehr_id) {
+          setAudioHochlade(true)
+          const ext = blob.type.includes('mp4') ? 'm4a' : 'webm'
+          const pfad = `${profile.wehr_id}/${Date.now()}.${ext}`
+          const { error: upErr } = await supabase.storage.from('einsatz-audio').upload(pfad, blob, { contentType: blob.type })
+          if (!upErr) {
+            setAudioPfad(pfad)
+            audioPfadRef.current = pfad
+            dirtyRef.current = true
+            // Sofort in DB schreiben, damit andere Geräte den Pfad sehen
+            if (autoSaveIdRef.current) {
+              await supabase.from('einsatzberichte').update({ audio_pfad: pfad }).eq('id', autoSaveIdRef.current)
+            }
+          }
+          setAudioHochlade(false)
+        }
       }
       recorder.start(1000)
       setAufnahmeAktiv(true)
@@ -351,6 +465,7 @@ export default function EinsatzberichtFormular() {
     stoppeAufnahme()
     if (audioUrl) URL.revokeObjectURL(audioUrl)
     setAudioBlob(null); setAudioUrl(null); setAufnahmeZeit(0)
+    setAudioPfad(null)
     setTranskribiert(false); setTranskriptionFehler('')
     audioChunksRef.current = []
   }
@@ -377,7 +492,10 @@ export default function EinsatzberichtFormular() {
           ? 'Groq API Key fehlt – bitte in Supabase Edge Functions → Secrets als GROQ_API_KEY hinterlegen.'
           : msg)
       } else {
-        const transkriptText = `\n\n---\nText aus Aufnahme:\n${data.text}`
+        const now = new Date()
+        const uhr = now.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
+        const datum = now.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })
+        const transkriptText = `\n\n---\n[${datum}, ${uhr} Uhr – Sprachaufnahme]\n${data.text}`
         setForm(f => ({ ...f, taetigkeiten: (f.taetigkeiten || '') + transkriptText }))
         setTranskribiert(true)
       }
@@ -392,6 +510,36 @@ export default function EinsatzberichtFormular() {
     const m = String(Math.floor(sek / 60)).padStart(2, '0')
     const s = String(sek % 60).padStart(2, '0')
     return `${m}:${s}`
+  }
+
+  // ── Payload zusammenbauen ─────────────────────────────────────
+  function bauePayload(abschliessen = false, fotoPfade = null) {
+    const f = formRef.current   // immer aktuell, auch in Closures
+    const ap = audioPfadRef.current
+    return {
+      wehr_id: profile.wehr_id,
+      erstellt_von: profile.id,
+      datum: f.datum || null,
+      alarmzeit: f.alarmzeit || null,
+      einsatzart: f.einsatzart || null,
+      einsatzort: f.einsatzort || null,
+      km_gesamt: f.km_gesamt ? parseFloat(f.km_gesamt) : null,
+      fahrzeuge: f.fahrzeuge,
+      einsatzkraefte: f.einsatzkraefte,
+      bioversal_l: f.bioversal_l ? parseFloat(f.bioversal_l) : null,
+      absodan_kg: f.absodan_kg ? parseFloat(f.absodan_kg) : null,
+      loeschwasser_l: f.loeschwasser_l ? parseFloat(f.loeschwasser_l) : null,
+      schaummittel_l: f.schaummittel_l ? parseFloat(f.schaummittel_l) : null,
+      mittel_sonstiges: f.mittel_sonstiges || null,
+      organisationen: f.organisationen,
+      lage_eintreffen: f.lage_eintreffen || null,
+      taetigkeiten: f.taetigkeiten || null,
+      erlaeuterung: f.erlaeuterung || null,
+      abschluss_name: f.abschluss_name || null,
+      abgeschlossen: abschliessen || f.abgeschlossen,
+      ...(fotoPfade !== null ? { foto_pfade: fotoPfade.length > 0 ? fotoPfade : null } : {}),
+      ...(ap ? { audio_pfad: ap } : {}),
+    }
   }
 
   // ── Speichern ─────────────────────────────────────────────────
@@ -418,40 +566,20 @@ export default function EinsatzberichtFormular() {
       return
     }
     const alleFotoPfade = [...vorhandenePfade, ...uploadErgebnisse.map(e => e.pfad)]
-
-    const payload = {
-      wehr_id: profile.wehr_id,
-      erstellt_von: profile.id,
-      datum: form.datum || null,
-      alarmzeit: form.alarmzeit || null,
-      einsatzart: form.einsatzart || null,
-      einsatzort: form.einsatzort || null,
-      km_gesamt: form.km_gesamt ? parseFloat(form.km_gesamt) : null,
-      fahrzeuge: form.fahrzeuge,
-      einsatzkraefte: form.einsatzkraefte,
-      bioversal_l: form.bioversal_l ? parseFloat(form.bioversal_l) : null,
-      absodan_kg: form.absodan_kg ? parseFloat(form.absodan_kg) : null,
-      loeschwasser_l: form.loeschwasser_l ? parseFloat(form.loeschwasser_l) : null,
-      schaummittel_l: form.schaummittel_l ? parseFloat(form.schaummittel_l) : null,
-      mittel_sonstiges: form.mittel_sonstiges || null,
-      organisationen: form.organisationen,
-      lage_eintreffen: form.lage_eintreffen || null,
-      taetigkeiten: form.taetigkeiten || null,
-      erlaeuterung: form.erlaeuterung || null,
-      abschluss_name: form.abschluss_name || null,
-      abgeschlossen: abschliessen || form.abgeschlossen,
-      foto_pfade: alleFotoPfade.length > 0 ? alleFotoPfade : null,
-    }
+    const payload = bauePayload(abschliessen, alleFotoPfade)
 
     let error
-    if (istNeu) {
-      const res = await supabase.from('einsatzberichte').insert(payload)
+    const zielId = autoSaveIdRef.current
+    if (!zielId) {
+      const res = await supabase.from('einsatzberichte').insert(payload).select('id').single()
       error = res.error
+      if (!error && res.data?.id) autoSaveIdRef.current = res.data.id
     } else {
-      const res = await supabase.from('einsatzberichte').update(payload).eq('id', id)
+      const res = await supabase.from('einsatzberichte').update(payload).eq('id', zielId)
       error = res.error
     }
 
+    dirtyRef.current = false
     setSaving(false)
     if (error) { alert('Fehler beim Speichern: ' + error.message); return }
     navigate('/einsatzbericht')
@@ -565,7 +693,7 @@ export default function EinsatzberichtFormular() {
     <div style={{ maxWidth: 860, margin: '0 auto' }}>
       {/* Kopfzeile */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24, flexWrap: 'wrap' }}>
-        <button className="btn btn-ghost btn-sm" onClick={() => navigate('/einsatzbericht')}>
+        <button className="btn btn-ghost btn-sm" onClick={verlassen}>
           ← Zurück
         </button>
         <h1 style={{ margin: 0, flex: 1 }}>
@@ -575,6 +703,15 @@ export default function EinsatzberichtFormular() {
           <span className={`badge badge-${form.abgeschlossen ? 'green' : 'blue'}`}>
             {form.abgeschlossen ? '✓ Abgeschlossen' : 'In Bearbeitung'}
           </span>
+        )}
+        {autoSaveStatus === 'saving' && (
+          <span style={{ fontSize: 12, color: 'var(--gray-400)', display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#F59E0B', animation: 'pulse 1s infinite' }} />
+            Speichern…
+          </span>
+        )}
+        {autoSaveStatus === 'ok' && (
+          <span style={{ fontSize: 12, color: '#059669' }}>✓ Automatisch gespeichert</span>
         )}
       </div>
 
@@ -958,8 +1095,12 @@ export default function EinsatzberichtFormular() {
               </div>
               {audioBlob && !aufnahmeAktiv && (
                 <div style={{ fontSize: 11, color: 'var(--gray-400)', marginTop: 6 }}>
-                  ✓ Aufnahme gespeichert · {(audioBlob.size / 1024 / 1024).toFixed(1)} MB
-                  {' · '}Wird beim Mail-Versand automatisch angehängt
+                  {audioHochlade
+                    ? '⏫ Aufnahme wird in Cloud gespeichert…'
+                    : audioPfad
+                      ? `✓ In Cloud gespeichert · ${(audioBlob.size / 1024 / 1024).toFixed(1)} MB · Von jedem Gerät abrufbar`
+                      : `✓ Lokal verfügbar · ${(audioBlob.size / 1024 / 1024).toFixed(1)} MB · Wird beim Mail-Versand angehängt`
+                  }
                 </div>
               )}
               {transkriptionLaeuft && (
@@ -1144,7 +1285,7 @@ export default function EinsatzberichtFormular() {
 
       {/* Footer-Buttons */}
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap', paddingBottom: 32 }}>
-        <button className="btn btn-secondary" onClick={() => navigate('/einsatzbericht')}>Abbrechen</button>
+        <button className="btn btn-secondary" onClick={verlassen}>Abbrechen</button>
         <button className="btn btn-secondary" onClick={lokalDrucken}>
           📄 PDF herunterladen
         </button>
@@ -1171,6 +1312,29 @@ export default function EinsatzberichtFormular() {
           {saving ? 'Speichern...' : '✓ Abschliessen & speichern'}
         </button>
       </div>
+
+      {/* Verlassen-Bestätigung */}
+      {verlassenModal && (
+        <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && setVerlassenModal(false)}>
+          <div className="modal" style={{ maxWidth: 420 }}>
+            <div className="modal-header">
+              <h3>Ungespeicherte Änderungen</h3>
+              <button className="btn btn-ghost btn-sm" onClick={() => setVerlassenModal(false)}>✕</button>
+            </div>
+            <p style={{ fontSize: 14, color: 'var(--gray-500)', marginBottom: 20 }}>
+              Du hast Änderungen vorgenommen, die noch nicht gespeichert wurden. Was möchtest du tun?
+            </p>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              <button className="btn btn-ghost" onClick={() => { setVerlassenModal(false); navigate('/einsatzbericht') }}>
+                Ohne Speichern verlassen
+              </button>
+              <button className="btn btn-primary" onClick={speichernUndVerlassen} disabled={saving}>
+                {saving ? 'Speichern…' : '💾 Speichern & Verlassen'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -12,6 +12,7 @@ export default function EinsatzberichtPage() {
   const [loading, setLoading] = useState(true)
   const [suche, setSuche] = useState('')
   const [msg, setMsg] = useState('')
+  const [loeschenModal, setLoeschenModal] = useState(null) // bericht-Objekt oder null
 
   const kannErstellen = profile?.rolle && ['wehrleiter', 'gemeindebrandmeister', 'gruppenfuehrer', 'ausbilder', 'tablet'].includes(profile.rolle)
 
@@ -34,7 +35,12 @@ export default function EinsatzberichtPage() {
   }
 
   async function handleLoeschen(b) {
-    if (!confirm(`Einsatzbericht vom ${formatDatum(b.datum)} wirklich loeschen?`)) return
+    setLoeschenModal(b)
+  }
+
+  async function loeschenBestaetigt() {
+    const b = loeschenModal
+    setLoeschenModal(null)
 
     // Fotos aus Storage löschen
     const { data: bericht } = await supabase
@@ -168,6 +174,24 @@ export default function EinsatzberichtPage() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {loeschenModal && (
+        <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && setLoeschenModal(null)}>
+          <div className="modal" style={{ maxWidth: 360 }}>
+            <div className="modal-header">
+              <h3>Einsatzbericht löschen</h3>
+              <button className="btn btn-ghost btn-sm" onClick={() => setLoeschenModal(null)}>✕</button>
+            </div>
+            <p style={{ fontSize: 14, color: 'var(--gray-500)', marginBottom: 20 }}>
+              Einsatzbericht vom <strong>{formatDatum(loeschenModal.datum)}</strong> wirklich löschen? Dieser Vorgang kann nicht rückgängig gemacht werden.
+            </p>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn btn-secondary" onClick={() => setLoeschenModal(null)}>Abbrechen</button>
+              <button className="btn btn-danger" onClick={loeschenBestaetigt}>Löschen</button>
+            </div>
+          </div>
         </div>
       )}
     </div>

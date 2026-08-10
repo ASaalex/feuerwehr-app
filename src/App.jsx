@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { useEffect } from 'react'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import Layout from './components/Layout'
 import LoginPage from './pages/LoginPage'
@@ -143,7 +144,33 @@ function AppRoutes() {
   )
 }
 
+function useAutoResizeTextareas() {
+  useEffect(() => {
+    function resize(ta) {
+      ta.style.height = 'auto'
+      ta.style.height = ta.scrollHeight + 'px'
+    }
+    function onInput(e) {
+      if (e.target.tagName === 'TEXTAREA') resize(e.target)
+    }
+    // Alle beim Start bereits befüllten Textareas anpassen
+    function resizeAll() {
+      document.querySelectorAll('textarea').forEach(resize)
+    }
+    document.addEventListener('input', onInput)
+    // Nach Route-Wechseln neu messen (MutationObserver auf body)
+    const observer = new MutationObserver(resizeAll)
+    observer.observe(document.body, { childList: true, subtree: true })
+    resizeAll()
+    return () => {
+      document.removeEventListener('input', onInput)
+      observer.disconnect()
+    }
+  }, [])
+}
+
 export default function App() {
+  useAutoResizeTextareas()
   return (
     <BrowserRouter>
       <AuthProvider>

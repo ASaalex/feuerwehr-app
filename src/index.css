@@ -60,7 +60,7 @@ input:focus, select:focus, textarea:focus {
   box-shadow: 0 0 0 3px rgba(192,57,43,0.12);
 }
 input::placeholder { color: var(--gray-300); }
-textarea { resize: vertical; min-height: 80px; }
+textarea { resize: none; min-height: 80px; overflow-y: hidden; }
 
 label {
   display: block;
