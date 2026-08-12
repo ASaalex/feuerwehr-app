@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
+import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { format } from 'date-fns'
@@ -245,6 +246,7 @@ Es gibt vier Fragetypen:
                   )}
                   {isAusbilder && (
                     <>
+                      <Link className="btn btn-sm btn-secondary" to={`/quiz/neu?pruefung=${p.id}`}>🎮 Als Quiz starten</Link>
                       <button className="btn btn-sm btn-secondary" onClick={() => { setSelected(p); setView('auswertung') }}>Auswertung</button>
                       <button className="btn btn-sm btn-secondary" onClick={() => { setSelected(p); setView('bearbeiten') }}>Bearbeiten</button>
                       <button className="btn btn-sm btn-danger" onClick={() => handleLoeschen(p)}>Loeschen</button>

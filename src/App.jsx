@@ -32,6 +32,10 @@ import LehrgangUebersichtPage from './pages/LehrgangUebersichtPage'
 import LehrgangLernPage from './pages/LehrgangLernPage'
 import PlanspielPage from './pages/PlanspielPage'
 import PlanspielAnzeigePage from './pages/PlanspielAnzeigePage'
+import QuizSetupPage from './pages/QuizSetupPage'
+import QuizHostPage from './pages/QuizHostPage'
+import QuizJoinPage from './pages/QuizJoinPage'
+import QuizPlayPage from './pages/QuizPlayPage'
 import './index.css'
 
 function GbmRoute({ children }) {
@@ -52,6 +56,13 @@ function GeraetewartRoute({ children }) {
   const { profile, loading } = useAuth()
   if (loading) return <div className="loading-page"><div className="spinner"></div></div>
   if (!profile?.geraetewart) return <Navigate to="/" replace />
+  return children
+}
+
+function AusbilderRoute({ children }) {
+  const { isAusbilder, loading } = useAuth()
+  if (loading) return <div className="loading-page"><div className="spinner"></div></div>
+  if (!isAusbilder) return <Navigate to="/" replace />
   return children
 }
 
@@ -108,6 +119,14 @@ function AppRoutes() {
       <Route path="/impressum" element={<ImpressumPage />} />
       <Route path="/datenschutz-public" element={<DatenschutzPublicPage />} />
 
+      {/* Oeffentlich: Gast-Beitritt zum Live-Quiz per Code/QR, ohne Login */}
+      <Route path="/quiz/join" element={<QuizJoinPage />} />
+      <Route path="/quiz/join/:code" element={<QuizJoinPage />} />
+      <Route path="/quiz/:id/play" element={<QuizPlayPage />} />
+
+      {/* Beamer-Ansicht ohne App-Chrome, nur fuer Ausbilder/Admin */}
+      <Route path="/quiz/:id/host" element={<ProtectedRoute><AusbilderRoute><QuizHostPage /></AusbilderRoute></ProtectedRoute>} />
+
       <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
         <Route index element={<DashboardPage />} />
         <Route path="kameraden" element={<ProtectedRoute adminOnly><KameradenPage /></ProtectedRoute>} />
@@ -129,6 +148,7 @@ function AppRoutes() {
         <Route path="regelwerke" element={<ProtectedRoute adminOnly><RegelwerkeAdminPage /></ProtectedRoute>} />
         <Route path="lehrgang-admin" element={<ProtectedRoute adminOnly><LehrgangAdminPage /></ProtectedRoute>} />
         <Route path="pruefungen" element={<PruefungenPage />} />
+        <Route path="quiz/neu" element={<AusbilderRoute><QuizSetupPage /></AusbilderRoute>} />
         <Route path="aufgaben" element={
           <AufgabenRoute><AufgabenPage /></AufgabenRoute>
         } />

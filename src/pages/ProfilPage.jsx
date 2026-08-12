@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
+import Avatar from '../components/Avatar'
+import AvatarPicker from '../components/AvatarPicker'
 
 const FS_OPTIONEN = ['B', 'BE', 'C1', 'C', 'C1E', 'CE', 'D1', 'D', 'D1E', 'DE', 'T', 'L']
 const ROLLEN_LABEL = {
@@ -34,6 +36,9 @@ export default function ProfilPage() {
   const [pwForm, setPwForm] = useState({ neu: '', neu2: '' })
   const [pwMsg, setPwMsg] = useState('')
   const [pwMsgTyp, setPwMsgTyp] = useState('success')
+  const [avatarModal, setAvatarModal] = useState(false)
+  const [avatarUploading, setAvatarUploading] = useState(false)
+  const [avatarMsg, setAvatarMsg] = useState('')
 
   function set(field) {
     return e => setForm(f => ({ ...f, [field]: e.target.value }))
@@ -112,6 +117,47 @@ export default function ProfilPage() {
 
   const initials = `${form.vorname?.[0] ?? ''}${form.nachname?.[0] ?? ''}`.toUpperCase() || '?'
 
+  async function handleFotoUpload(e) {
+    const datei = e.target.files[0]
+    e.target.value = ''
+    if (!datei) return
+    setAvatarUploading(true)
+    setAvatarMsg('')
+
+    const ext = datei.name.split('.').pop()
+    const pfad = `${profile.id}/avatar.${ext}`
+    const { error: uploadError } = await supabase.storage.from('avatare').upload(pfad, datei, { upsert: true })
+    if (uploadError) {
+      setAvatarMsg('Fehler beim Hochladen: ' + uploadError.message)
+      setAvatarUploading(false)
+      return
+    }
+
+    const { data: pub } = supabase.storage.from('avatare').getPublicUrl(pfad)
+    const url = `${pub.publicUrl}?t=${Date.now()}`
+    const { error } = await supabase.from('profiles').update({ avatar_url: url, avatar_key: null }).eq('id', profile.id)
+    if (error) {
+      setAvatarMsg('Fehler beim Speichern: ' + error.message)
+    } else {
+      await refreshProfile()
+      setAvatarModal(false)
+    }
+    setAvatarUploading(false)
+  }
+
+  async function handleAvatarWahl(key) {
+    setAvatarUploading(true)
+    setAvatarMsg('')
+    const { error } = await supabase.from('profiles').update({ avatar_key: key, avatar_url: null }).eq('id', profile.id)
+    if (error) {
+      setAvatarMsg('Fehler beim Speichern: ' + error.message)
+    } else {
+      await refreshProfile()
+      setAvatarModal(false)
+    }
+    setAvatarUploading(false)
+  }
+
   return (
     <div style={{ maxWidth: 620 }}>
       <div className="page-header">
@@ -120,14 +166,19 @@ export default function ProfilPage() {
 
       {/* Profilkopf */}
       <div className="card" style={{ display: 'flex', alignItems: 'center', gap: 20, marginBottom: 16 }}>
-        <div style={{
-          width: 60, height: 60, borderRadius: '50%',
-          background: 'var(--red)', color: 'white',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: 22, fontWeight: 600, flexShrink: 0
-        }}>
-          {initials}
-        </div>
+        <button
+          type="button"
+          onClick={() => { setAvatarMsg(''); setAvatarModal(true) }}
+          title="Profilbild aendern"
+          style={{ position: 'relative', border: 'none', background: 'none', padding: 0, cursor: 'pointer', flexShrink: 0 }}
+        >
+          <Avatar url={profile?.avatar_url} avatarKey={profile?.avatar_key} name={`${form.vorname} ${form.nachname}`} size={60} />
+          <div style={{
+            position: 'absolute', bottom: -2, right: -2, width: 22, height: 22, borderRadius: '50%',
+            background: 'var(--gray-700)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 11, border: '2px solid white',
+          }}>✎</div>
+        </button>
         <div>
           <div style={{ fontWeight: 600, fontSize: 18, color: 'var(--gray-800)' }}>
             {form.vorname} {form.nachname}
@@ -339,6 +390,29 @@ export default function ProfilPage() {
           </div>
         </form>
       </div>
+
+      {avatarModal && (
+        <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && setAvatarModal(false)}>
+          <div className="modal" style={{ maxWidth: 460 }}>
+            <div className="modal-header">
+              <h3>Profilbild</h3>
+              <button className="btn btn-ghost btn-sm" onClick={() => setAvatarModal(false)}>✕</button>
+            </div>
+
+            {avatarMsg && <div className="alert alert-error" style={{ marginBottom: 12 }}>{avatarMsg}</div>}
+
+            <label className="btn btn-secondary" style={{ cursor: avatarUploading ? 'not-allowed' : 'pointer', width: '100%', justifyContent: 'center', boxSizing: 'border-box', marginBottom: 20 }}>
+              {avatarUploading ? 'Wird gespeichert...' : '↑ Eigenes Foto hochladen'}
+              <input type="file" accept="image/*" onChange={handleFotoUpload} disabled={avatarUploading} style={{ display: 'none' }} />
+            </label>
+
+            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--gray-400)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
+              Oder Avatar waehlen
+            </div>
+            <AvatarPicker value={profile?.avatar_key} onChange={handleAvatarWahl} />
+          </div>
+        </div>
+      )}
     </div>
   )
 }
