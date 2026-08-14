@@ -38,6 +38,7 @@ export default function AusbildungPage() {
   const [ausbildungsModal, setAusbildungsModal] = useState(false)
   const [auslagenModal, setAuslagenModal] = useState(false)
   const [verdienstModal, setVerdienstModal] = useState(false)
+  const [signedUrls, setSignedUrls] = useState({}) // { [dok.id]: signedUrl } — vorab geladen für iOS
 
   // KI / Wissen
   const [kiGuthaben, setKiGuthaben] = useState(null)
@@ -98,6 +99,16 @@ export default function AusbildungPage() {
     const { data } = await supabase.from('dokumente').select('*, hochgeladen_von:profiles(vorname,nachname)').order('erstellt_am', { ascending: false })
     setDokumente(data ?? [])
     setLoading(false)
+
+    // Signed URLs sofort für alle Dokumente laden (iOS Safari / PWA braucht direkten Link)
+    if (data?.length) {
+      const urls = {}
+      await Promise.all(data.map(async dok => {
+        const { data: sd } = await supabase.storage.from('dokumente').createSignedUrl(dok.datei_pfad, 3600)
+        if (sd?.signedUrl) urls[dok.id] = sd.signedUrl
+      }))
+      setSignedUrls(urls)
+    }
   }
 
   async function handleUpload(e) {
@@ -122,9 +133,23 @@ export default function AusbildungPage() {
     setUploading(false)
   }
 
+  // Oeffnet eine URL zuverlaessig auf Desktop und Handy.
+  // window.open() wird auf mobilen Browsern oft als Popup blockiert –
+  // ein echter <a>-Klick umgeht diesen Schutz.
+  function openUrl(url, filename) {
+    const a = document.createElement('a')
+    a.href = url
+    a.target = '_blank'
+    a.rel = 'noopener noreferrer'
+    if (filename) a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+  }
+
   async function handleDownload(dok) {
     const { data } = await supabase.storage.from('dokumente').createSignedUrl(dok.datei_pfad, 60)
-    if (data?.signedUrl) window.open(data.signedUrl, '_blank')
+    if (data?.signedUrl) openUrl(data.signedUrl)
   }
 
   async function handlePrint(dok) {
@@ -132,10 +157,16 @@ export default function AusbildungPage() {
     if (data?.signedUrl) {
       const ext = dok.datei_name.split('.').pop()?.toLowerCase()
       if (ext === 'pdf') {
+        // PDF in neuem Tab oeffnen, Browser-Druckdialog startet automatisch
         const win = window.open(data.signedUrl, '_blank')
-        if (win) win.onload = () => { try { win.print() } catch(e) {} }
+        if (win) {
+          win.onload = () => { try { win.print() } catch(e) {} }
+        } else {
+          // Fallback fuer mobile Browser (Popup geblockt)
+          openUrl(data.signedUrl)
+        }
       } else {
-        window.open(data.signedUrl, '_blank')
+        openUrl(data.signedUrl)
       }
     }
   }
@@ -226,7 +257,13 @@ export default function AusbildungPage() {
                           {KATEGORIEN.find(k => k.value === dok.kategorie)?.label}
                         </span>
                       </div>
-                      <div style={{ fontWeight: 500, fontSize: 14, color: 'var(--gray-700)', lineHeight: 1.4 }}>{dok.titel}</div>
+                      {signedUrls[dok.id]
+                        ? <a href={signedUrls[dok.id]} target="_blank" rel="noreferrer"
+                            style={{ fontWeight: 500, fontSize: 14, color: 'var(--gray-700)', lineHeight: 1.4, textDecoration: 'none', display: 'block' }}>
+                            {dok.titel}
+                          </a>
+                        : <div style={{ fontWeight: 500, fontSize: 14, color: 'var(--gray-700)', lineHeight: 1.4 }}>{dok.titel}</div>
+                      }
                       {dok.beschreibung && <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 4, lineHeight: 1.5 }}>{dok.beschreibung}</div>}
                     </div>
                   </div>
@@ -245,7 +282,12 @@ export default function AusbildungPage() {
                       {(dok.titel?.toLowerCase().includes('verdienstausfall') || dok.datei_name?.toLowerCase().includes('verdienstausfall')) && (
                         <button className="btn btn-sm" style={{ background: '#FAEEDA', color: '#633806', border: 'none' }} onClick={() => setVerdienstModal(true)} title="Verdienstausfall ausfüllen">✏️</button>
                       )}
-                      <button className="btn btn-sm btn-secondary" onClick={() => handleDownload(dok)} title="Öffnen">↓</button>
+                      {signedUrls[dok.id]
+                        ? <a href={signedUrls[dok.id]} target="_blank" rel="noreferrer"
+                            className="btn btn-sm btn-secondary" title="Öffnen"
+                            style={{ textDecoration: 'none' }}>↓</a>
+                        : <button className="btn btn-sm btn-secondary" title="Wird geladen…" disabled>↓</button>
+                      }
                       <button className="btn btn-sm btn-secondary" onClick={() => handlePrint(dok)} title="Drucken" style={{ padding: '6px 10px' }}>
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                           <polyline points="6,9 6,2 18,2 18,9"/>
