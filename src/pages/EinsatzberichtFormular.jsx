@@ -543,7 +543,6 @@ export default function EinsatzberichtFormular() {
   // ── Payload zusammenbauen ─────────────────────────────────────
   function bauePayload(abschliessen = false, fotoPfade = null) {
     const f = formRef.current   // immer aktuell, auch in Closures
-    const ap = audioPfadRef.current
     return {
       wehr_id: profile.wehr_id,
       erstellt_von: profile.id,
