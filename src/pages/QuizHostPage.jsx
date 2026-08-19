@@ -38,7 +38,17 @@ export default function QuizHostPage() {
 
     refetchTeilnehmer()
 
-    return () => { aktiv = false; supabase.removeChannel(channel) }
+    // Fallback-Polling, falls die Realtime-Verbindung kurz abreisst (z.B. WLAN-Haenger)
+    // und ein Update verpasst wird -> Status wuerde sonst dauerhaft veraltet bleiben.
+    const fallback = setInterval(async () => {
+      const { data } = await supabase.from('quiz_sessions').select('*, pruefung:pruefungen(titel)').eq('id', id).single()
+      if (data) setSession(s => ({ ...s, ...data }))
+      refetchTeilnehmer()
+      const { data: a } = await supabase.from('quiz_antworten').select('*').eq('session_id', id)
+      if (a) setAntworten(a)
+    }, 4000)
+
+    return () => { aktiv = false; supabase.removeChannel(channel); clearInterval(fallback) }
   }, [id])
 
   async function refetchTeilnehmer() {
@@ -68,7 +78,7 @@ export default function QuizHostPage() {
   const aktuelleFrage = fragen[session?.aktuelle_frage_index ?? 0]
 
   async function starten() {
-    await supabase.from('quiz_sessions').update({ status: 'frage_aktiv', aktuelle_frage_index: 0, frage_gestartet_am: new Date().toISOString() }).eq('id', id)
+    await supabase.rpc('quiz_frage_starten', { p_session_id: id, p_frage_index: 0 })
     setAntworten([])
   }
 
@@ -89,9 +99,7 @@ export default function QuizHostPage() {
       return
     }
     setAntworten([])
-    await supabase.from('quiz_sessions').update({
-      status: 'frage_aktiv', aktuelle_frage_index: naechsterIndex, frage_gestartet_am: new Date().toISOString(),
-    }).eq('id', id)
+    await supabase.rpc('quiz_frage_starten', { p_session_id: id, p_frage_index: naechsterIndex })
   }
 
   if (loading || !session) return <div className="loading-page"><div className="spinner"></div><span>Lade Quiz…</span></div>

@@ -51,7 +51,17 @@ export default function QuizPlayPage() {
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'quiz_teilnehmer', filter: `id=eq.${teilnehmerId}` }, p => { if (p.new) setIch(t => ({ ...t, ...p.new })) })
       .subscribe()
 
-    return () => { aktiv = false; supabase.removeChannel(channel) }
+    // Fallback-Polling, falls die Realtime-Verbindung kurz abreisst (z.B. WLAN-Haenger auf dem Handy)
+    // und ein Update verpasst wird -> ohne das hier wuerde man auf einer veralteten Ansicht
+    // haengen bleiben und keine Antwort mehr abgeben koennen, bis die naechste Frage kommt.
+    const fallback = setInterval(async () => {
+      const { data: s } = await supabase.from('quiz_sessions').select('*, pruefung:pruefungen(titel)').eq('id', id).single()
+      if (s) setSession(prev => ({ ...prev, ...s }))
+      const { data: t } = await supabase.from('quiz_teilnehmer').select('*').eq('id', teilnehmerId).single()
+      if (t) setIch(t)
+    }, 3000)
+
+    return () => { aktiv = false; supabase.removeChannel(channel); clearInterval(fallback) }
   }, [id, teilnehmerId])
 
   // "fragen_oeffentlich" liefert erst Zeilen, sobald die Session die Lobby verlassen hat
