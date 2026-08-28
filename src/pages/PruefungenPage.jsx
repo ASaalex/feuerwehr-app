@@ -171,6 +171,7 @@ Es gibt vier Fragetypen:
   if (view === 'erstellen') return <PruefungErstellen profile={profile} importDaten={selected?._import ? selected : null} onBack={() => { setSelected(null); setView('liste'); fetchData() }} />
   if (view === 'bearbeiten' && selected) return <PruefungBearbeiten pruefung={selected} profile={profile} onBack={() => { setView('liste'); fetchData() }} />
   if (view === 'ablegen' && selected) return <PruefungAblegen pruefung={selected} profile={profile} onBack={() => { setView('liste'); fetchData() }} />
+  if (view === 'lernkarten' && selected) return <PruefungLernkarten pruefung={selected} profile={profile} onBack={() => { setView('liste'); fetchData() }} />
   if (view === 'auswertung' && selected) return <PruefungAuswertung pruefung={selected} onBack={() => setView('liste')} />
   if (view === 'ergebnis_detail' && selected) return <ErgebnisDetail pruefung={selected.pruefung} ergebnis={selected.ergebnis} onBack={() => setView('liste')} />
 
@@ -253,6 +254,11 @@ Es gibt vier Fragetypen:
                       <WachenToggle pruefung={p} onToggle={fetchData} />
                       <AktivToggle pruefung={p} onToggle={fetchData} />
                     </>
+                  )}
+                  {p.aktiv && (
+                    <button className="btn btn-sm btn-secondary" onClick={() => { setSelected(p); setView('lernkarten') }}>
+                      🃏 Lernkarten
+                    </button>
                   )}
                   {p.aktiv && (
                     <button className="btn btn-sm btn-primary" onClick={() => { setSelected(p); setView('ablegen') }}>
@@ -918,6 +924,228 @@ function ErgebnisDetail({ pruefung, ergebnis, fragen: fragenProp, onBack, istNac
           </div>
         )
       })}
+    </div>
+  )
+}
+
+// ─── PruefungLernkarten ───────────────────────────────────────────────────────
+
+const LERNKARTEN_TYP_LABEL = { multiple_choice: 'Multiple Choice', mehrfachauswahl: 'Mehrfachauswahl', wahr_falsch: 'Wahr / Falsch', freitext: 'Freitext' }
+const LERNKARTEN_SCHWACH = new Set(['nicht_gewusst', 'teilweise'])
+const BEWERTUNG_LABEL = { gewusst: '✓ Gewusst', teilweise: '🟡 Teilweise gewusst', nicht_gewusst: '✗ Nicht gewusst' }
+
+function korrekteAntwortText(f) {
+  if (f.typ === 'freitext') return f.musterloesung || '(keine Musterlösung hinterlegt)'
+  return (f.antworten ?? []).filter(a => a.richtig).map(a => a.text).join(', ') || '(keine richtige Antwort hinterlegt)'
+}
+
+function PruefungLernkarten({ pruefung, profile, onBack }) {
+  const [fragen, setFragen] = useState([])
+  const [fortschritt, setFortschritt] = useState({}) // frageId -> { status, versuche }
+  const [loading, setLoading] = useState(true)
+  const [modus, setModus] = useState('start') // start | lernen | ergebnis
+  const [queue, setQueue] = useState([])
+  const [idx, setIdx] = useState(0)
+  const [rundenAufgedeckt, setRundenAufgedeckt] = useState({}) // frageId -> true, nur diese Runde
+  const [rundenBewertung, setRundenBewertung] = useState({})   // frageId -> status, nur diese Runde
+
+  useEffect(() => { laden() }, [])
+
+  async function laden() {
+    setLoading(true)
+    const { data: f } = await supabase.from('fragen').select('*').eq('pruefung_id', pruefung.id).order('reihenfolge')
+    const liste = (f ?? []).map(x => ({
+      ...x,
+      antworten: typeof x.antworten === 'string' ? JSON.parse(x.antworten) : (x.antworten ?? [])
+    }))
+    setFragen(liste)
+    if (liste.length) {
+      const { data: fp } = await supabase.from('pruefung_lernkarten_fortschritt')
+        .select('frage_id, status, versuche').eq('user_id', profile.id).in('frage_id', liste.map(x => x.id))
+      const map = {}
+      ;(fp ?? []).forEach(x => { map[x.frage_id] = x })
+      setFortschritt(map)
+    }
+    setLoading(false)
+  }
+
+  async function fortschrittSpeichern(frageId, status) {
+    const existing = fortschritt[frageId]
+    if (existing) {
+      await supabase.from('pruefung_lernkarten_fortschritt').update({
+        status, versuche: (existing.versuche ?? 1) + 1, letzter_versuch: new Date().toISOString()
+      }).eq('user_id', profile.id).eq('frage_id', frageId)
+    } else {
+      await supabase.from('pruefung_lernkarten_fortschritt').insert({ user_id: profile.id, frage_id: frageId, status, versuche: 1 })
+    }
+    setFortschritt(prev => ({ ...prev, [frageId]: { status, versuche: (existing?.versuche ?? 0) + 1 } }))
+  }
+
+  function starten() {
+    setQueue([...fragen].sort(() => Math.random() - 0.5))
+    setIdx(0); setRundenAufgedeckt({}); setRundenBewertung({}); setModus('lernen')
+  }
+
+  function startenMitSchwachen() {
+    const schwach = fragen.filter(f => {
+      const st = fortschritt[f.id]?.status
+      return !st || LERNKARTEN_SCHWACH.has(st)
+    })
+    setQueue([...schwach].sort(() => Math.random() - 0.5))
+    setIdx(0); setRundenAufgedeckt({}); setRundenBewertung({}); setModus('lernen')
+  }
+
+  function aufdecken() {
+    const f = queue[idx]
+    setRundenAufgedeckt(prev => ({ ...prev, [f.id]: true }))
+  }
+
+  async function bewerten(status) {
+    const f = queue[idx]
+    setRundenBewertung(prev => ({ ...prev, [f.id]: status }))
+    await fortschrittSpeichern(f.id, status)
+  }
+
+  function berechneRundenErgebnis() {
+    const r = { gewusst: 0, teilweise: 0, nicht_gewusst: 0 }
+    queue.forEach(f => { const s = rundenBewertung[f.id]; if (s) r[s]++ })
+    return r
+  }
+
+  if (loading) return <div className="loading-page"><div className="spinner"></div></div>
+
+  if (fragen.length === 0) return (
+    <div>
+      <div className="page-header">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button className="btn btn-ghost btn-sm" onClick={onBack}>← Zurueck</button>
+          <h1>🃏 Lernkarten: {pruefung.titel}</h1>
+        </div>
+      </div>
+      <div className="empty-state card"><p>Keine Fragen vorhanden.</p></div>
+    </div>
+  )
+
+  if (modus === 'ergebnis') {
+    const r = berechneRundenErgebnis()
+    const schwacheAnzahl = fragen.filter(f => {
+      const st = fortschritt[f.id]?.status
+      return !st || LERNKARTEN_SCHWACH.has(st)
+    }).length
+    const unbewertet = queue.length - (r.gewusst + r.teilweise + r.nicht_gewusst)
+    return (
+      <div style={{ maxWidth: 600 }}>
+        <div className="page-header">
+          <h1>Runde abgeschlossen</h1>
+        </div>
+        <div className="card" style={{ marginBottom: 20 }}>
+          <div style={{ display: 'flex', gap: 20, justifyContent: 'center', textAlign: 'center', flexWrap: 'wrap', padding: '8px 0' }}>
+            <div><div style={{ fontSize: 28, fontWeight: 700, color: '#1E8449' }}>{r.gewusst}</div><div style={{ fontSize: 12, color: 'var(--gray-400)' }}>Gewusst</div></div>
+            <div><div style={{ fontSize: 28, fontWeight: 700, color: '#B45309' }}>{r.teilweise}</div><div style={{ fontSize: 12, color: 'var(--gray-400)' }}>Teilweise</div></div>
+            <div><div style={{ fontSize: 28, fontWeight: 700, color: 'var(--red)' }}>{r.nicht_gewusst}</div><div style={{ fontSize: 12, color: 'var(--gray-400)' }}>Nicht gewusst</div></div>
+          </div>
+          {unbewertet > 0 && <p style={{ textAlign: 'center', fontSize: 12, color: 'var(--gray-400)', marginTop: 8 }}>{unbewertet} Karte{unbewertet === 1 ? '' : 'n'} nicht bewertet</p>}
+        </div>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          {schwacheAnzahl > 0 && (
+            <button className="btn btn-primary" style={{ flex: 1, minWidth: 200 }} onClick={startenMitSchwachen}>🔁 Schwache wiederholen ({schwacheAnzahl})</button>
+          )}
+          <button className="btn btn-secondary" style={{ flex: 1, minWidth: 160 }} onClick={starten}>↻ Neue Runde (alle)</button>
+          <button className="btn btn-secondary" style={{ flex: 1, minWidth: 160 }} onClick={onBack}>← Zurueck zur Uebersicht</button>
+        </div>
+      </div>
+    )
+  }
+
+  if (modus === 'lernen') {
+    const f = queue[idx]
+    const istAufgedeckt = !!rundenAufgedeckt[f.id]
+    const meineBewertung = rundenBewertung[f.id]
+
+    return (
+      <div style={{ maxWidth: 600 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+          <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--gray-400)', fontSize: 13, padding: 0, flexShrink: 0 }}>✕</button>
+          <div style={{ fontSize: 12, color: 'var(--gray-400)', flexShrink: 0 }}>Karte {idx + 1}/{queue.length}</div>
+        </div>
+
+        {/* Kartenübersicht dieser Runde: Sprung-Navigation + Status je Karte */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
+          {queue.map((qf, qi) => {
+            const status = rundenBewertung[qf.id]
+            const revealed = rundenAufgedeckt[qf.id]
+            let bg = 'var(--gray-200)'
+            if (status === 'gewusst') bg = '#6ee7b7'
+            else if (status === 'teilweise') bg = '#fcd34d'
+            else if (status === 'nicht_gewusst') bg = '#fca5a5'
+            else if (revealed) bg = 'var(--gray-400)'
+            return (
+              <button key={qf.id} onClick={() => setIdx(qi)}
+                title={`Karte ${qi + 1}${status ? ' · ' + BEWERTUNG_LABEL[status] : revealed ? ' · aufgedeckt' : ''}`}
+                style={{ width: 14, height: 14, borderRadius: '50%', border: qi === idx ? '2px solid var(--red)' : '2px solid transparent', background: bg, padding: 0, cursor: 'pointer', flexShrink: 0 }} />
+            )
+          })}
+        </div>
+
+        <div className="card" style={{ padding: 20, marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--gray-400)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
+              {LERNKARTEN_TYP_LABEL[f.typ] ?? f.typ}
+            </div>
+            {meineBewertung && (
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--gray-500)' }}>Bereits bewertet: {BEWERTUNG_LABEL[meineBewertung]}</div>
+            )}
+          </div>
+          <div style={{ fontSize: 17, fontWeight: 600, lineHeight: 1.5, marginBottom: 20 }}>{f.frage_text}</div>
+          {!istAufgedeckt ? (
+            <button onClick={aufdecken} className="btn btn-secondary" style={{ width: '100%', padding: 16, fontSize: 15 }}>🃏 Antwort aufdecken</button>
+          ) : (
+            <div>
+              <div style={{ background: '#f8fafc', border: '1px solid var(--gray-200)', borderRadius: 8, padding: 14, marginBottom: 14, fontSize: 14, lineHeight: 1.6 }}>
+                {korrekteAntwortText(f)}
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button onClick={() => bewerten('gewusst')} className="btn btn-sm" style={{ flex: 1, minWidth: 100, background: '#d1fae5', color: '#065f46', border: meineBewertung === 'gewusst' ? '2.5px solid #065f46' : '1.5px solid #6ee7b7', fontWeight: 600, padding: 12 }}>✓ Gewusst</button>
+                <button onClick={() => bewerten('teilweise')} className="btn btn-sm" style={{ flex: 1, minWidth: 100, background: '#fef3c7', color: '#92400e', border: meineBewertung === 'teilweise' ? '2.5px solid #92400e' : '1.5px solid #fcd34d', fontWeight: 600, padding: 12 }}>🟡 Teilweise</button>
+                <button onClick={() => bewerten('nicht_gewusst')} className="btn btn-sm" style={{ flex: 1, minWidth: 100, background: '#fee2e2', color: '#991b1b', border: meineBewertung === 'nicht_gewusst' ? '2.5px solid #991b1b' : '1.5px solid #fca5a5', fontWeight: 600, padding: 12 }}>✗ Nicht gewusst</button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button className="btn btn-secondary" disabled={idx === 0} onClick={() => setIdx(i => i - 1)} style={{ flex: 1 }}>← Zurück</button>
+          <button className="btn btn-secondary" disabled={idx === queue.length - 1} onClick={() => setIdx(i => i + 1)} style={{ flex: 1 }}>Weiter →</button>
+        </div>
+        <button className="btn btn-primary" style={{ width: '100%', marginTop: 10, padding: 12 }} onClick={() => setModus('ergebnis')}>📊 Runde beenden</button>
+      </div>
+    )
+  }
+
+  // ── Start-Ansicht ─────────────────────────────────────────────────────────
+  const anzahlSchwach = fragen.filter(f => {
+    const st = fortschritt[f.id]?.status
+    return !st || LERNKARTEN_SCHWACH.has(st)
+  }).length
+
+  return (
+    <div style={{ maxWidth: 600 }}>
+      <div className="page-header">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button className="btn btn-ghost btn-sm" onClick={onBack}>← Zurueck</button>
+          <h1>🃏 Lernkarten: {pruefung.titel}</h1>
+        </div>
+      </div>
+      <div className="card" style={{ marginBottom: 20 }}>
+        <p style={{ fontSize: 13, color: 'var(--gray-400)', marginBottom: anzahlSchwach < fragen.length ? 4 : 0 }}>{fragen.length} Karten insgesamt</p>
+        {anzahlSchwach < fragen.length && <p style={{ fontSize: 13, color: 'var(--gray-400)' }}>{anzahlSchwach} davon noch nicht sicher gewusst</p>}
+      </div>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <button className="btn btn-primary" style={{ flex: 1, minWidth: 200 }} onClick={starten}>▶ Alle Karten üben</button>
+        {anzahlSchwach > 0 && anzahlSchwach < fragen.length && (
+          <button className="btn btn-secondary" style={{ flex: 1, minWidth: 200 }} onClick={startenMitSchwachen}>🔁 Nur schwache üben ({anzahlSchwach})</button>
+        )}
+      </div>
     </div>
   )
 }
