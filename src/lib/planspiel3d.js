@@ -1,8 +1,13 @@
-import { Map as MaplibreMap, NavigationControl, MercatorCoordinate } from 'maplibre-gl'
+import { Map as MaplibreMap, NavigationControl, MercatorCoordinate, setWorkerUrl } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import * as THREE from 'three'
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js'
 import { LINIE_TYPEN, ZONE_TYPEN } from './planspielTypen'
+
+// MapLibre laedt seinen Worker zur Laufzeit relativ zum eigenen (gebuendelten) Skript-Pfad -
+// das kann Rollup beim Production-Build nicht erkennen, wodurch die Worker-Datei im Deployment
+// fehlt (funktioniert nur im Dev-Server). Fixe, mitgelieferte Kopie in public/ verwenden.
+setWorkerUrl('/maplibre-gl-worker.mjs')
 
 // Externe 3D-Modelle je Subtyp (Fahrzeug- oder Punkt-Objekt). Ohne Eintrag: generischer Klotz.
 // Neues Modell ergänzen: Datei(en) nach public/models/<ordner>/ legen und hier eintragen.
