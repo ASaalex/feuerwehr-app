@@ -12,18 +12,20 @@
     "@supabase/supabase-js": "^2.39.0",
     "@zxing/browser": "^0.2.0",
     "@zxing/library": "^0.22.0",
+    "chart.js": "^4.5.1",
     "date-fns": "^3.0.6",
     "docx": "^8.5.0",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.7",
-    "leaflet": "^1.9.4",
-    "mapbox-gl": "^3.26.0",
+    "maplibre-gl": "^6.9.0",
     "pdfjs-dist": "^5.7.284",
     "qrcode": "^1.5.4",
     "react": "^18.2.0",
+    "react-chartjs-2": "^5.3.1",
     "react-dom": "^18.2.0",
-    "react-router-dom": "^6.21.0"
+    "react-router-dom": "^6.21.0",
+    "three": "^0.186.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.0",

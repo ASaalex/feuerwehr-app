@@ -1,68 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import L from 'leaflet'
-import 'leaflet/dist/leaflet.css'
+import { Marker } from 'maplibre-gl'
 import { supabase } from '../lib/supabase'
 import { format } from 'date-fns'
 import { de } from 'date-fns/locale'
 import { WetterKarte } from './PlanspielPage'
-
-const FAHRZEUG_TYPEN = [
-  { id: 'lf10',  name: 'LF 10',  emoji: '🚒', farbe: '#DC2626' },
-  { id: 'hlf20', name: 'HLF 20', emoji: '🚒', farbe: '#B91C1C' },
-  { id: 'tlf',   name: 'TLF',    emoji: '🚒', farbe: '#EA580C' },
-  { id: 'dlk',   name: 'DLK',    emoji: '🚒', farbe: '#CA8A04' },
-  { id: 'rw',    name: 'RW',     emoji: '🔧', farbe: '#16A34A' },
-  { id: 'elw',   name: 'ELW',    emoji: '🚐', farbe: '#7C3AED' },
-  { id: 'rtw',   name: 'RTW',    emoji: '🚑', farbe: '#2563EB' },
-  { id: 'ktw',   name: 'KTW',    emoji: '🚑', farbe: '#1D4ED8' },
-]
-const TRUPP_TYPEN = [
-  { id: 'at', name: 'Angriffstrupp',    emoji: '🧑‍🚒', farbe: '#DC2626' },
-  { id: 'wt', name: 'Wassertrupp',      emoji: '🧑‍🚒', farbe: '#2563EB' },
-  { id: 'st', name: 'Sicherheitstrupp', emoji: '🧑‍🚒', farbe: '#16A34A' },
-  { id: 'me', name: 'Melder',           emoji: '🧑‍🚒', farbe: '#D97706' },
-]
-const PUNKT_TYPEN = [
-  { id: 'hydrant',    name: 'Hydrant',      emoji: '💧', farbe: '#2563EB' },
-  { id: 'verteiler',  name: 'Verteiler',    emoji: '🔵', farbe: '#0891B2' },
-  { id: 'brandherd',  name: 'Brandherd',    emoji: '🔥', farbe: '#DC2626' },
-  { id: 'pkw',        name: 'PKW',          emoji: '🚗', farbe: '#6B7280' },
-  { id: 'lkw',        name: 'LKW',          emoji: '🚛', farbe: '#374151' },
-  { id: 'person',     name: 'Person/Opfer', emoji: '👤', farbe: '#7C3AED' },
-  { id: 'gefahrstoff',name: 'Gefahrstoff',  emoji: '☢️', farbe: '#F59E0B' },
-  { id: 'pin',        name: 'Markierung',   emoji: '📍', farbe: '#DC2626' },
-]
-const LINIE_TYPEN = [
-  { id: 'b_schlauch', farbe: '#2563EB', breite: 5 },
-  { id: 'c_schlauch', farbe: '#16A34A', breite: 3 },
-]
-const ZONE_TYPEN = [
-  { id: 'absperrung',     farbe: '#DC2626' },
-  { id: 'bereitstellung', farbe: '#D97706' },
-  { id: 'abschnitt',     farbe: '#7C3AED' },
-]
+import { elEmoji, elName, elFarbe } from '../lib/planspielTypen'
+import { erstelleKarte, fx3DElementeSynchronisieren, setLinienDaten, setZonenDaten } from '../lib/planspiel3d'
 
 // Windrichtung → Grad (Pfeil zeigt wohin der Wind weht)
 const WIND_DEG = { N: 180, NO: 225, O: 270, SO: 315, S: 0, SW: 45, W: 90, NW: 135 }
-
-const ll = ([lng, lat]) => [lat, lng]
-
-function elEmoji(el) {
-  if (el.typ === 'fahrzeug') return FAHRZEUG_TYPEN.find(f => f.id === el.subtyp)?.emoji ?? '🚒'
-  if (el.typ === 'trupp')   return TRUPP_TYPEN.find(t => t.id === el.subtyp)?.emoji ?? '🧑‍🚒'
-  return PUNKT_TYPEN.find(p => p.id === el.subtyp)?.emoji ?? '📍'
-}
-function elName(el) {
-  if (el.typ === 'fahrzeug') return FAHRZEUG_TYPEN.find(f => f.id === el.subtyp)?.name ?? el.subtyp
-  if (el.typ === 'trupp')   return TRUPP_TYPEN.find(t => t.id === el.subtyp)?.name ?? el.subtyp
-  return PUNKT_TYPEN.find(p => p.id === el.subtyp)?.name ?? el.subtyp
-}
-function elFarbe(el) {
-  if (el.typ === 'fahrzeug') return FAHRZEUG_TYPEN.find(f => f.id === el.subtyp)?.farbe ?? '#DC2626'
-  if (el.typ === 'trupp')   return TRUPP_TYPEN.find(t => t.id === el.subtyp)?.farbe ?? '#DC2626'
-  return PUNKT_TYPEN.find(p => p.id === el.subtyp)?.farbe ?? '#DC2626'
-}
 
 export default function PlanspielAnzeigePage() {
   const { id } = useParams()
@@ -77,22 +24,24 @@ export default function PlanspielAnzeigePage() {
   const [anzeigePhaseIdx, setAnzeigePhaseIdx] = useState(0) // für Navigation
 
   const mapRef       = useRef(null)
+  const fxRef        = useRef(null)
   const markerRefs   = useRef({})
-  const linienRefs   = useRef({})
-  const zonenRefs    = useRef({})
   const hatZentriert = useRef(false)
   const prevLageLen  = useRef(-1)
+  const letzteKarte  = useRef({ elemente: [], linien: [], zonen: [] })
 
-  // Callback-Ref: Leaflet-Karte initialisieren sobald div im DOM
+  // Callback-Ref: Karte initialisieren sobald div im DOM
   const mapContainer = useCallback((node) => {
     if (!node || mapRef.current) return
-    const map = L.map(node, { zoomControl: true })
-    map.setView([51.1657, 10.4515], 13)
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-      maxZoom: 19,
-    }).addTo(map)
+    const { map, fx } = erstelleKarte(node, { lng: 10.4515, lat: 51.1657, zoom: 13 })
+    map.on('style.load', () => {
+      fx3DElementeSynchronisieren(fx, letzteKarte.current.elemente, elFarbe)
+      fx.setWetter(letzteKarte.current.wetterinfo)
+      setLinienDaten(map, letzteKarte.current.linien)
+      setZonenDaten(map, letzteKarte.current.zonen)
+    })
     mapRef.current = map
+    fxRef.current = fx
   }, [])
 
   function verarbeite(data) {
@@ -120,14 +69,16 @@ export default function PlanspielAnzeigePage() {
     prevLageLen.current = updates.length
     setLageUpdates(updates)
 
+    const karte = data.kartenzustand ?? { elemente: [], linien: [], zonen: [] }
+    letzteKarte.current = karte
     const map = mapRef.current
     if (map) {
       if (!hatZentriert.current && data.map_center) {
         const c = data.map_center
-        map.setView([c.lat, c.lng], c.zoom ?? 14)
+        map.jumpTo({ center: [c.lng, c.lat], zoom: c.zoom ?? 14, pitch: c.pitch ?? 55, bearing: c.bearing ?? 0 })
         hatZentriert.current = true
       }
-      aktualisiereKarte(map, data.kartenzustand ?? { elemente: [], linien: [], zonen: [] })
+      aktualisiereKarte(map, karte)
     }
   }
 
@@ -141,40 +92,22 @@ export default function PlanspielAnzeigePage() {
       if (!aktuelleIds.has(mid)) { m.remove(); delete markerRefs.current[mid] }
     })
     elemente.forEach(el => {
-      const icon = L.divIcon({
-        className: '',
-        html: `<div style="background:${elFarbe(el)};color:white;border-radius:6px;padding:3px 7px;font-size:18px;box-shadow:0 2px 6px rgba(0,0,0,0.4);border:2px solid white;display:flex;align-items:center;gap:4px;white-space:nowrap;user-select:none;"><span>${elEmoji(el)}</span><span style="font-size:10px;font-weight:700;">${elName(el)}</span></div>`,
-        iconAnchor: [0, 0],
-      })
       if (!markerRefs.current[el.id]) {
-        markerRefs.current[el.id] = L.marker(ll(el.position), { icon, draggable: false }).addTo(map)
+        const el2 = document.createElement('div')
+        el2.style.cssText = `background:${elFarbe(el)};color:white;border-radius:6px;padding:3px 7px;font-size:18px;box-shadow:0 2px 6px rgba(0,0,0,0.4);border:2px solid white;display:flex;align-items:center;gap:4px;white-space:nowrap;user-select:none;`
+        el2.innerHTML = `<span>${elEmoji(el)}</span><span style="font-size:10px;font-weight:700;">${elName(el)}</span>`
+        markerRefs.current[el.id] = new Marker({ element: el2, draggable: false, anchor: 'top-left' }).setLngLat(el.position).addTo(map)
       } else {
-        markerRefs.current[el.id].setIcon(icon)
-        markerRefs.current[el.id].setLatLng(ll(el.position))
+        markerRefs.current[el.id].setLngLat(el.position)
       }
     })
 
-    const linienIds = new Set(linien.map(l => l.id))
-    Object.entries(linienRefs.current).forEach(([lid, l]) => {
-      if (!linienIds.has(lid)) { l.remove(); delete linienRefs.current[lid] }
-    })
-    linien.forEach(l => {
-      if (!linienRefs.current[l.id]) {
-        const typ = LINIE_TYPEN.find(x => x.id === l.typ) ?? LINIE_TYPEN[0]
-        linienRefs.current[l.id] = L.polyline(l.punkte.map(ll), { color: typ.farbe, weight: typ.breite ?? 3 }).addTo(map)
-      }
-    })
-
-    const zonenIds = new Set(zonen.map(z => z.id))
-    Object.entries(zonenRefs.current).forEach(([zid, z]) => {
-      if (!zonenIds.has(zid)) { z.remove(); delete zonenRefs.current[zid] }
-    })
-    zonen.forEach(z => {
-      if (!zonenRefs.current[z.id]) {
-        const typ = ZONE_TYPEN.find(x => x.id === z.typ) ?? { farbe: '#DC2626' }
-        zonenRefs.current[z.id] = L.polygon(z.punkte.map(ll), { color: typ.farbe, fillOpacity: typ.fill ?? 0.2, weight: 2, dashArray: typ.dash ? '8 6' : null }).addTo(map)
-      }
-    })
+    if (fxRef.current?.scene) {
+      fx3DElementeSynchronisieren(fxRef.current, elemente, elFarbe)
+      fxRef.current.setWetter(karte.wetterinfo)
+    }
+    if (map.getSource('planspiel-linien')) setLinienDaten(map, linien)
+    if (map.getSource('planspiel-zonen')) setZonenDaten(map, zonen)
   }
 
   useEffect(() => {
@@ -206,7 +139,7 @@ export default function PlanspielAnzeigePage() {
     return () => {
       supabase.removeChannel(channel)
       clearInterval(fallback)
-      if (mapRef.current) { mapRef.current.remove(); mapRef.current = null }
+      if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; fxRef.current = null }
       hatZentriert.current = false
       prevLageLen.current = -1
     }

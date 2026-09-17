@@ -1,111 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
-import L from 'leaflet'
-import 'leaflet/dist/leaflet.css'
+import { Marker } from 'maplibre-gl'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { format } from 'date-fns'
 import { de } from 'date-fns/locale'
-
-// ─── Konstanten ──────────────────────────────────────────────────────────────
-
-const STANDARD_PHASEN = [
-  {
-    id: 'wache', name: 'Wache',
-    checkpunkte: [
-      '10er-Regel: Besatzung vollständig prüfen',
-      'Alle Türen geschlossen, alle angeschnallt',
-      'Maschinist fahrtauglich (0,0‰)',
-      'Führungsmittel vorhanden (Karte, Funk)',
-      'Sondersignal prüfen (Blaulicht, Martinshorn)',
-    ]
-  },
-  {
-    id: 'anfahrt', name: 'Anfahrt',
-    checkpunkte: [
-      'Eigene Anfahrt der Leitstelle melden',
-      'Anfrage: Weitere Lageinformationen?',
-      'Weitere Kräfte nachalarmieren?',
-      'Anfahrtsweg festlegen',
-      'Erkundung auf Anfahrt einleiten',
-    ]
-  },
-  {
-    id: 'einsatzstelle', name: 'Einsatzstelle',
-    checkpunkte: [
-      'Fahrzeug sicher abstellen',
-      'Lagemeldung an Leitstelle',
-      'Erkundung durchführen',
-      'Wasserversorgung sicherstellen',
-      'Sicherheitstrupp einteilen',
-      'Maßnahmen einleiten',
-    ]
-  },
-  {
-    id: 'nachbereitung', name: 'Nachbereitung',
-    checkpunkte: [
-      'Einsatz-Ende an Leitstelle melden',
-      'Ausrüstung vollständig?',
-      'Material reinigen und verstauen',
-      'Einsatzbericht erstellen',
-    ]
-  },
-]
-
-const FAHRZEUG_TYPEN = [
-  { id: 'lf10',  name: 'LF 10',  emoji: '🚒', farbe: '#DC2626' },
-  { id: 'hlf20', name: 'HLF 20', emoji: '🚒', farbe: '#B91C1C' },
-  { id: 'tlf',   name: 'TLF',    emoji: '🚒', farbe: '#EA580C' },
-  { id: 'dlk',   name: 'DLK',    emoji: '🚒', farbe: '#CA8A04' },
-  { id: 'rw',    name: 'RW',     emoji: '🔧', farbe: '#16A34A' },
-  { id: 'elw',   name: 'ELW',    emoji: '🚐', farbe: '#7C3AED' },
-  { id: 'rtw',   name: 'RTW',    emoji: '🚑', farbe: '#2563EB' },
-  { id: 'ktw',   name: 'KTW',    emoji: '🚑', farbe: '#1D4ED8' },
-]
-
-const TRUPP_TYPEN = [
-  { id: 'at', name: 'Angriffstrupp',    emoji: '🧑‍🚒', farbe: '#DC2626' },
-  { id: 'wt', name: 'Wassertrupp',      emoji: '🧑‍🚒', farbe: '#2563EB' },
-  { id: 'st', name: 'Sicherheitstrupp', emoji: '🧑‍🚒', farbe: '#16A34A' },
-  { id: 'me', name: 'Melder',           emoji: '🧑‍🚒', farbe: '#D97706' },
-]
-
-const PUNKT_TYPEN = [
-  { id: 'hydrant',    name: 'Hydrant',      emoji: '💧', farbe: '#2563EB' },
-  { id: 'verteiler',  name: 'Verteiler',    emoji: '🔵', farbe: '#0891B2' },
-  { id: 'brandherd',  name: 'Brandherd',    emoji: '🔥', farbe: '#DC2626' },
-  { id: 'pkw',        name: 'PKW',          emoji: '🚗', farbe: '#6B7280' },
-  { id: 'lkw',        name: 'LKW',          emoji: '🚛', farbe: '#374151' },
-  { id: 'person',     name: 'Person/Opfer', emoji: '👤', farbe: '#7C3AED' },
-  { id: 'gefahrstoff',name: 'Gefahrstoff',  emoji: '☢️', farbe: '#F59E0B' },
-  { id: 'pin',        name: 'Markierung',   emoji: '📍', farbe: '#DC2626' },
-]
-
-const LINIE_TYPEN = [
-  { id: 'b_schlauch', name: 'B-Schlauch', farbe: '#2563EB', breite: 5 },
-  { id: 'c_schlauch', name: 'C-Schlauch', farbe: '#16A34A', breite: 3 },
-]
-
-const ZONE_TYPEN = [
-  { id: 'absperrung',    name: 'Absperrbereich',      farbe: '#DC2626', fill: 0.15, dash: false },
-  { id: 'bereitstellung',name: 'Bereitstellungsraum', farbe: '#D97706', fill: 0.15, dash: false },
-  { id: 'abschnitt',    name: 'Einsatzabschnitt',    farbe: '#7C3AED', fill: 0.15, dash: false },
-  { id: 'rauch',        name: 'Rauchsäule',          farbe: '#6B7280', fill: 0.3,  dash: true  },
-  { id: 'fluessigkeit', name: 'Auslauffläche',        farbe: '#92400E', fill: 0.3,  dash: true  },
-]
-
-function phasenVonStandard() {
-  return STANDARD_PHASEN.map(p => ({
-    ...p,
-    aktiv: p.id === 'wache',
-    abgeschlossen: false,
-    checkpunkte: p.checkpunkte.map((t, i) => ({ id: p.id + '_' + i, text: t, status: null })),
-    extra: [],
-  }))
-}
-
-// Koordinaten intern als [lng, lat] (GeoJSON). Leaflet erwartet [lat, lng].
-const ll = ([lng, lat]) => [lat, lng]
-const fromLL = latlng => [latlng.lng, latlng.lat]
+import {
+  STANDARD_PHASEN, FAHRZEUG_TYPEN, TRUPP_TYPEN, PUNKT_TYPEN, LINIE_TYPEN, ZONE_TYPEN,
+  phasenVonStandard, elEmoji, elName, elFarbe,
+} from '../lib/planspielTypen'
+import {
+  erstelleKarte, fx3DElementeSynchronisieren, setLinienDaten, setZonenDaten,
+  setVorschauLinie, setVorschauZone, clearVorschau, ist3DFahrzeug,
+} from '../lib/planspiel3d'
 
 // ─── PlanspielPage ────────────────────────────────────────────────────────────
 
@@ -145,7 +51,7 @@ export default function PlanspielPage() {
       <div className="page-header">
         <div>
           <h1>Planspiel</h1>
-          <p style={{ marginTop: 4 }}>Taktische Übungen auf OpenStreetMap-Karte</p>
+          <p style={{ marginTop: 4 }}>Taktische Übungen auf 3D-Karte</p>
         </div>
         {kannLeiten && (
           <button className="btn btn-primary" onClick={() => setView('neu')}>+ Neue Übung</button>
@@ -214,9 +120,9 @@ function PlanspielNeu({ profile, onBack }) {
     setSaving(true)
 
     // Kartenposition: Szenario-Vorgabe hat Vorrang, sonst Adress-Geocoding
-    let center = { lng: 10.4515, lat: 51.1657, zoom: 13 }
+    let center = { lng: 10.4515, lat: 51.1657, zoom: 13, pitch: 55, bearing: 0 }
     if (selectedSz?.kartenposition) {
-      center = selectedSz.kartenposition
+      center = { pitch: 55, bearing: 0, ...selectedSz.kartenposition }
     } else if (form.adresse.trim()) {
       try {
         const res = await fetch(
@@ -225,7 +131,7 @@ function PlanspielNeu({ profile, onBack }) {
         )
         const geo = await res.json()
         if (geo.length > 0) {
-          center = { lng: parseFloat(geo[0].lon), lat: parseFloat(geo[0].lat), zoom: 16 }
+          center = { lng: parseFloat(geo[0].lon), lat: parseFloat(geo[0].lat), zoom: 17, pitch: 55, bearing: 0 }
         }
       } catch {}
     }
@@ -247,17 +153,25 @@ function PlanspielNeu({ profile, onBack }) {
       phasen.push({ id: 'extra_' + Date.now() + Math.random(), name, aktiv: false, abgeschlossen: false, checkpunkte: [], extra: [] })
     })
 
-    // Kartenvorgabe aus Szenario übernehmen (neue IDs um Konflikte zu vermeiden)
+    // Kartenvorgabe aus Szenario übernehmen (neue IDs um Konflikte zu vermeiden).
+    // Tolerant gegenüber altem Vorlagenformat (Leaflet-Editor: typ=Subtyp direkt, koord statt position,
+    // Zonenpunkte als [lat,lng]).
     const vorgabe = selectedSz?.kartenvorgabe
     const kartenzustand = {
       elemente: vorgabe?.elemente?.map(e => ({
         id: String(Date.now()) + String(Math.random()),
         typ: 'punkt',
-        subtyp: e.typ,
-        position: e.koord ?? e.position,
+        subtyp: e.subtyp ?? e.typ,
+        position: e.position ?? e.koord,
+        heading: e.heading ?? 0,
       })) ?? [],
       linien: [],
-      zonen: vorgabe?.zonen?.map(z => ({ ...z, id: String(Date.now()) + String(Math.random()) })) ?? [],
+      zonen: vorgabe?.zonen?.map(z => {
+        const erster = z.punkte?.[0]
+        const istAltesFormat = erster && Math.abs(erster[0]) > 40
+        const punkte = istAltesFormat ? z.punkte.map(([lat, lng]) => [lng, lat]) : z.punkte
+        return { ...z, id: String(Date.now()) + String(Math.random()), punkte }
+      }) ?? [],
       wetterinfo: selectedSz?.wetterinfo ?? {},
     }
 
@@ -368,10 +282,8 @@ function PlanspielAktiv({ session, kannLeiten, onBack }) {
 
   const mapContainer = useRef(null)
   const mapRef = useRef(null)
+  const fxRef = useRef(null)
   const markerRefs = useRef({})
-  const linienRefs = useRef({})
-  const zonenRefs = useRef({})
-  const vorschauRef = useRef(null)
 
   // Refs für closures in Event-Listenern
   const karteRef = useRef(karte)
@@ -393,7 +305,7 @@ function PlanspielAktiv({ session, kannLeiten, onBack }) {
     const interval = setInterval(async () => {
       const map = mapRef.current
       const center = map
-        ? { lng: map.getCenter().lng, lat: map.getCenter().lat, zoom: map.getZoom() }
+        ? { lng: map.getCenter().lng, lat: map.getCenter().lat, zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() }
         : session.map_center
       await supabase.from('planspiel_sessions').update({
         kartenzustand: karteRef.current,
@@ -407,20 +319,22 @@ function PlanspielAktiv({ session, kannLeiten, onBack }) {
 
   // Karte initialisieren
   useEffect(() => {
-    const center = session.map_center ?? { lng: 10.4515, lat: 51.1657, zoom: 14 }
-    const map = L.map(mapContainer.current, { zoomControl: true }).setView([center.lat, center.lng], center.zoom ?? 14)
-
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-      maxZoom: 19,
-    }).addTo(map)
-
+    const center = session.map_center ?? { lng: 10.4515, lat: 51.1657, zoom: 14, pitch: 55, bearing: 0 }
+    const { map, fx } = erstelleKarte(mapContainer.current, center)
     mapRef.current = map
+    fxRef.current = fx
+
+    map.on('style.load', () => {
+      fx3DElementeSynchronisieren(fx, karteRef.current.elemente, elFarbe)
+      fx.setWetter(karteRef.current.wetterinfo)
+      setLinienDaten(map, karteRef.current.linien)
+      setZonenDaten(map, karteRef.current.zonen)
+    })
 
     map.on('click', (e) => {
       const w = werkzeugRef.current
       if (!w) return
-      const pos = fromLL(e.latlng)
+      const pos = [e.lngLat.lng, e.lngLat.lat]
 
       if (w.typ === 'fahrzeug' || w.typ === 'trupp' || w.typ === 'punkt') {
         const id = crypto.randomUUID()
@@ -434,10 +348,10 @@ function PlanspielAktiv({ session, kannLeiten, onBack }) {
       }
     })
 
-    return () => { map.remove(); mapRef.current = null }
+    return () => { map.remove(); mapRef.current = null; fxRef.current = null }
   }, [])
 
-  // Marker synchron halten
+  // Marker synchron halten (alle Elementtypen als 2D-Pill; Fahrzeuge/Brandherde zusätzlich 3D via Fx-Layer)
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
@@ -450,84 +364,75 @@ function PlanspielAktiv({ session, kannLeiten, onBack }) {
     karte.elemente.forEach(el => {
       if (!markerRefs.current[el.id]) {
         const draggable = kannLeiten && !istAbgeschlossen
-        const icon = L.divIcon({
-          className: '',
-          html: `<div style="background:${elFarbe(el)};color:white;border-radius:6px;padding:3px 7px;font-size:18px;cursor:${draggable ? 'grab' : 'default'};box-shadow:0 2px 6px rgba(0,0,0,0.4);border:2px solid white;display:flex;align-items:center;gap:4px;white-space:nowrap;user-select:none;"><span>${elEmoji(el)}</span><span style="font-size:10px;font-weight:700;">${elName(el)}</span></div>`,
-          iconAnchor: [0, 0],
-        })
-        const marker = L.marker(ll(el.position), { icon, draggable }).addTo(map)
+        const el2 = document.createElement('div')
+        el2.style.cssText = `background:${elFarbe(el)};color:white;border-radius:6px;padding:3px 7px;font-size:18px;cursor:${draggable ? 'grab' : 'default'};box-shadow:0 2px 6px rgba(0,0,0,0.4);border:2px solid white;display:flex;align-items:center;gap:4px;white-space:nowrap;user-select:none;`
+        el2.innerHTML = `<span>${elEmoji(el)}</span><span style="font-size:10px;font-weight:700;">${elName(el)}</span>`
+        const marker = new Marker({ element: el2, draggable, anchor: 'top-left' })
+          .setLngLat(el.position)
+          .addTo(map)
 
         if (draggable) {
           marker.on('dragend', () => {
-            const newPos = fromLL(marker.getLatLng())
-            setKarte(k => ({ ...k, elemente: k.elemente.map(x => x.id === el.id ? { ...x, position: newPos } : x) }))
+            const { lng, lat } = marker.getLngLat()
+            setKarte(k => ({ ...k, elemente: k.elemente.map(x => x.id === el.id ? { ...x, position: [lng, lat] } : x) }))
           })
         }
         if (kannLeiten && !istAbgeschlossen) {
-          marker.on('dblclick', (e) => {
-            L.DomEvent.stopPropagation(e)
+          el2.addEventListener('dblclick', (e) => {
+            e.stopPropagation()
             setKarte(k => ({ ...k, elemente: k.elemente.filter(x => x.id !== el.id) }))
           })
         }
 
         markerRefs.current[el.id] = marker
       } else {
-        markerRefs.current[el.id].setLatLng(ll(el.position))
+        markerRefs.current[el.id].setLngLat(el.position)
       }
     })
   }, [karte.elemente])
 
+  // 3D-Fahrzeuge/Personen + Feuer/Rauch-Partikel synchron halten
+  useEffect(() => {
+    const fx = fxRef.current
+    if (!fx || !fx.scene) return
+    fx3DElementeSynchronisieren(fx, karte.elemente, elFarbe)
+  }, [karte.elemente])
+
+  // Windrichtung/-stärke an die Rauchausbreitung übergeben
+  useEffect(() => {
+    const fx = fxRef.current
+    if (!fx || !fx.scene) return
+    fx.setWetter(karte.wetterinfo)
+  }, [karte.wetterinfo])
+
   // Linien rendern
   useEffect(() => {
     const map = mapRef.current
-    if (!map) return
-    Object.entries(linienRefs.current).forEach(([id, layer]) => {
-      if (!karte.linien.find(l => l.id === id)) { layer.remove(); delete linienRefs.current[id] }
-    })
-    karte.linien.forEach(l => {
-      if (!linienRefs.current[l.id]) {
-        const typ = LINIE_TYPEN.find(x => x.id === l.typ) ?? LINIE_TYPEN[0]
-        linienRefs.current[l.id] = L.polyline(l.punkte.map(ll), { color: typ.farbe, weight: typ.breite ?? 3 }).addTo(map)
-      }
-    })
+    if (!map || !map.getSource('planspiel-linien')) return
+    setLinienDaten(map, karte.linien)
   }, [karte.linien])
 
   // Zonen rendern
   useEffect(() => {
     const map = mapRef.current
-    if (!map) return
-    Object.entries(zonenRefs.current).forEach(([id, layer]) => {
-      if (!karte.zonen.find(z => z.id === id)) { layer.remove(); delete zonenRefs.current[id] }
-    })
-    karte.zonen.forEach(z => {
-      if (!zonenRefs.current[z.id]) {
-        const typ = ZONE_TYPEN.find(x => x.id === z.typ) ?? ZONE_TYPEN[0]
-        zonenRefs.current[z.id] = L.polygon(z.punkte.map(ll), { color: typ.farbe, fillOpacity: typ.fill ?? 0.2, weight: 2, dashArray: typ.dash ? '8 6' : null }).addTo(map)
-      }
-    })
+    if (!map || !map.getSource('planspiel-zonen')) return
+    setZonenDaten(map, karte.zonen)
   }, [karte.zonen])
 
   // Zeichnungsvorschau
   useEffect(() => {
     const map = mapRef.current
-    if (!map) return
-    if (vorschauRef.current) { vorschauRef.current.remove(); vorschauRef.current = null }
-    if (!werkzeug || zeichnePunkte.length < 2) return
-
-    if (werkzeug.typ === 'linie') {
-      const typ = LINIE_TYPEN.find(l => l.id === werkzeug.subtyp) ?? LINIE_TYPEN[0]
-      vorschauRef.current = L.polyline(zeichnePunkte.map(ll), { color: typ.farbe, weight: typ.breite ?? 3, dashArray: '8 6' }).addTo(map)
-    } else if (werkzeug.typ === 'zone' && zeichnePunkte.length >= 3) {
-      const typ = ZONE_TYPEN.find(z => z.id === werkzeug.subtyp) ?? ZONE_TYPEN[0]
-      vorschauRef.current = L.polygon(zeichnePunkte.map(ll), { color: typ.farbe, fillOpacity: 0.15, weight: 2, dashArray: '8 6' }).addTo(map)
-    }
+    if (!map || !map.getSource('planspiel-vorschau-linie')) return
+    if (!werkzeug || zeichnePunkte.length < 2) { clearVorschau(map); return }
+    if (werkzeug.typ === 'linie') setVorschauLinie(map, zeichnePunkte, werkzeug.subtyp)
+    else if (werkzeug.typ === 'zone' && zeichnePunkte.length >= 3) setVorschauZone(map, zeichnePunkte, werkzeug.subtyp)
   }, [zeichnePunkte, werkzeug])
 
   // Cursor
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
-    map.getContainer().style.cursor = werkzeug
+    map.getCanvas().style.cursor = werkzeug
       ? (werkzeug.typ === 'linie' || werkzeug.typ === 'zone' ? 'crosshair' : 'copy')
       : ''
   }, [werkzeug])
@@ -540,40 +445,44 @@ function PlanspielAktiv({ session, kannLeiten, onBack }) {
     } else if (werkzeug.typ === 'zone' && zeichnePunkte.length >= 3) {
       setKarte(k => ({ ...k, zonen: [...k.zonen, { id, typ: werkzeug.subtyp, punkte: zeichnePunkte }] }))
     }
-    if (vorschauRef.current) { vorschauRef.current.remove(); vorschauRef.current = null }
+    const map = mapRef.current
+    if (map) clearVorschau(map)
     setZeichnePunkte([])
     setWerkzeug(null)
   }
 
   function zeichnenAbbrechen() {
-    if (vorschauRef.current) { vorschauRef.current.remove(); vorschauRef.current = null }
+    const map = mapRef.current
+    if (map) clearVorschau(map)
     setZeichnePunkte([])
     setWerkzeug(null)
   }
 
+  function letztesElementLoeschen() {
+    setKarte(k => k.elemente.length ? { ...k, elemente: k.elemente.slice(0, -1) } : k)
+  }
+
+  function elementDrehen(id, delta) {
+    setKarte(k => ({
+      ...k,
+      elemente: k.elemente.map(x => x.id !== id ? x : { ...x, heading: ((x.heading ?? 0) + delta + 360) % 360 }),
+    }))
+  }
+
   function letzteLinieLoeschen() {
-    setKarte(k => {
-      if (!k.linien.length) return k
-      const id = k.linien[k.linien.length - 1].id
-      linienRefs.current[id]?.remove(); delete linienRefs.current[id]
-      return { ...k, linien: k.linien.slice(0, -1) }
-    })
+    setKarte(k => k.linien.length ? { ...k, linien: k.linien.slice(0, -1) } : k)
   }
 
   function letzteZoneLoeschen() {
-    setKarte(k => {
-      if (!k.zonen.length) return k
-      const id = k.zonen[k.zonen.length - 1].id
-      zonenRefs.current[id]?.remove(); delete zonenRefs.current[id]
-      return { ...k, zonen: k.zonen.slice(0, -1) }
-    })
+    setKarte(k => k.zonen.length ? { ...k, zonen: k.zonen.slice(0, -1) } : k)
   }
 
   function alleLoeschen() {
     if (!confirm('Alle Elemente auf der Karte löschen?')) return
     Object.values(markerRefs.current).forEach(m => m.remove()); markerRefs.current = {}
-    Object.values(linienRefs.current).forEach(m => m.remove()); linienRefs.current = {}
-    Object.values(zonenRefs.current).forEach(m => m.remove()); zonenRefs.current = {}
+    fxRef.current?.setVehicles([])
+    fxRef.current?.setPersonen([])
+    fxRef.current?.setBrandherde([])
     setKarte({ elemente: [], linien: [], zonen: [] })
   }
 
@@ -613,7 +522,9 @@ function PlanspielAktiv({ session, kannLeiten, onBack }) {
   async function speichern(abschliessen = false) {
     setSaving(true)
     const map = mapRef.current
-    const center = map ? { lng: map.getCenter().lng, lat: map.getCenter().lat, zoom: map.getZoom() } : session.map_center
+    const center = map
+      ? { lng: map.getCenter().lng, lat: map.getCenter().lat, zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() }
+      : session.map_center
     // karte direkt aus State (nicht karteRef) um Race-Conditions zu vermeiden
     await supabase.from('planspiel_sessions').update({
       kartenzustand: karte,
@@ -800,9 +711,15 @@ function PlanspielAktiv({ session, kannLeiten, onBack }) {
                     {karte.elemente.length === 0
                       ? <p style={{ fontSize: 12, color: 'var(--gray-400)' }}>Noch keine Elemente platziert</p>
                       : karte.elemente.map(el => (
-                        <div key={el.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', borderRadius: 6, background: 'var(--gray-50)', marginBottom: 4 }}>
+                        <div key={el.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', borderRadius: 6, background: 'var(--gray-50)', marginBottom: 4 }}>
                           <span style={{ fontSize: 16 }}>{elEmoji(el)}</span>
                           <span style={{ fontSize: 12, color: 'var(--gray-700)', flex: 1 }}>{elName(el)}</span>
+                          {kannLeiten && !istAbgeschlossen && ist3DFahrzeug(el) && (
+                            <>
+                              <button onClick={() => elementDrehen(el.id, -15)} title="Nach links drehen" style={{ background: 'none', border: '1px solid var(--gray-300)', borderRadius: 4, cursor: 'pointer', color: 'var(--gray-500)', fontSize: 12, width: 22, height: 22, lineHeight: 1 }}>⟲</button>
+                              <button onClick={() => elementDrehen(el.id, 15)} title="Nach rechts drehen" style={{ background: 'none', border: '1px solid var(--gray-300)', borderRadius: 4, cursor: 'pointer', color: 'var(--gray-500)', fontSize: 12, width: 22, height: 22, lineHeight: 1 }}>⟳</button>
+                            </>
+                          )}
                           {kannLeiten && !istAbgeschlossen && (
                             <button onClick={() => setKarte(k => ({ ...k, elemente: k.elemente.filter(x => x.id !== el.id) }))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--red)', fontSize: 14 }}>✕</button>
                           )}
@@ -811,6 +728,7 @@ function PlanspielAktiv({ session, kannLeiten, onBack }) {
                     }
                     {kannLeiten && !istAbgeschlossen && (karte.linien?.length > 0 || karte.zonen?.length > 0 || karte.elemente?.length > 0) && (
                       <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {karte.elemente?.length > 0 && <button className="btn btn-sm btn-secondary" style={{ fontSize: 11 }} onClick={letztesElementLoeschen}>↩ Letztes Element löschen</button>}
                         {karte.linien?.length > 0 && <button className="btn btn-sm btn-secondary" style={{ fontSize: 11 }} onClick={letzteLinieLoeschen}>↩ Letzte Linie löschen</button>}
                         {karte.zonen?.length > 0 && <button className="btn btn-sm btn-secondary" style={{ fontSize: 11 }} onClick={letzteZoneLoeschen}>↩ Letzte Zone löschen</button>}
                         <button className="btn btn-sm btn-danger" style={{ fontSize: 11 }} onClick={alleLoeschen}>🗑 Alles löschen</button>
@@ -881,24 +799,6 @@ function WerkzeugButton({ aktiv, onClick, label, emoji, color }) {
       <span>{label}</span>
     </button>
   )
-}
-
-function elEmoji(el) {
-  if (el.typ === 'fahrzeug') return FAHRZEUG_TYPEN.find(f => f.id === el.subtyp)?.emoji ?? '🚒'
-  if (el.typ === 'trupp')   return TRUPP_TYPEN.find(t => t.id === el.subtyp)?.emoji ?? '🧑‍🚒'
-  return PUNKT_TYPEN.find(p => p.id === el.subtyp)?.emoji ?? '📍'
-}
-
-function elName(el) {
-  if (el.typ === 'fahrzeug') return FAHRZEUG_TYPEN.find(f => f.id === el.subtyp)?.name ?? el.subtyp
-  if (el.typ === 'trupp')   return TRUPP_TYPEN.find(t => t.id === el.subtyp)?.name ?? el.subtyp
-  return PUNKT_TYPEN.find(p => p.id === el.subtyp)?.name ?? el.subtyp
-}
-
-function elFarbe(el) {
-  if (el.typ === 'fahrzeug') return FAHRZEUG_TYPEN.find(f => f.id === el.subtyp)?.farbe ?? '#DC2626'
-  if (el.typ === 'trupp')   return TRUPP_TYPEN.find(t => t.id === el.subtyp)?.farbe ?? '#DC2626'
-  return PUNKT_TYPEN.find(p => p.id === el.subtyp)?.farbe ?? '#DC2626'
 }
 
 function elNameVonWerkzeug(w) {

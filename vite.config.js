@@ -6,4 +6,7 @@ export default defineConfig({
   resolve: {
     dedupe: ['react', 'react-dom'],
   },
+  optimizeDeps: {
+    exclude: ['maplibre-gl'],
+  },
 })

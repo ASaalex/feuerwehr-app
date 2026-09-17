@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import L from 'leaflet'
-import 'leaflet/dist/leaflet.css'
+import { Marker } from 'maplibre-gl'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { format } from 'date-fns'
 import { de } from 'date-fns/locale'
+import { PUNKT_TYPEN, ZONE_TYPEN, elEmoji, elFarbe } from '../lib/planspielTypen'
+import {
+  erstelleKarte, fx3DElementeSynchronisieren, setZonenDaten, setLinienDaten,
+  setVorschauZone, clearVorschau, ist3DFahrzeug,
+} from '../lib/planspiel3d'
 
 const KATEGORIEN = [
   { value: 'verkehrsunfall',          label: 'Verkehrsunfall',         icon: '🚗' },
@@ -25,23 +29,6 @@ const WETTER_LAGEN = ['Sonnig', 'Leicht bewölkt', 'Bewölkt', 'Bedeckt', 'Regen
 const WINDRICHTUNGEN = ['N', 'NO', 'O', 'SO', 'S', 'SW', 'W', 'NW']
 const WINDSTAERKEN = ['Windstille', 'Schwacher Wind', 'Mäßiger Wind', 'Frischer Wind', 'Starker Wind', 'Sturm']
 
-const OBJEKT_TYPEN = [
-  { id: 'brandherd',   name: 'Brandherd',    emoji: '🔥', farbe: '#DC2626' },
-  { id: 'pkw',         name: 'PKW',          emoji: '🚗', farbe: '#6B7280' },
-  { id: 'lkw',         name: 'LKW',          emoji: '🚛', farbe: '#374151' },
-  { id: 'person',      name: 'Person/Opfer', emoji: '👤', farbe: '#7C3AED' },
-  { id: 'gefahrstoff', name: 'Gefahrstoff',  emoji: '☢️', farbe: '#F59E0B' },
-  { id: 'hydrant',     name: 'Hydrant',      emoji: '💧', farbe: '#2563EB' },
-  { id: 'verteiler',   name: 'Verteiler',    emoji: '🔵', farbe: '#0891B2' },
-  { id: 'pin',         name: 'Markierung',   emoji: '📍', farbe: '#DC2626' },
-]
-
-const SZ_ZONE_TYPEN = [
-  { id: 'absperrung',    name: 'Absperrbereich', farbe: '#DC2626', fill: 0.15, dash: false },
-  { id: 'bereitstellung',name: 'Bereitstellung',  farbe: '#D97706', fill: 0.15, dash: false },
-  { id: 'rauch',         name: 'Rauchsäule',      farbe: '#6B7280', fill: 0.3,  dash: true  },
-  { id: 'fluessigkeit',  name: 'Auslauffläche',   farbe: '#92400E', fill: 0.3,  dash: true  },
-]
 
 const DEFAULT_PHASEN = [
   { id: 'wache',         name: 'Wache',         emoji: '🏠', checkpunkte: [
@@ -93,17 +80,31 @@ const LEER_FORM = {
 
 // ─── Karten-Editor ────────────────────────────────────────────────────────────
 
+// Alte Vorlagen (Leaflet-Editor) speicherten Elemente als {id, typ, koord:[lng,lat]}
+// und Zonenpunkte als [lat,lng]. Für die Anzeige hier auf das aktuelle Planspiel-Format bringen.
+function migriereElement(e) {
+  if (e.position) return { heading: 0, ...e }
+  return { id: e.id, typ: 'punkt', subtyp: e.typ, position: e.koord, heading: 0 }
+}
+function migriereZone(z) {
+  const erster = z.punkte?.[0]
+  if (!erster) return z
+  // In Deutschland liegt die Breite (lat) deutlich über 40, die Länge (lng) deutlich darunter –
+  // damit altes [lat,lng] von neuem [lng,lat] unterscheiden.
+  const istAltesFormat = Math.abs(erster[0]) > 40
+  return istAltesFormat ? { ...z, punkte: z.punkte.map(([lat, lng]) => [lng, lat]) } : z
+}
+
 function SzMapEditor({ initialPosition, initialVorgabe, onChange, visible }) {
   const mapRef = useRef(null)
-  const layersRef = useRef([])
+  const fxRef = useRef(null)
+  const markerRefs = useRef({})
   const posMarkerRef = useRef(null)
-  const zoneVerticesRef = useRef([])
-  const zonePreviewRef = useRef(null)
-  const zoneVertexMarkersRef = useRef([])
 
-  const [elemente, setElemente] = useState(initialVorgabe?.elemente ?? [])
-  const [zonen, setZonen] = useState(initialVorgabe?.zonen ?? [])
-  const [werkzeug, setWerkzeug] = useState('position')
+  const [elemente, setElemente] = useState(() => (initialVorgabe?.elemente ?? []).map(migriereElement))
+  const [zonen, setZonen] = useState(() => (initialVorgabe?.zonen ?? []).map(migriereZone))
+  const [werkzeug, setWerkzeug] = useState(null) // null | 'position' | {typ:'punkt',subtyp} | {typ:'zone',subtyp}
+  const [zeichnePunkte, setZeichnePunkte] = useState([])
   const [position, setPosition] = useState(initialPosition)
 
   const elementeRef = useRef(elemente)
@@ -116,155 +117,188 @@ function SzMapEditor({ initialPosition, initialVorgabe, onChange, visible }) {
 
   useEffect(() => {
     if (visible && mapRef.current) {
-      setTimeout(() => mapRef.current?.invalidateSize(), 50)
+      setTimeout(() => mapRef.current?.resize(), 50)
     }
   }, [visible])
 
   const mapContainer = useCallback((node) => {
-    if (!node || mapRef.current) return
-    const startPos = initialPosition ? [initialPosition.lat, initialPosition.lng] : [51.1657, 10.4515]
-    const startZoom = initialPosition?.zoom ?? 13
-    const map = L.map(node).setView(startPos, startZoom)
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap contributors',
-    }).addTo(map)
+    // Ref-Callback statt useEffect fürs Aufräumen: React 18 StrictMode ruft einen separaten
+    // Cleanup-Effect im Dev-Modus doppelt auf und würde die Karte sofort nach dem Erzeugen wieder
+    // zerstören, ohne dass der Ref erneut aufgerufen wird. An den Ref-Lebenszyklus gekoppelt
+    // passiert das nicht.
+    if (!node) {
+      if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; fxRef.current = null }
+      return
+    }
+    if (mapRef.current) return
+    const center = initialPosition ?? { lng: 10.4515, lat: 51.1657, zoom: 13 }
+    const { map, fx } = erstelleKarte(node, center)
+    mapRef.current = map
+    fxRef.current = fx
 
-    map.on('click', (e) => {
-      const { latlng } = e
-      const wz = werkzeugRef.current
-
-      if (wz === 'position') {
-        const newPos = { lng: latlng.lng, lat: latlng.lat, zoom: map.getZoom() }
-        setPosition(newPos)
-        onChange({ kartenposition: newPos })
-        return
-      }
-
-      if (wz.startsWith('zone:')) {
-        const newVerts = [...zoneVerticesRef.current, [latlng.lat, latlng.lng]]
-        zoneVerticesRef.current = newVerts
-        const vm = L.circleMarker([latlng.lat, latlng.lng], {
-          radius: 4, color: '#374151', fillColor: '#374151', fillOpacity: 1,
-        }).addTo(map)
-        zoneVertexMarkersRef.current.push(vm)
-        if (zonePreviewRef.current) map.removeLayer(zonePreviewRef.current)
-        if (newVerts.length >= 2) {
-          const zoneId = wz.replace('zone:', '')
-          const typ = SZ_ZONE_TYPEN.find(z => z.id === zoneId)
-          zonePreviewRef.current = L.polygon(newVerts, {
-            color: typ?.farbe ?? '#666', fillOpacity: typ?.fill ?? 0.2,
-            dashArray: typ?.dash ? '8 6' : null, weight: 2, interactive: false,
-          }).addTo(map)
-        }
-        return
-      }
-
-      const typ = OBJEKT_TYPEN.find(t => t.id === wz)
-      if (!typ) return
-      const el = { id: String(Date.now()) + String(Math.random()), typ: typ.id, koord: [latlng.lng, latlng.lat] }
-      setElemente(prev => {
-        const next = [...prev, el]
-        onChange({ kartenvorgabe: { elemente: next, zonen: zonenRef.current } })
-        return next
-      })
+    map.on('style.load', () => {
+      fx3DElementeSynchronisieren(fx, elementeRef.current, elFarbe)
+      setZonenDaten(map, zonenRef.current)
+      setLinienDaten(map, [])
     })
 
-    mapRef.current = map
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    map.on('click', (e) => {
+      const wz = werkzeugRef.current
+      if (!wz) return
+      const pos = [e.lngLat.lng, e.lngLat.lat]
 
-  // Position-Marker
-  useEffect(() => {
-    const map = mapRef.current
-    if (!map) return
-    if (posMarkerRef.current) { map.removeLayer(posMarkerRef.current); posMarkerRef.current = null }
-    if (position) {
-      const icon = L.divIcon({
-        html: '<div style="width:16px;height:16px;border-radius:50%;background:#3B82F6;border:3px solid white;box-shadow:0 0 0 2px #3B82F6"></div>',
-        className: '', iconSize: [16, 16], iconAnchor: [8, 8],
-      })
-      posMarkerRef.current = L.marker([position.lat, position.lng], { icon, interactive: false }).addTo(map)
-    }
-  }, [position])
+      if (wz === 'position') {
+        const neu = { lng: pos[0], lat: pos[1], zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() }
+        setPosition(neu)
+        onChange({ kartenposition: neu })
+        return
+      }
 
-  // Objekte & Zonen rendern
-  useEffect(() => {
-    const map = mapRef.current
-    if (!map) return
-    layersRef.current.forEach(l => map.removeLayer(l))
-    layersRef.current = []
-
-    elemente.forEach(el => {
-      const typ = OBJEKT_TYPEN.find(t => t.id === el.typ)
-      if (!typ) return
-      const icon = L.divIcon({
-        html: `<div style="font-size:22px;line-height:1;cursor:pointer">${typ.emoji}</div>`,
-        className: '', iconSize: [28, 28], iconAnchor: [14, 14],
-      })
-      const marker = L.marker([el.koord[1], el.koord[0]], { icon })
-      marker.on('click', (e) => {
-        L.DomEvent.stopPropagation(e)
+      if (wz.typ === 'punkt') {
+        const id = crypto.randomUUID()
         setElemente(prev => {
-          const next = prev.filter(x => x.id !== el.id)
+          const next = [...prev, { id, typ: 'punkt', subtyp: wz.subtyp, position: pos, heading: 0 }]
           onChange({ kartenvorgabe: { elemente: next, zonen: zonenRef.current } })
           return next
         })
-      })
-      marker.addTo(map)
-      layersRef.current.push(marker)
-    })
+        return
+      }
 
-    zonen.forEach(zone => {
-      const typ = SZ_ZONE_TYPEN.find(z => z.id === zone.typ)
-      const poly = L.polygon(zone.punkte, {
-        color: typ?.farbe ?? '#666', fillOpacity: typ?.fill ?? 0.2,
-        dashArray: typ?.dash ? '8 6' : null, weight: 2,
-      })
-      poly.on('click', (e) => {
-        L.DomEvent.stopPropagation(e)
-        setZonen(prev => {
-          const next = prev.filter(z => z.id !== zone.id)
-          onChange({ kartenvorgabe: { elemente: elementeRef.current, zonen: next } })
-          return next
+      if (wz.typ === 'zone') {
+        setZeichnePunkte(pp => [...pp, pos])
+      }
+    })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Positions-Marker (Startblickwinkel der Übung)
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    if (posMarkerRef.current) { posMarkerRef.current.remove(); posMarkerRef.current = null }
+    if (position) {
+      const el = document.createElement('div')
+      el.style.cssText = 'width:16px;height:16px;border-radius:50%;background:#3B82F6;border:3px solid white;box-shadow:0 0 0 2px #3B82F6;'
+      posMarkerRef.current = new Marker({ element: el }).setLngLat([position.lng, position.lat]).addTo(map)
+    }
+  }, [position])
+
+  // Objekt-Marker (2D-Pille, ziehbar; Doppelklick löscht)
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    const aktuelleIds = new Set(elemente.map(e => e.id))
+    Object.entries(markerRefs.current).forEach(([id, m]) => {
+      if (!aktuelleIds.has(id)) { m.remove(); delete markerRefs.current[id] }
+    })
+    elemente.forEach(el => {
+      if (!markerRefs.current[el.id]) {
+        const el2 = document.createElement('div')
+        el2.style.cssText = `background:${elFarbe(el)};color:white;border-radius:6px;padding:3px 7px;font-size:16px;cursor:grab;box-shadow:0 2px 6px rgba(0,0,0,0.4);border:2px solid white;user-select:none;`
+        el2.innerHTML = `<span>${elEmoji(el)}</span>`
+        const marker = new Marker({ element: el2, draggable: true, anchor: 'top-left' }).setLngLat(el.position).addTo(map)
+        marker.on('dragend', () => {
+          const { lng, lat } = marker.getLngLat()
+          setElemente(prev => {
+            const next = prev.map(x => x.id === el.id ? { ...x, position: [lng, lat] } : x)
+            onChange({ kartenvorgabe: { elemente: next, zonen: zonenRef.current } })
+            return next
+          })
         })
-      })
-      poly.addTo(map)
-      layersRef.current.push(poly)
+        el2.addEventListener('dblclick', (e) => {
+          e.stopPropagation()
+          elementLoeschen(el.id)
+        })
+        markerRefs.current[el.id] = marker
+      } else {
+        markerRefs.current[el.id].setLngLat(el.position)
+      }
     })
-  }, [elemente, zonen]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [elemente]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  function schliesseZone() {
-    const verts = zoneVerticesRef.current
-    if (verts.length < 3) return alert('Mindestens 3 Punkte für eine Zone.')
-    const zoneId = werkzeug.replace('zone:', '')
-    const zone = { id: String(Date.now()), typ: zoneId, punkte: verts }
-    if (zonePreviewRef.current) { mapRef.current?.removeLayer(zonePreviewRef.current); zonePreviewRef.current = null }
-    zoneVertexMarkersRef.current.forEach(m => mapRef.current?.removeLayer(m))
-    zoneVertexMarkersRef.current = []
-    zoneVerticesRef.current = []
+  // 3D-Fahrzeuge/-Modelle synchron halten
+  useEffect(() => {
+    const fx = fxRef.current
+    if (!fx || !fx.scene) return
+    fx3DElementeSynchronisieren(fx, elemente, elFarbe)
+  }, [elemente])
+
+  // Zonen rendern
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !map.getSource('planspiel-zonen')) return
+    setZonenDaten(map, zonen)
+  }, [zonen])
+
+  // Zeichnungsvorschau
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !map.getSource('planspiel-vorschau-zone')) return
+    if (!werkzeug || werkzeug.typ !== 'zone' || zeichnePunkte.length < 3) { clearVorschau(map); return }
+    setVorschauZone(map, zeichnePunkte, werkzeug.subtyp)
+  }, [zeichnePunkte, werkzeug])
+
+  // Cursor
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    map.getCanvas().style.cursor = werkzeug ? (werkzeug === 'position' || werkzeug.typ === 'zone' ? 'crosshair' : 'copy') : ''
+  }, [werkzeug])
+
+  function zoneFertig() {
+    if (!werkzeug || werkzeug.typ !== 'zone' || zeichnePunkte.length < 3) return
+    const id = crypto.randomUUID()
     setZonen(prev => {
-      const next = [...prev, zone]
+      const next = [...prev, { id, typ: werkzeug.subtyp, punkte: zeichnePunkte }]
+      onChange({ kartenvorgabe: { elemente: elementeRef.current, zonen: next } })
+      return next
+    })
+    clearVorschau(mapRef.current)
+    setZeichnePunkte([])
+    setWerkzeug(null)
+  }
+
+  function zeichnenAbbrechen() {
+    clearVorschau(mapRef.current)
+    setZeichnePunkte([])
+    setWerkzeug(null)
+  }
+
+  function elementDrehen(id, delta) {
+    setElemente(prev => {
+      const next = prev.map(x => x.id !== id ? x : { ...x, heading: ((x.heading ?? 0) + delta + 360) % 360 })
+      onChange({ kartenvorgabe: { elemente: next, zonen: zonenRef.current } })
+      return next
+    })
+  }
+
+  function elementLoeschen(id) {
+    setElemente(prev => {
+      const next = prev.filter(x => x.id !== id)
+      onChange({ kartenvorgabe: { elemente: next, zonen: zonenRef.current } })
+      return next
+    })
+  }
+
+  function zoneLoeschen(id) {
+    setZonen(prev => {
+      const next = prev.filter(z => z.id !== id)
       onChange({ kartenvorgabe: { elemente: elementeRef.current, zonen: next } })
       return next
     })
   }
 
-  function clearZoneInProgress() {
-    if (zonePreviewRef.current) { mapRef.current?.removeLayer(zonePreviewRef.current); zonePreviewRef.current = null }
-    zoneVertexMarkersRef.current.forEach(m => mapRef.current?.removeLayer(m))
-    zoneVertexMarkersRef.current = []
-    zoneVerticesRef.current = []
-  }
-
   function loescheAlles() {
-    layersRef.current.forEach(l => mapRef.current?.removeLayer(l))
-    layersRef.current = []
-    clearZoneInProgress()
+    if (!confirm('Alle Objekte und Zonen löschen?')) return
+    Object.values(markerRefs.current).forEach(m => m.remove()); markerRefs.current = {}
+    fxRef.current?.setVehicles([])
+    fxRef.current?.setPersonen([])
+    fxRef.current?.setBrandherde([])
     setElemente([])
     setZonen([])
     onChange({ kartenvorgabe: { elemente: [], zonen: [] } })
   }
 
-  const istZoneModus = werkzeug.startsWith('zone:')
+  const istZoneModus = werkzeug?.typ === 'zone'
 
   return (
     <div>
@@ -277,23 +311,23 @@ function SzMapEditor({ initialPosition, initialVorgabe, onChange, visible }) {
           🎯 Position
         </button>
         <span style={{ color: 'var(--gray-300)', fontSize: 11 }}>│</span>
-        {OBJEKT_TYPEN.map(t => (
+        {PUNKT_TYPEN.map(t => (
           <button
             key={t.id}
             type="button"
-            onClick={() => setWerkzeug(t.id)}
-            className={werkzeug === t.id ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm'}
+            onClick={() => setWerkzeug({ typ: 'punkt', subtyp: t.id })}
+            className={werkzeug?.subtyp === t.id ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm'}
           >
             {t.emoji} {t.name}
           </button>
         ))}
         <span style={{ color: 'var(--gray-300)', fontSize: 11 }}>│</span>
-        {SZ_ZONE_TYPEN.map(z => (
+        {ZONE_TYPEN.map(z => (
           <button
             key={z.id}
             type="button"
-            onClick={() => { clearZoneInProgress(); setWerkzeug('zone:' + z.id) }}
-            className={werkzeug === 'zone:' + z.id ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm'}
+            onClick={() => { setZeichnePunkte([]); setWerkzeug({ typ: 'zone', subtyp: z.id }) }}
+            className={werkzeug?.typ === 'zone' && werkzeug.subtyp === z.id ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm'}
           >
             {z.name}
           </button>
@@ -301,13 +335,14 @@ function SzMapEditor({ initialPosition, initialVorgabe, onChange, visible }) {
       </div>
 
       {istZoneModus && (
-        <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', background: '#FEF9EC', borderRadius: 6, border: '1px solid #FCD34D', fontSize: 13 }}>
-          <span>Punkte auf Karte klicken, dann</span>
-          <button type="button" className="btn btn-primary btn-sm" onClick={schliesseZone}>Zone schließen ↩</button>
+        <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', background: '#FEF9EC', borderRadius: 6, border: '1px solid #FCD34D', fontSize: 13, flexWrap: 'wrap' }}>
+          <span>Punkte auf Karte klicken{zeichnePunkte.length ? ` (${zeichnePunkte.length} gesetzt)` : ''}, dann</span>
+          <button type="button" className="btn btn-primary btn-sm" onClick={zoneFertig} disabled={zeichnePunkte.length < 3}>Zone schließen ↩</button>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={zeichnenAbbrechen}>✕ Abbrechen</button>
         </div>
       )}
 
-      <div ref={mapContainer} style={{ height: 380, borderRadius: 8, border: '1px solid var(--gray-200)' }} />
+      <div ref={mapContainer} style={{ height: 420, borderRadius: 8, border: '1px solid var(--gray-200)' }} />
 
       <div style={{ marginTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, color: 'var(--gray-400)' }}>
         <span>
@@ -324,13 +359,38 @@ function SzMapEditor({ initialPosition, initialVorgabe, onChange, visible }) {
         )}
       </div>
 
-      <div style={{ marginTop: 4, fontSize: 12, color: 'var(--gray-400)' }}>
+      {(elemente.length > 0 || zonen.length > 0) && (
+        <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 160, overflowY: 'auto' }}>
+          {elemente.map(el => (
+            <div key={el.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', borderRadius: 6, background: 'var(--gray-50)', fontSize: 12 }}>
+              <span>{elEmoji(el)}</span>
+              <span style={{ flex: 1, color: 'var(--gray-700)' }}>{PUNKT_TYPEN.find(p => p.id === el.subtyp)?.name ?? el.subtyp}</span>
+              {ist3DFahrzeug(el) && (
+                <>
+                  <button type="button" onClick={() => elementDrehen(el.id, -15)} title="Nach links drehen" style={{ background: 'none', border: '1px solid var(--gray-300)', borderRadius: 4, cursor: 'pointer', width: 22, height: 22, lineHeight: 1 }}>⟲</button>
+                  <button type="button" onClick={() => elementDrehen(el.id, 15)} title="Nach rechts drehen" style={{ background: 'none', border: '1px solid var(--gray-300)', borderRadius: 4, cursor: 'pointer', width: 22, height: 22, lineHeight: 1 }}>⟳</button>
+                </>
+              )}
+              <button type="button" onClick={() => elementLoeschen(el.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--red)' }}>✕</button>
+            </div>
+          ))}
+          {zonen.map(z => (
+            <div key={z.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', borderRadius: 6, background: 'var(--gray-50)', fontSize: 12 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 2, background: ZONE_TYPEN.find(t => t.id === z.typ)?.farbe, display: 'inline-block' }} />
+              <span style={{ flex: 1, color: 'var(--gray-700)' }}>{ZONE_TYPEN.find(t => t.id === z.typ)?.name ?? z.typ}</span>
+              <button type="button" onClick={() => zoneLoeschen(z.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--red)' }}>✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ marginTop: 8, fontSize: 12, color: 'var(--gray-400)' }}>
         💡{' '}
         {werkzeug === 'position'
-          ? 'Klick auf Karte setzt die Einsatzposition (blauer Punkt). Die Übungskarte wird darauf zentriert.'
+          ? 'Klick auf Karte setzt die Einsatzposition (blauer Punkt) inkl. aktuellem Blickwinkel – die Übung startet später genau so.'
           : istZoneModus
-          ? 'Eckpunkte anklicken, dann „Zone schließen". Klick auf Zone entfernt sie.'
-          : 'Klick auf Karte platziert das Objekt. Klick auf ein Objekt entfernt es wieder.'}
+          ? 'Eckpunkte anklicken, dann „Zone schließen".'
+          : 'Klick auf Karte platziert das Objekt. Ziehen verschiebt es, Doppelklick löscht es.'}
       </div>
     </div>
   )
@@ -495,6 +555,7 @@ export default function SzenarienAdminPage() {
   const [tab, setTab] = useState('basis')
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
+  const [msgArt, setMsgArt] = useState('success')
 
   // Standard-Phasen
   const [standardPhasen, setStandardPhasen] = useState(null)
@@ -504,14 +565,26 @@ export default function SzenarienAdminPage() {
   const [stdDirty, setStdDirty] = useState(false)
   const [stdCloseConfirm, setStdCloseConfirm] = useState(false)
   const stdOriginalRef = useRef(null)
+  // Admins (Gemeindebrandmeister) haben keine eigene Wehr und müssen sie zum Bearbeiten auswählen
+  const istWehrAuswahlNoetig = !profile.wehr_id
+  const [wehrenListe, setWehrenListe] = useState([])
+  const [stdWehrId, setStdWehrId] = useState(profile.wehr_id ?? '')
 
-  useEffect(() => { ladeSzenarien(); ladeStandardPhasen() }, [])
+  useEffect(() => {
+    ladeSzenarien()
+    if (istWehrAuswahlNoetig) {
+      supabase.from('wehren').select('id,name').order('name').then(({ data }) => setWehrenListe(data ?? []))
+    } else {
+      ladeStandardPhasen(profile.wehr_id)
+    }
+  }, [])
 
-  async function ladeStandardPhasen() {
+  async function ladeStandardPhasen(wehrId) {
+    if (!wehrId) { setStandardPhasen(null); return }
     const { data } = await supabase
       .from('planspiel_config')
       .select('standard_phasen')
-      .eq('wehr_id', profile.wehr_id)
+      .eq('wehr_id', wehrId)
       .maybeSingle()
     setStandardPhasen(data?.standard_phasen ?? null)
   }
@@ -546,16 +619,28 @@ export default function SzenarienAdminPage() {
   }
 
   async function speichereStandard() {
+    const wehrId = stdWehrId || profile.wehr_id
+    if (!wehrId) return
     setStdSaving(true)
-    await supabase.from('planspiel_config').upsert(
-      { wehr_id: profile.wehr_id, standard_phasen: stdPhasen },
+    const { error } = await supabase.from('planspiel_config').upsert(
+      { wehr_id: wehrId, standard_phasen: stdPhasen },
       { onConflict: 'wehr_id' }
     )
-    setStandardPhasen(stdPhasen)
+    if (error) {
+      console.error('Standard-Phasen speichern fehlgeschlagen:', error)
+      setStdSaving(false)
+      setMsgArt('error')
+      setMsg('Fehler beim Speichern: ' + error.message)
+      setTimeout(() => setMsg(''), 6000)
+      return
+    }
+    // Aus der DB neu laden statt nur lokal zu übernehmen, damit ein evtl. Fehlschlag sofort sichtbar wäre
+    await ladeStandardPhasen(wehrId)
     setStdModal(false)
     setStdDirty(false)
     setStdCloseConfirm(false)
     setStdSaving(false)
+    setMsgArt('success')
     setMsg('Standard-Phasen gespeichert.')
     setTimeout(() => setMsg(''), 3000)
   }
@@ -572,7 +657,10 @@ export default function SzenarienAdminPage() {
 
   function oeffneNeu() {
     setEditId(null)
-    setForm(LEER_FORM)
+    // Als Ausgangspunkt die eigenen Standard-Phasen übernehmen (nicht die generischen Platzhalter),
+    // damit ein neues Szenario ohne weitere Bearbeitung dieselben Phasen wie die eigene Wache nutzt.
+    const startPhasen = standardPhasen ? JSON.parse(JSON.stringify(standardPhasen)) : leerPhasen()
+    setForm({ ...LEER_FORM, phasen: startPhasen })
     setTab('basis')
     setModal(true)
   }
@@ -616,14 +704,21 @@ export default function SzenarienAdminPage() {
       phasen:             form.phasen,
     }
 
-    if (editId) {
-      await supabase.from('szenarien').update(payload).eq('id', editId)
-      setMsg('Szenario gespeichert.')
-    } else {
-      await supabase.from('szenarien').insert({ ...payload, erstellt_von: profile.id })
-      setMsg('Szenario angelegt.')
+    const { error } = editId
+      ? await supabase.from('szenarien').update(payload).eq('id', editId)
+      : await supabase.from('szenarien').insert({ ...payload, erstellt_von: profile.id })
+
+    if (error) {
+      console.error('Szenario speichern fehlgeschlagen:', error)
+      setSaving(false)
+      setMsgArt('error')
+      setMsg('Fehler beim Speichern: ' + error.message)
+      setTimeout(() => setMsg(''), 6000)
+      return
     }
 
+    setMsgArt('success')
+    setMsg(editId ? 'Szenario gespeichert.' : 'Szenario angelegt.')
     await ladeSzenarien()
     setModal(false)
     setSaving(false)
@@ -668,7 +763,7 @@ export default function SzenarienAdminPage() {
         </button>
       </div>
 
-      {msg && <div className="alert alert-success">{msg}</div>}
+      {msg && <div className={`alert alert-${msgArt}`}>{msg}</div>}
 
       {/* Standard-Phasen */}
       <div className="card" style={{ marginBottom: 20, display: 'flex', alignItems: 'flex-start', gap: 14, padding: '14px 16px' }}>
@@ -676,15 +771,32 @@ export default function SzenarienAdminPage() {
         <div style={{ flex: 1 }}>
           <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--gray-700)', marginBottom: 4 }}>Standard-Phasen</div>
           <div style={{ fontSize: 12, color: 'var(--gray-400)', lineHeight: 1.5 }}>
-            {standardPhasen
-              ? standardPhasen.map(p => `${p.emoji ?? ''} ${p.name}`).join(' · ')
-              : leerPhasen().map(p => `${p.emoji} ${p.name}`).join(' · ')}
+            {istWehrAuswahlNoetig && !stdWehrId
+              ? 'Bitte zuerst eine Wehr auswählen.'
+              : standardPhasen
+                ? standardPhasen.map(p => `${p.emoji ?? ''} ${p.name}`).join(' · ')
+                : leerPhasen().map(p => `${p.emoji} ${p.name}`).join(' · ')}
           </div>
           <div style={{ fontSize: 11, color: 'var(--gray-400)', marginTop: 4 }}>
             Werden verwendet wenn ein Szenario keine eigenen Phasen definiert.
           </div>
         </div>
-        <button className="btn btn-sm btn-secondary" onClick={oeffneStdModal} style={{ flexShrink: 0 }}>
+        {istWehrAuswahlNoetig && (
+          <select
+            value={stdWehrId}
+            onChange={e => { const id = e.target.value; setStdWehrId(id); ladeStandardPhasen(id) }}
+            style={{ fontSize: 12, padding: '6px 10px' }}
+          >
+            <option value="">– Wehr wählen –</option>
+            {wehrenListe.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+          </select>
+        )}
+        <button
+          className="btn btn-sm btn-secondary"
+          onClick={oeffneStdModal}
+          disabled={istWehrAuswahlNoetig && !stdWehrId}
+          style={{ flexShrink: 0 }}
+        >
           ✏️ Bearbeiten
         </button>
       </div>
@@ -741,6 +853,8 @@ export default function SzenarienAdminPage() {
               <h3>{editId ? 'Szenario bearbeiten' : 'Neues Szenario anlegen'}</h3>
               <button className="btn btn-ghost btn-sm" onClick={() => setModal(false)}>✕</button>
             </div>
+
+            {msg && <div className={`alert alert-${msgArt}`} style={{ marginBottom: 16 }}>{msg}</div>}
 
             {/* Tabs */}
             <div style={{ display: 'flex', borderBottom: '1px solid var(--gray-200)', marginBottom: 20 }}>
@@ -905,9 +1019,17 @@ export default function SzenarienAdminPage() {
         <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && stdVersuchtSchliessen()}>
           <div className="modal" style={{ maxWidth: 680, maxHeight: '90vh', overflowY: 'auto' }}>
             <div className="modal-header">
-              <h3>Standard-Phasen bearbeiten</h3>
+              <h3>
+                Standard-Phasen bearbeiten
+                {istWehrAuswahlNoetig && stdWehrId && (
+                  <span style={{ fontWeight: 400, fontSize: 13, color: 'var(--gray-400)' }}>
+                    {' '}– {wehrenListe.find(w => w.id === stdWehrId)?.name}
+                  </span>
+                )}
+              </h3>
               <button className="btn btn-ghost btn-sm" onClick={stdVersuchtSchliessen}>✕</button>
             </div>
+            {msg && <div className={`alert alert-${msgArt}`} style={{ marginBottom: 12 }}>{msg}</div>}
             <p style={{ fontSize: 13, color: 'var(--gray-400)', marginBottom: 16 }}>
               Diese Phasen werden für alle Planspiel-Übungen verwendet, bei denen das Szenario keine eigenen Phasen definiert.
             </p>

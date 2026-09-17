@@ -359,7 +359,7 @@ export default function AusbildungPage() {
           <div style={{ fontSize: 40, marginBottom: 16 }}>🗺️</div>
           <h2 style={{ marginBottom: 8 }}>Planspiel</h2>
           <p style={{ fontSize: 14, color: 'var(--gray-500)', lineHeight: 1.6, marginBottom: 20 }}>
-            Kartenbasierte taktische Übungen auf OpenStreetMap. Fahrzeuge, Trupps und Schlauchleitungen werden auf der Karte positioniert. Szenarien können vorgegeben werden – auf einem zweiten Bildschirm sehen die Kameraden die Lage in Echtzeit.
+            Kartenbasierte taktische Übungen auf einer 3D-Karte. Fahrzeuge und Brandherde werden dreidimensional dargestellt, Trupps und Schlauchleitungen auf der Karte positioniert. Szenarien können vorgegeben werden – auf einem zweiten Bildschirm sehen die Kameraden die Lage in Echtzeit.
           </p>
           <button
             className="btn btn-primary"
