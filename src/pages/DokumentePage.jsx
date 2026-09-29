@@ -7,6 +7,7 @@ import AusbildungsnachweisModal from './AusbildungsnachweisModal'
 import AuslagenerstattungModal from './AuslagenerstattungModal'
 import VerdienstausfallModal from './VerdienstausfallModal'
 import AusbilderentschaedigungModal from './AusbilderentschaedigungModal'
+import DienstreiseantragModal from './DienstreiseantragModal'
 
 const KATEGORIEN = [
   { value: 'dienstanweisung', label: 'Dienstanweisung/Satzung' },
@@ -29,6 +30,7 @@ export default function DokumentePage() {
   const [auslagenModal, setAuslagenModal] = useState(false)
   const [verdienstModal, setVerdienstModal] = useState(false)
   const [ausbilderentschModal, setAusbilderentschModal] = useState(false)
+  const [dienstreiseModal, setDienstreiseModal] = useState(false)
   const [mailDruck, setMailDruck] = useState({}) // { [dok.id]: 'sending' | 'ok' | 'err' | msg }
   const [signedUrls, setSignedUrls] = useState({}) // { [dok.id]: signedUrl } — vorab geladen für iOS
   const [druckModal, setDruckModal] = useState(null) // dok-Objekt oder null
@@ -256,6 +258,12 @@ export default function DokumentePage() {
                       ✏️
                     </button>
                   )}
+                  {(dok.titel?.toLowerCase().includes('dienstreise') || dok.datei_name?.toLowerCase().includes('dienstreise')) && (
+                    <button className="btn btn-sm" style={{ background: '#E6F7F1', color: '#0A5C3E', border: 'none' }}
+                      onClick={() => setDienstreiseModal(true)} title="Dienstreiseantrag ausfuellen">
+                      ✏️
+                    </button>
+                  )}
                   {signedUrls[dok.id]
                     ? <a href={signedUrls[dok.id]} target="_blank" rel="noreferrer"
                         className="btn btn-sm btn-secondary" title="Öffnen"
@@ -346,6 +354,7 @@ export default function DokumentePage() {
       {auslagenModal && <AuslagenerstattungModal onClose={() => setAuslagenModal(false)} />}
       {verdienstModal && <VerdienstausfallModal onClose={() => setVerdienstModal(false)} />}
       {ausbilderentschModal && <AusbilderentschaedigungModal onClose={() => setAusbilderentschModal(false)} />}
+      {dienstreiseModal && <DienstreiseantragModal onClose={() => setDienstreiseModal(false)} />}
 
       {/* Druck-Modal */}
       {druckModal && (

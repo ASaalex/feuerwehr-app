@@ -1,119 +1,115 @@
-import { PDFDocument, PDFTextField, PDFCheckBox } from 'pdf-lib'
+import { PDFDocument } from 'pdf-lib'
 
-// Befüllt das offizielle ThürRKG-Dienstreiseantrag-PDF (Anlage 2) mit den übergebenen Formulardaten.
-// Felder werden per Dokumentreihenfolge-Index adressiert (aus Analyse der 194 Formularfelder).
+// Feldnamen des offiziellen ThürRKG-Dienstreiseantrags (Anlage 2, FormLAB) sind
+// bereits Positions-codiert (Seite + mm-Koordinaten) und wurden einmalig anhand
+// des Original-PDFs verifiziert (angehaengte Checkbox-/Textfeld-Rects je Abschnitt).
+const F = {
+  dienststelle: 'TEXTFIELD.p0.x22.y15',
+  jahr: 'TEXTFIELD.p0.x186.y10',
+  cbDienstreise: 'CHECKBOX.p0.x20.y19',
+  cbFortbildung: 'CHECKBOX.p0.x54.y19',
+
+  name: 'TEXTFIELD.p0.x22.y37',
+  adresse: 'TEXTFIELD.p0.x22.y47',
+
+  reiseziel: 'TEXTFIELD.p0.x22.y57',
+  zweck: 'TEXTFIELD.p0.x22.y63',
+
+  beginnWohnung: 'CHECKBOX.p0.x22.y76',
+  beginnDienststelle: 'CHECKBOX.p0.x46.y76',
+  beginnAufenthaltsort: 'CHECKBOX.p0.x68.y72',
+  beginnFamilienwohnort: 'CHECKBOX.p0.x68.y76',
+  beginnDatum: 'TEXTFIELD.p0.x110.y76',
+  beginnDienstgeschaeft: 'TEXTFIELD.p0.x152.y76',
+
+  endeWohnung: 'CHECKBOX.p0.x22.y84',
+  endeDienststelle: 'CHECKBOX.p0.x46.y84',
+  endeAufenthaltsort: 'CHECKBOX.p0.x68.y80',
+  endeFamilienwohnort: 'CHECKBOX.p0.x68.y84',
+  endeDatum: 'TEXTFIELD.p0.x110.y84',
+  endeDienstgeschaeft: 'TEXTFIELD.p0.x152.y84',
+
+  befOeffentlich: 'CHECKBOX.p0.x144.y95',
+  befFlugzeug: 'CHECKBOX.p0.x87.y99',
+  befDienstfahrzeug: 'CHECKBOX.p0.x104.y99',
+  befSelbstfahrer: 'CHECKBOX.p0.x104.y103',
+  befMitFahrer: 'CHECKBOX.p0.x126.y103',
+  befPrivatKfz: 'CHECKBOX.p0.x144.y101',
+  befSonstigesText: 'TEXTFIELD.p0.x166.y104',
+
+  geldinstitut: 'TEXTFIELD.p1.x48.y224',
+  iban: 'TEXTFIELD.p1.x32.y230',
+  bic: 'TEXTFIELD.p1.x64.y238',
+}
+
+// Feste Dienststelle laut Vorgabe der Gemeinde
+const DIENSTSTELLE = 'Gemeinde Grammetal'
+
 export async function dienstreiseantragPdf(form) {
   const response = await fetch('/Dienstreiseantrag.pdf')
-  const pdfBytes = await response.arrayBuffer()
-  const pdfDoc = await PDFDocument.load(pdfBytes)
+  const templateBytes = await response.arrayBuffer()
+  const pdfDoc = await PDFDocument.load(templateBytes)
   const pdfForm = pdfDoc.getForm()
-  const fields = pdfForm.getFields()
 
-  function setText(idx, value) {
-    if (idx < 0 || idx >= fields.length) return
-    const field = fields[idx]
-    if (field instanceof PDFTextField) {
-      try { field.setText(String(value ?? '').slice(0, 199)) } catch (_) {}
-    }
+  function setText(name, value) {
+    try { pdfForm.getTextField(name).setText(value ?? '') } catch (_) {}
+  }
+  function setCheck(name, on) {
+    try {
+      const cb = pdfForm.getCheckBox(name)
+      if (on) cb.check(); else cb.uncheck()
+    } catch (_) {}
   }
 
-  function setCheck(idx, shouldCheck) {
-    if (idx < 0 || idx >= fields.length) return
-    const field = fields[idx]
-    if (field instanceof PDFCheckBox) {
-      try {
-        if (shouldCheck) field.check()
-        else field.uncheck()
-      } catch (_) {}
-    }
-  }
+  setText(F.dienststelle, DIENSTSTELLE)
+  setText(F.jahr, String(new Date().getFullYear()).slice(-2))
+  setCheck(F.cbDienstreise, form.reiseart === 'dienstreise')
+  setCheck(F.cbFortbildung, form.reiseart === 'fortbildung')
 
-  // ── Seite 1: Antrag ──────────────────────────────────────────────────────
+  setText(F.name, form.name)
+  setText(F.adresse, form.adresse)
 
-  // Art der Reise
-  setCheck(1, form.art === 'dienstreise')     // ☐ Dienstreise
-  setCheck(3, form.art === 'ausbildung')      // ☐ Aus-/Fortbildungsreise
+  setText(F.reiseziel, form.reiseziel)
+  setText(F.zweck, form.zweck)
 
-  // Abschnitt 1 – Antragsteller
-  setText(0, form.dienststelle)               // Dienststelle
-  setText(5, form.name_vorname)               // Name, Vorname
-  setText(6, form.dienstort)                  // Dienstort
-  setText(7, form.personal_nr)               // Personal-/Arbeitsgebietsnr.
-  setText(8, form.hausruf)                    // Hausruf
-  setText(9, form.wohnadresse)               // PLZ, Wohnort, Straße, HsNr.
+  setCheck(F.beginnWohnung, form.beginnOrt === 'wohnung')
+  setCheck(F.beginnDienststelle, form.beginnOrt === 'dienststelle')
+  setCheck(F.beginnAufenthaltsort, form.beginnOrt === 'aufenthaltsort')
+  setCheck(F.beginnFamilienwohnort, form.beginnOrt === 'familienwohnort')
+  setText(F.beginnDatum, form.beginnDatumUhrzeit)
+  setText(F.beginnDienstgeschaeft, form.beginnDienstgeschaeftDatumUhrzeit)
 
-  // Abschnitt 2 – Reiseziel und Zweck
-  setText(12, form.reiseziel_1)              // Reiseziel/Zweck Zeile 1
-  setText(13, form.reiseziel_2)              // Reiseziel/Zweck Zeile 2
-  setCheck(14, form.unterkunft === 'amt')     // Unterkunft des Amtes wegen
-  setCheck(15, form.unterkunft === 'privat')  // aus privaten Gründen
-  setCheck(16, form.unterkunft === 'taeglich') // tägliche Rückkehr
+  setCheck(F.endeWohnung, form.endeOrt === 'wohnung')
+  setCheck(F.endeDienststelle, form.endeOrt === 'dienststelle')
+  setCheck(F.endeAufenthaltsort, form.endeOrt === 'aufenthaltsort')
+  setCheck(F.endeFamilienwohnort, form.endeOrt === 'familienwohnort')
+  setText(F.endeDatum, form.endeDatumUhrzeit)
+  setText(F.endeDienstgeschaeft, form.endeDienstgeschaeftDatumUhrzeit)
 
-  // Abschnitt 3 – Reiseverlauf
-  setCheck(17, form.beginn_von === 'wohnung')         // Beginn: Wohnung
-  setCheck(18, form.beginn_von === 'dienststelle')    // Beginn: Dienststelle
-  setCheck(19, form.beginn_von === 'familienwohnort') // Beginn: Familienwohnort
-  setText(21, form.beginn_datum)                      // Beginn Datum, Uhrzeit
-  setText(22, form.beginn_dienstgeschaeft)            // Beginn Dienstgeschäft
+  const bm = form.befoerderung
+  setCheck(F.befOeffentlich, bm === 'oeffentlich')
+  setCheck(F.befFlugzeug, bm === 'flugzeug')
+  setCheck(F.befDienstfahrzeug, bm === 'dienstfahrzeug_selbst' || bm === 'dienstfahrzeug_fahrer')
+  setCheck(F.befSelbstfahrer, bm === 'dienstfahrzeug_selbst')
+  setCheck(F.befMitFahrer, bm === 'dienstfahrzeug_fahrer')
+  setCheck(F.befPrivatKfz, bm === 'privat_kfz')
+  setText(F.befSonstigesText, bm === 'sonstiges' ? (form.befoerderungSonstigesText ?? '') : '')
 
-  setCheck(23, form.ende_an === 'wohnung')            // Ende: Wohnung
-  setCheck(24, form.ende_an === 'dienststelle')       // Ende: Dienststelle
-  setCheck(25, form.ende_an === 'familienwohnort')    // Ende: Familienwohnort
-  setText(27, form.ende_datum)                        // Ende Datum, Uhrzeit
-  setText(28, form.ende_dienstgeschaeft)              // Ende Dienstgeschäft
+  setText(F.geldinstitut, form.bankname)
+  setText(F.iban, form.iban)
+  setText(F.bic, form.bic)
 
-  setCheck(31, form.verbindung_urlaub === true)       // Verbindung mit Urlaub: Ja
-  setCheck(32, form.verbindung_urlaub === false)      // Verbindung mit Urlaub: Nein
+  pdfForm.updateFieldAppearances()
 
-  // Abschnitt 4 – Beförderungsmittel
-  setCheck(34, form.bahncard === 'nein')              // BahnCard: Nein
-  setCheck(35, form.bahncard === 'ja')                // BahnCard: Ja
-  setText(36, form.bahncard === 'ja' ? form.bahncard_art : '') // BC-Art
+  const bytes = await pdfDoc.save()
+  return uint8ToBase64(bytes)
+}
 
-  const bm = form.befoerderungsmittel || ''
-  setCheck(39, bm === 'flugzeug')                     // Flugzeug
-  setCheck(40, bm === 'dienstfahrzeug_selbst' || bm === 'dienstfahrzeug_fahrer') // Dienstfahrzeug
-  setCheck(41, bm === 'dienstfahrzeug_selbst')        // als Selbstfahrer
-  setCheck(42, bm === 'dienstfahrzeug_fahrer')        // mit Fahrer
-  setCheck(43, bm === 'privatkfz')                    // erhebliche dienstliche Gründe Kfz
-  setText(44, bm === 'sonstiges' ? form.sonstiges_kfz : '') // Sonstiges Beförderungsmittel
-
-  setText(45, form.fahrkarte)                         // Fahrkarte/Flugschein (von–bis)
-  setText(46, form.platzkarte_hin)                    // Platzkarte Hinfahrt
-  setText(47, form.platzkarte_rueck)                  // Platzkarte Rückfahrt
-
-  // Abschnitt 5 – Übernachtungskosten
-  if (form.uebernachtung) {
-    setText(48, form.uebernachtung_betrag)             // Betrag je Nacht
-    setCheck(49, form.fruehstueck === 'nein')          // inkl. Frühstück: Nein
-    setCheck(50, form.fruehstueck === 'ja')            // inkl. Frühstück: Ja
-    setText(51, form.fruehstueck === 'ja' ? form.fruehstueck_betrag : '')
-    setCheck(52, form.hotelkontingent === 'nein')      // Hotelkontingent: Nein
-    setCheck(53, form.hotelkontingent === 'ja')        // Hotelkontingent: Ja
-    setText(54, form.gruendung_uebernachtung)          // Begründung höhere Kosten
-  } else {
-    setCheck(52, true) // Hotelkontingent Nein als Standard
-  }
-
-  // Abschnitt 7 – Sonstige Kosten
-  setText(58, form.sonstige_kosten)
-
-  // Abschnitt 8/9 – Mitfahrer / Abschlag
-  setText(59, form.mitfahrer)
-  setCheck(60, form.abschlag === 'nein')               // Abschlag: Nein
-  setCheck(61, form.abschlag === 'ja')                 // Abschlag: Ja
-  setText(62, form.abschlag === 'ja' ? form.abschlag_betrag : '')
-
-  // ── Seite 2: Bankverbindung (wird mit Profildaten vorbefüllt) ────────────
-  setText(190, form.geldinstitut)                      // Geldinstitut / Bezeichnung, Ort
-  setText(191, form.iban)                              // IBAN
-  setText(192, form.bic)                               // BIC
-
-  const filledBytes = await pdfDoc.save()
-
-  // Uint8Array → Base64
+function uint8ToBase64(bytes) {
   let binary = ''
-  const bytes = new Uint8Array(filledBytes)
-  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i])
+  const chunkSize = 0x8000
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize))
+  }
   return btoa(binary)
 }
