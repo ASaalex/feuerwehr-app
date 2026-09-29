@@ -91,6 +91,179 @@ class KartenModusControl {
   }
 }
 
+// Ego-Perspektive: Pointer-Lock-Maussteuerung + WASD, feste Augenhöhe über dem Boden.
+// Nutzt map.calculateCameraOptionsFromTo (Blickpunkt-Technik aus dem offiziellen MapLibre-Beispiel
+// "Walk around a map in first person") statt der Mapbox-only FreeCameraOptions-API, die es in
+// MapLibre nicht gibt.
+const EGO_EYE_HEIGHT = 1.7
+const EGO_WALK_SPEED = 4
+const EGO_MOUSE_SENSITIVITY = 0.0025
+const EGO_LOOK_AHEAD = 20
+const EGO_MAX_LOOK_PITCH = (80 * Math.PI) / 180
+
+class EgoKamera {
+  constructor(map, onStatusChange) {
+    this.map = map
+    this.onStatusChange = onStatusChange
+    this.aktiv = false
+    this.keysDown = new Set()
+    this.player = { x: 0, y: 0 }
+    this.yaw = 0
+    this.pitch = 0
+    this._onKeyDown = (e) => this.keysDown.add(e.code)
+    this._onKeyUp = (e) => this.keysDown.delete(e.code)
+    this._onMouseMove = this._onMouseMove.bind(this)
+    this._onPointerLockChange = this._onPointerLockChange.bind(this)
+    this._loop = this._loop.bind(this)
+  }
+
+  toLngLat(x, y) {
+    return new MercatorCoordinate(
+      this.origin.x + x * this.metresToMercator,
+      this.origin.y - y * this.metresToMercator
+    ).toLngLat()
+  }
+
+  toggle() {
+    if (this.aktiv) this.stop()
+    else this.start()
+  }
+
+  start() {
+    if (this.aktiv) return
+    const map = this.map
+    this.vorherigeAnsicht = { center: map.getCenter(), zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() }
+    this.vorherigerMaxPitch = map.getMaxPitch()
+
+    const zentrum = map.getCenter()
+    this.origin = MercatorCoordinate.fromLngLat([zentrum.lng, zentrum.lat])
+    this.metresToMercator = this.origin.meterInMercatorCoordinateUnits()
+    this.player = { x: 0, y: 0 }
+    // Bearing (0° = Nord, im Uhrzeigersinn) in mathematischen Winkel (0° = Ost, gegen Uhrzeigersinn) umrechnen
+    this.yaw = ((90 - map.getBearing()) * Math.PI) / 180
+    this.pitch = 0
+
+    map.setMaxPitch(95)
+    try { map.setCenterClampedToGround(false) } catch {}
+    map.dragPan.disable()
+    map.dragRotate.disable()
+    map.scrollZoom.disable()
+    map.doubleClickZoom.disable()
+    map.touchZoomRotate.disable()
+    map.touchPitch.disable()
+    map.keyboard.disable()
+
+    this._erzeugeOverlay()
+    window.addEventListener('keydown', this._onKeyDown)
+    window.addEventListener('keyup', this._onKeyUp)
+    document.addEventListener('mousemove', this._onMouseMove)
+    document.addEventListener('pointerlockchange', this._onPointerLockChange)
+    map.getCanvas().requestPointerLock()
+
+    this.aktiv = true
+    this.lastFrameTime = performance.now()
+    this.frameId = requestAnimationFrame(this._loop)
+    this.onStatusChange?.(true)
+  }
+
+  stop() {
+    if (!this.aktiv) return
+    this.aktiv = false
+    cancelAnimationFrame(this.frameId)
+    window.removeEventListener('keydown', this._onKeyDown)
+    window.removeEventListener('keyup', this._onKeyUp)
+    document.removeEventListener('mousemove', this._onMouseMove)
+    document.removeEventListener('pointerlockchange', this._onPointerLockChange)
+    this.keysDown.clear()
+    this._overlay?.remove()
+    if (document.pointerLockElement === this.map.getCanvas()) document.exitPointerLock()
+
+    const map = this.map
+    map.setMaxPitch(this.vorherigerMaxPitch ?? 60)
+    try { map.setCenterClampedToGround(true) } catch {}
+    map.dragPan.enable()
+    map.dragRotate.enable()
+    map.scrollZoom.enable()
+    map.doubleClickZoom.enable()
+    map.touchZoomRotate.enable()
+    map.touchPitch.enable()
+    map.keyboard.enable()
+    if (this.vorherigeAnsicht) map.jumpTo(this.vorherigeAnsicht)
+
+    this.onStatusChange?.(false)
+  }
+
+  _erzeugeOverlay() {
+    const el = document.createElement('div')
+    el.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:5;'
+    el.innerHTML =
+      '<div style="position:absolute;top:50%;left:50%;width:6px;height:6px;margin:-3px;border-radius:50%;background:rgba(255,255,255,.85);box-shadow:0 0 0 1px rgba(0,0,0,.5);"></div>' +
+      '<div style="position:absolute;bottom:14px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.55);color:#fff;font-size:12px;padding:4px 10px;border-radius:4px;white-space:nowrap;">WASD: Bewegen · Maus: Umsehen · ESC: Verlassen</div>'
+    this.map.getContainer().appendChild(el)
+    this._overlay = el
+  }
+
+  _onPointerLockChange() {
+    // Nutzer verlässt den Pointer Lock per ESC -> Ego-Modus komplett beenden
+    if (this.aktiv && document.pointerLockElement !== this.map.getCanvas()) this.stop()
+  }
+
+  _onMouseMove(e) {
+    if (!this.aktiv || document.pointerLockElement !== this.map.getCanvas()) return
+    this.yaw -= e.movementX * EGO_MOUSE_SENSITIVITY
+    this.pitch = Math.max(-EGO_MAX_LOOK_PITCH, Math.min(EGO_MAX_LOOK_PITCH, this.pitch - e.movementY * EGO_MOUSE_SENSITIVITY))
+  }
+
+  _loop(now) {
+    if (!this.aktiv) return
+    const dt = Math.min(0.05, (now - this.lastFrameTime) / 1000)
+    this.lastFrameTime = now
+
+    const vor = { x: Math.cos(this.yaw), y: Math.sin(this.yaw) }
+    const rechts = { x: Math.sin(this.yaw), y: -Math.cos(this.yaw) }
+    let dx = 0, dy = 0
+    if (this.keysDown.has('KeyW') || this.keysDown.has('ArrowUp')) { dx += vor.x; dy += vor.y }
+    if (this.keysDown.has('KeyS') || this.keysDown.has('ArrowDown')) { dx -= vor.x; dy -= vor.y }
+    if (this.keysDown.has('KeyD')) { dx += rechts.x; dy += rechts.y }
+    if (this.keysDown.has('KeyA')) { dx -= rechts.x; dy -= rechts.y }
+    const laenge = Math.hypot(dx, dy)
+    if (laenge > 0) {
+      this.player.x += (dx / laenge) * EGO_WALK_SPEED * dt
+      this.player.y += (dy / laenge) * EGO_WALK_SPEED * dt
+    }
+
+    const horiz = EGO_LOOK_AHEAD * Math.cos(this.pitch)
+    const vert = EGO_LOOK_AHEAD * Math.sin(this.pitch)
+    const auge = this.toLngLat(this.player.x, this.player.y)
+    const blick = this.toLngLat(this.player.x + vor.x * horiz, this.player.y + vor.y * horiz)
+    this.map.jumpTo(this.map.calculateCameraOptionsFromTo(auge, EGO_EYE_HEIGHT, blick, EGO_EYE_HEIGHT + vert))
+
+    this.frameId = requestAnimationFrame(this._loop)
+  }
+}
+
+class EgoModusControl {
+  onAdd(map) {
+    this._map = map
+    this._container = document.createElement('div')
+    this._container.className = 'maplibregl-ctrl maplibregl-ctrl-group'
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.title = 'Ego-Perspektive (WASD + Maus)'
+    btn.style.fontSize = '15px'
+    btn.textContent = '🚶'
+    this._kamera = new EgoKamera(map, (aktiv) => { btn.style.background = aktiv ? '#DBEAFE' : '' })
+    btn.onclick = () => this._kamera.toggle()
+    this._container.appendChild(btn)
+    return this._container
+  }
+  onRemove() {
+    this._kamera.stop()
+    this._container.parentNode?.removeChild(this._container)
+    this._map = undefined
+  }
+}
+
 function add3DBuildings(map) {
   map.addLayer({
     id: 'planspiel-3d-buildings',
@@ -514,6 +687,7 @@ export function erstelleKarte(container, center) {
   })
   map.addControl(new NavigationControl(), 'top-right')
   map.addControl(new KartenModusControl(), 'top-right')
+  map.addControl(new EgoModusControl(), 'top-right')
 
   const fx = new Fx3DLayer([center.lng, center.lat])
   map.on('style.load', () => {
