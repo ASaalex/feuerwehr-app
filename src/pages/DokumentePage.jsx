@@ -6,6 +6,7 @@ import { de } from 'date-fns/locale'
 import AusbildungsnachweisModal from './AusbildungsnachweisModal'
 import AuslagenerstattungModal from './AuslagenerstattungModal'
 import VerdienstausfallModal from './VerdienstausfallModal'
+import AusbilderentschaedigungModal from './AusbilderentschaedigungModal'
 
 const KATEGORIEN = [
   { value: 'dienstanweisung', label: 'Dienstanweisung/Satzung' },
@@ -27,6 +28,7 @@ export default function DokumentePage() {
   const [ausbildungsModal, setAusbildungsModal] = useState(false)
   const [auslagenModal, setAuslagenModal] = useState(false)
   const [verdienstModal, setVerdienstModal] = useState(false)
+  const [ausbilderentschModal, setAusbilderentschModal] = useState(false)
   const [mailDruck, setMailDruck] = useState({}) // { [dok.id]: 'sending' | 'ok' | 'err' | msg }
   const [signedUrls, setSignedUrls] = useState({}) // { [dok.id]: signedUrl } — vorab geladen für iOS
   const [druckModal, setDruckModal] = useState(null) // dok-Objekt oder null
@@ -247,6 +249,13 @@ export default function DokumentePage() {
                       ✏️
                     </button>
                   )}
+                  {(dok.titel?.toLowerCase().includes('ausbilderentsch') || dok.datei_name?.toLowerCase().includes('ausbilderentsch')
+                    || dok.titel?.toLowerCase().includes('ausbildervergüt') || dok.titel?.toLowerCase().includes('ausbildervergut')) && (
+                    <button className="btn btn-sm" style={{ background: '#F0E6FA', color: '#4A2170', border: 'none' }}
+                      onClick={() => setAusbilderentschModal(true)} title="Ausbilderentschädigung ausfuellen">
+                      ✏️
+                    </button>
+                  )}
                   {signedUrls[dok.id]
                     ? <a href={signedUrls[dok.id]} target="_blank" rel="noreferrer"
                         className="btn btn-sm btn-secondary" title="Öffnen"
@@ -336,6 +345,7 @@ export default function DokumentePage() {
       {ausbildungsModal && <AusbildungsnachweisModal onClose={() => setAusbildungsModal(false)} />}
       {auslagenModal && <AuslagenerstattungModal onClose={() => setAuslagenModal(false)} />}
       {verdienstModal && <VerdienstausfallModal onClose={() => setVerdienstModal(false)} />}
+      {ausbilderentschModal && <AusbilderentschaedigungModal onClose={() => setAusbilderentschModal(false)} />}
 
       {/* Druck-Modal */}
       {druckModal && (

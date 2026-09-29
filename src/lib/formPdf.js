@@ -473,3 +473,137 @@ export function auslagenerstattungPdf(form, gesamt) {
 
   return doc.output('datauristring').split(',')[1]
 }
+
+// ─── AUSBILDERENTSCHAEDIGUNG ─────────────────────────────────────────────────
+
+export function ausbilderentschaedigungPdf(form, STUNDENSATZ, MIN_PRO_STUNDE) {
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+  const AML = 20   // linker Rand (Tabelle 170mm zentriert auf A4)
+  const ATW = 170  // Tabellenbreite
+
+  function fmt(iso) {
+    if (!iso) return ''
+    return new Date(iso + 'T12:00:00').toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })
+  }
+
+  const termine = (form.termine ?? []).filter(t => t.datum || t.minuten)
+  const gesamtMinuten = termine.reduce((sum, t) => sum + (parseFloat(t.minuten) || 0), 0)
+  const stunden = gesamtMinuten / MIN_PRO_STUNDE
+  const entschaedigung = stunden * STUNDENSATZ
+
+  function fmtDe(val, digits = 2) {
+    return val.toLocaleString('de-DE', { minimumFractionDigits: digits, maximumFractionDigits: digits })
+  }
+
+  let y = 16
+
+  // ── Titel ──────────────────────────────────────────────────────────────────
+  doc.setFontSize(12)
+  doc.setFont('helvetica', 'bold')
+  const titelZeilen = doc.splitTextToSize(
+    'Antrag - Abruf der Entschaedigung fuer die Ausbildertaetigkeit bei der Freiwilligen Feuerwehr Grammetal',
+    ATW
+  )
+  titelZeilen.forEach(zeile => { doc.text(zeile, AML + ATW / 2, y, { align: 'center' }); y += 5.5 })
+  y += 3
+
+  // ── Ortsteilfeuerwehr / Ausbilder ─────────────────────────────────────────
+  const LBL = [240, 240, 240]
+  const VAL = [255, 255, 255]
+  autoTable(doc, {
+    startY: y,
+    margin: { left: AML, right: AML },
+    tableWidth: ATW,
+    styles: { fontSize: 9, cellPadding: 2, lineColor: [0, 0, 0], lineWidth: 0.25, fillColor: VAL },
+    columnStyles: {
+      0: { cellWidth: 45, fontStyle: 'bold', fillColor: LBL },
+      1: { cellWidth: 'auto', fillColor: VAL },
+    },
+    body: [
+      ['Ortsteilfeuerwehr:', form.ortsteil || ''],
+      [{ content: 'Ausbilder:\nName / Anschrift:', styles: { minCellHeight: 14, valign: 'top' } }, { content: form.ausbilder || '', styles: { minCellHeight: 14, valign: 'top' } }],
+    ],
+    theme: 'grid',
+  })
+  y = doc.lastAutoTable.finalY + 5
+
+  // ── Termine-Tabelle ────────────────────────────────────────────────────────
+  autoTable(doc, {
+    startY: y,
+    margin: { left: AML, right: AML },
+    tableWidth: ATW,
+    styles: { fontSize: 9, cellPadding: 1.8, lineColor: [0, 0, 0], lineWidth: 0.25, fillColor: VAL },
+    headStyles: { fillColor: LBL, textColor: [0, 0, 0], fontStyle: 'bold' },
+    columnStyles: {
+      0: { cellWidth: 40 },
+      1: { cellWidth: 'auto', halign: 'right' },
+    },
+    head: [['Datum', 'Ausbildungszeit in min.']],
+    body: termine.length
+      ? termine.map(t => [fmt(t.datum), t.minuten || ''])
+      : [['', '']],
+    foot: [[
+      { content: 'Gesamt:', styles: { fontStyle: 'bold', fillColor: LBL, textColor: [0, 0, 0] } },
+      { content: `${fmtDe(gesamtMinuten, 0)} min.`, styles: { fontStyle: 'bold', fillColor: LBL, textColor: [0, 0, 0], halign: 'right' } },
+    ]],
+    footStyles: { textColor: [0, 0, 0] },
+    theme: 'grid',
+  })
+  y = doc.lastAutoTable.finalY + 5
+
+  // ── Berechnung ─────────────────────────────────────────────────────────────
+  autoTable(doc, {
+    startY: y,
+    margin: { left: AML, right: AML },
+    tableWidth: ATW,
+    styles: { fontSize: 9, cellPadding: 2, lineColor: [0, 0, 0], lineWidth: 0.25, fillColor: VAL },
+    columnStyles: {
+      0: { cellWidth: 100, fontStyle: 'bold', fillColor: LBL },
+      1: { cellWidth: 'auto', halign: 'right' },
+    },
+    body: [
+      ['Gesamtausbildungszeit in min.:', `${fmtDe(gesamtMinuten, 0)} min.`],
+      [`Ausbildungsstunden (${MIN_PRO_STUNDE} min. = 1 Std.):`, `${fmtDe(stunden)} Std.`],
+      [{ content: `Ausbilderentschaedigung (${STUNDENSATZ},00 EUR / Std.):`, styles: { fontStyle: 'bold' } }, { content: `${fmtDe(entschaedigung)} EUR`, styles: { fontStyle: 'bold' } }],
+    ],
+    theme: 'grid',
+  })
+  y = doc.lastAutoTable.finalY + 6
+
+  // ── Bankverbindung ─────────────────────────────────────────────────────────
+  autoTable(doc, {
+    startY: y,
+    margin: { left: AML, right: AML },
+    tableWidth: ATW,
+    styles: { fontSize: 9, cellPadding: 2, lineColor: [0, 0, 0], lineWidth: 0.25, fillColor: VAL },
+    columnStyles: {
+      0: { cellWidth: 45, fontStyle: 'bold', fillColor: LBL },
+      1: { cellWidth: 'auto', fillColor: VAL, font: 'courier' },
+    },
+    body: [
+      ['Bank:', { content: form.bankname || '', styles: { font: 'helvetica' } }],
+      ['Kontoinhaber:', { content: form.kontoinhaber || '', styles: { font: 'helvetica' } }],
+      ['IBAN:', form.iban || ''],
+    ],
+    theme: 'grid',
+  })
+  y = doc.lastAutoTable.finalY + 6
+
+  doc.setFontSize(9)
+  doc.setFont('helvetica', 'normal')
+  doc.text('Ich bitte um Ueberweisung der Entschaedigung auf o.g. Konto.', AML, y)
+  y += 18
+
+  // ── Unterschrift ───────────────────────────────────────────────────────────
+  doc.setLineWidth(0.3)
+  doc.line(AML, y, AML + 90, y); y += 3
+  doc.setFontSize(8)
+  doc.text('Datum / Unterschrift Ausbilder', AML, y)
+  y += 10
+
+  const anzahlAnlagen = (form.termine ?? []).filter(t => t.datum).length
+  doc.setFontSize(9)
+  doc.text(`Anlagen: ${anzahlAnlagen} Ausbildungsnachweise`, AML, y)
+
+  return doc.output('datauristring').split(',')[1]
+}
