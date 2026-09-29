@@ -1,12 +1,19 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
+const LEERE_FAHRZEUGE = [
+  { id: null, name: 'HLF 10', inventarnummer: '' },
+  { id: null, name: 'MTW', inventarnummer: '' },
+]
+const LEERES_FORM = { name: '', ort: '', kuerzel: '', aufgaben_aktiv: false, drucker_email: '', einsatzbericht_email: '' }
+
 export default function WachenPage() {
   const [wehren, setWehren] = useState([])
   const [loading, setLoading] = useState(true)
   const [modal, setModal] = useState(null)
-  const [form, setForm] = useState({ name: '', ort: '', kuerzel: '', aufgaben_aktiv: false, drucker_email: '', einsatzbericht_email: '', fahrzeuge: ['HLF 10', 'MTW'] })
-  const [neuesFahrzeug, setNeuesFahrzeug] = useState('')
+  const [form, setForm] = useState(LEERES_FORM)
+  const [fahrzeuge, setFahrzeuge] = useState(LEERE_FAHRZEUGE)
+  const [neuesFahrzeug, setNeuesFahrzeug] = useState({ name: '', inventarnummer: '' })
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
 
@@ -15,19 +22,20 @@ export default function WachenPage() {
   async function fetchWehren() {
     const { data } = await supabase
       .from('wehren')
-      .select('id, name, ort, kuerzel, aufgaben_aktiv, drucker_email, einsatzbericht_email, fahrzeuge, mitglieder:profiles(count)')
+      .select('id, name, ort, kuerzel, aufgaben_aktiv, drucker_email, einsatzbericht_email, mitglieder:profiles(count)')
       .order('name')
     setWehren(data ?? [])
     setLoading(false)
   }
 
   function oeffneNeu() {
-    setForm({ name: '', ort: '', kuerzel: '', aufgaben_aktiv: false, drucker_email: '', einsatzbericht_email: '', fahrzeuge: ['HLF 10', 'MTW'] })
-    setNeuesFahrzeug('')
+    setForm(LEERES_FORM)
+    setFahrzeuge(LEERE_FAHRZEUGE)
+    setNeuesFahrzeug({ name: '', inventarnummer: '' })
     setModal('neu')
   }
 
-  function oeffneBearbeiten(w) {
+  async function oeffneBearbeiten(w) {
     setForm({
       name: w.name,
       ort: w.ort ?? '',
@@ -35,10 +43,37 @@ export default function WachenPage() {
       aufgaben_aktiv: w.aufgaben_aktiv === true,
       drucker_email: w.drucker_email ?? '',
       einsatzbericht_email: w.einsatzbericht_email ?? '',
-      fahrzeuge: w.fahrzeuge?.length ? w.fahrzeuge : ['HLF 10', 'MTW'],
     })
-    setNeuesFahrzeug('')
+    setNeuesFahrzeug({ name: '', inventarnummer: '' })
     setModal(w)
+    const { data } = await supabase
+      .from('fahrzeuge')
+      .select('id, name, inventarnummer')
+      .eq('wehr_id', w.id)
+      .order('sortierung')
+    setFahrzeuge(data?.length ? data : LEERE_FAHRZEUGE)
+  }
+
+  async function speichereFahrzeuge(wehrId) {
+    const { data: bestehende } = await supabase.from('fahrzeuge').select('id').eq('wehr_id', wehrId)
+    const behalteneIds = new Set(fahrzeuge.map(f => f.id).filter(Boolean))
+    const zuLoeschen = (bestehende ?? []).filter(f => !behalteneIds.has(f.id)).map(f => f.id)
+    if (zuLoeschen.length > 0) {
+      await supabase.from('fahrzeuge').delete().in('id', zuLoeschen)
+    }
+
+    const zeilen = fahrzeuge
+      .filter(f => f.name.trim())
+      .map((f, i) => ({
+        ...(f.id ? { id: f.id } : {}),
+        wehr_id: wehrId,
+        name: f.name.trim(),
+        inventarnummer: f.inventarnummer?.trim() || null,
+        sortierung: i,
+      }))
+    if (zeilen.length > 0) {
+      await supabase.from('fahrzeuge').upsert(zeilen)
+    }
   }
 
   async function handleSpeichern(e) {
@@ -52,19 +87,19 @@ export default function WachenPage() {
       aufgaben_aktiv: form.aufgaben_aktiv === true,
       drucker_email: form.drucker_email || null,
       einsatzbericht_email: form.einsatzbericht_email || null,
-      fahrzeuge: form.fahrzeuge.filter(Boolean),
     }
 
-    console.log('Speichere Wache:', modal === 'neu' ? 'NEU' : modal.id, payload)
+    let wehrId = modal === 'neu' ? null : modal.id
 
     if (modal === 'neu') {
-      const { error } = await supabase.from('wehren').insert(payload)
+      const { data, error } = await supabase.from('wehren').insert(payload).select('id').single()
       if (error) {
         console.error('Fehler beim Anlegen:', error)
         alert('Fehler: ' + error.message)
         setSaving(false)
         return
       }
+      wehrId = data.id
     } else {
       const { error } = await supabase.from('wehren').update(payload).eq('id', modal.id)
       if (error) {
@@ -75,10 +110,13 @@ export default function WachenPage() {
       }
     }
 
+    await speichereFahrzeuge(wehrId)
+
     await fetchWehren()
     setModal(null)
-    setNeuesFahrzeug('')
-    setForm({ name: '', ort: '', kuerzel: '', aufgaben_aktiv: false, drucker_email: '', einsatzbericht_email: '', fahrzeuge: ['HLF 10', 'MTW'] })
+    setNeuesFahrzeug({ name: '', inventarnummer: '' })
+    setForm(LEERES_FORM)
+    setFahrzeuge(LEERE_FAHRZEUGE)
     setMsg(modal === 'neu' ? 'Wache angelegt!' : 'Wache gespeichert!')
     setTimeout(() => setMsg(''), 3000)
     setSaving(false)
@@ -237,50 +275,72 @@ export default function WachenPage() {
               <div className="form-group">
                 <label>Einsatzfahrzeuge</label>
                 <div style={{ fontSize: 12, color: 'var(--gray-400)', marginBottom: 8 }}>
-                  Diese Fahrzeuge stehen im Einsatzbericht zur Auswahl.
+                  Diese Fahrzeuge stehen im Einsatzbericht zur Auswahl. Die Inventarnummer wird genutzt, um beim
+                  Statistik-Import die Fahrzeuge dieser Wache in der Einsatzliste zu erkennen.
                 </div>
-                {form.fahrzeuge.map((fz, i) => (
-                  <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 4, fontSize: 11, color: 'var(--gray-400)', padding: '0 2px' }}>
+                  <div style={{ flex: 1 }}>Bezeichnung</div>
+                  <div style={{ flex: 1 }}>Inventarnummer</div>
+                  <div style={{ width: 28 }} />
+                </div>
+                {fahrzeuge.map((fz, i) => (
+                  <div key={fz.id ?? `neu-${i}`} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
                     <input
-                      value={fz}
+                      value={fz.name}
                       onChange={e => {
-                        const arr = [...form.fahrzeuge]
-                        arr[i] = e.target.value
-                        setForm(f => ({ ...f, fahrzeuge: arr }))
+                        const arr = [...fahrzeuge]
+                        arr[i] = { ...arr[i], name: e.target.value }
+                        setFahrzeuge(arr)
                       }}
                       placeholder="z.B. HLF 10"
                       style={{ flex: 1 }}
                     />
+                    <input
+                      value={fz.inventarnummer ?? ''}
+                      onChange={e => {
+                        const arr = [...fahrzeuge]
+                        arr[i] = { ...arr[i], inventarnummer: e.target.value }
+                        setFahrzeuge(arr)
+                      }}
+                      placeholder="z.B. NO.2043.2"
+                      style={{ flex: 1, fontFamily: 'var(--mono)' }}
+                    />
                     <button
                       type="button"
                       className="btn btn-sm btn-danger"
-                      onClick={() => setForm(f => ({ ...f, fahrzeuge: f.fahrzeuge.filter((_, idx) => idx !== i) }))}
+                      onClick={() => setFahrzeuge(fahrzeuge.filter((_, idx) => idx !== i))}
                     >✕</button>
                   </div>
                 ))}
                 <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
                   <input
-                    value={neuesFahrzeug}
-                    onChange={e => setNeuesFahrzeug(e.target.value)}
+                    value={neuesFahrzeug.name}
+                    onChange={e => setNeuesFahrzeug(n => ({ ...n, name: e.target.value }))}
+                    placeholder="Neues Fahrzeug..."
+                    style={{ flex: 1 }}
+                  />
+                  <input
+                    value={neuesFahrzeug.inventarnummer}
+                    onChange={e => setNeuesFahrzeug(n => ({ ...n, inventarnummer: e.target.value }))}
                     onKeyDown={e => {
                       if (e.key === 'Enter') {
                         e.preventDefault()
-                        if (neuesFahrzeug.trim()) {
-                          setForm(f => ({ ...f, fahrzeuge: [...f.fahrzeuge, neuesFahrzeug.trim()] }))
-                          setNeuesFahrzeug('')
+                        if (neuesFahrzeug.name.trim()) {
+                          setFahrzeuge([...fahrzeuge, { id: null, ...neuesFahrzeug }])
+                          setNeuesFahrzeug({ name: '', inventarnummer: '' })
                         }
                       }
                     }}
-                    placeholder="Neues Fahrzeug..."
-                    style={{ flex: 1 }}
+                    placeholder="Inventarnummer"
+                    style={{ flex: 1, fontFamily: 'var(--mono)' }}
                   />
                   <button
                     type="button"
                     className="btn btn-secondary btn-sm"
                     onClick={() => {
-                      if (neuesFahrzeug.trim()) {
-                        setForm(f => ({ ...f, fahrzeuge: [...f.fahrzeuge, neuesFahrzeug.trim()] }))
-                        setNeuesFahrzeug('')
+                      if (neuesFahrzeug.name.trim()) {
+                        setFahrzeuge([...fahrzeuge, { id: null, ...neuesFahrzeug }])
+                        setNeuesFahrzeug({ name: '', inventarnummer: '' })
                       }
                     }}
                   >+ Hinzufügen</button>

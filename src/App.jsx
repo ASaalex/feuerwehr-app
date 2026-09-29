@@ -23,6 +23,7 @@ import DatenschutzPublicPage from './pages/DatenschutzPublicPage'
 import ImpressumPage from './pages/ImpressumPage'
 import EinstellungenPage from './pages/EinstellungenPage'
 import EinsatzberichtPage from './pages/EinsatzberichtPage'
+import StatistikPage from './pages/StatistikPage'
 import EinsatzberichtFormular from './pages/EinsatzberichtFormular'
 import VersammlungenPage from './pages/VersammlungenPage'
 import GeraetewartPage from './pages/GeraetewartPage'
@@ -70,6 +71,14 @@ function EinsatzberichtRoute({ children }) {
   const { profile, loading } = useAuth()
   if (loading) return <div className="loading-page"><div className="spinner"></div></div>
   const erlaubt = ['wehrleiter', 'gemeindebrandmeister', 'tablet']
+  if (!erlaubt.includes(profile?.rolle)) return <Navigate to="/" replace />
+  return children
+}
+
+function StatistikRoute({ children }) {
+  const { profile, loading } = useAuth()
+  if (loading) return <div className="loading-page"><div className="spinner"></div></div>
+  const erlaubt = ['wehrleiter', 'gruppenfuehrer', 'gemeindebrandmeister']
   if (!erlaubt.includes(profile?.rolle)) return <Navigate to="/" replace />
   return children
 }
@@ -155,6 +164,7 @@ function AppRoutes() {
         <Route path="profil" element={<ProfilPage />} />
         <Route path="einsatzbericht" element={<EinsatzberichtRoute><EinsatzberichtPage /></EinsatzberichtRoute>} />
         <Route path="einsatzbericht/:id" element={<EinsatzberichtRoute><EinsatzberichtFormular /></EinsatzberichtRoute>} />
+        <Route path="statistik" element={<StatistikRoute><StatistikPage /></StatistikRoute>} />
         <Route path="geraetewart" element={<GeraetewartRoute><GeraetewartPage /></GeraetewartRoute>} />
         <Route path="pruefungsarten" element={<GbmRoute><PruefungsartenPage /></GbmRoute>} />
       </Route>

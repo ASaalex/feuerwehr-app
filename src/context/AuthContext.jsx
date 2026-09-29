@@ -34,9 +34,22 @@ export function AuthProvider({ children }) {
   async function fetchProfile(userId) {
     const { data } = await supabase
       .from('profiles')
-      .select('*, wehr:wehren(id,name,aufgaben_aktiv,drucker_email,einsatzbericht_email,fahrzeuge)')
+      .select('*, wehr:wehren(id,name,aufgaben_aktiv,drucker_email,einsatzbericht_email)')
       .eq('id', userId)
       .single()
+
+    if (data) {
+      const wehrData = Array.isArray(data.wehr) ? data.wehr[0] : data.wehr
+      if (wehrData?.id) {
+        const { data: fahrzeugRows } = await supabase
+          .from('fahrzeuge')
+          .select('name')
+          .eq('wehr_id', wehrData.id)
+          .order('sortierung')
+        wehrData.fahrzeuge = (fahrzeugRows ?? []).map(f => f.name)
+      }
+    }
+
     setProfile(data)
     setLoading(false)
     if (data) registerPush(userId)
