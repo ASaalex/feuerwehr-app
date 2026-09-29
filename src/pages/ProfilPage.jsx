@@ -39,6 +39,9 @@ export default function ProfilPage() {
   const [avatarModal, setAvatarModal] = useState(false)
   const [avatarUploading, setAvatarUploading] = useState(false)
   const [avatarMsg, setAvatarMsg] = useState('')
+  const [watchToken, setWatchToken] = useState(profile?.watch_token ?? '')
+  const [watchSaving, setWatchSaving] = useState(false)
+  const [watchKopiert, setWatchKopiert] = useState(false)
 
   function set(field) {
     return e => setForm(f => ({ ...f, [field]: e.target.value }))
@@ -116,6 +119,23 @@ export default function ProfilPage() {
   }
 
   const initials = `${form.vorname?.[0] ?? ''}${form.nachname?.[0] ?? ''}`.toUpperCase() || '?'
+
+  async function handleWatchTokenErzeugen() {
+    setWatchSaving(true)
+    const neuerToken = crypto.randomUUID().replace(/-/g, '')
+    const { error } = await supabase.from('profiles').update({ watch_token: neuerToken }).eq('id', profile.id)
+    if (!error) {
+      setWatchToken(neuerToken)
+      await refreshProfile()
+    }
+    setWatchSaving(false)
+  }
+
+  async function handleWatchTokenKopieren() {
+    await navigator.clipboard.writeText(watchToken)
+    setWatchKopiert(true)
+    setTimeout(() => setWatchKopiert(false), 2000)
+  }
 
   async function handleFotoUpload(e) {
     const datei = e.target.files[0]
@@ -348,6 +368,43 @@ export default function ProfilPage() {
             {saving ? 'Speichern...' : 'Bankdaten speichern'}
           </button>
         </div>
+      </div>
+
+      {/* Watch-Diktat */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <h3 style={{ marginBottom: 8 }}>Watch-Diktat</h3>
+        <div style={{ background: '#EBF5FB', border: '1px solid #AED6F1', borderRadius: 8, padding: '10px 14px', marginBottom: 16 }}>
+          <div style={{ fontSize: 13, color: '#1A5276', lineHeight: 1.6 }}>
+            Mit diesem persönlichen Zugriffscode kannst du auf deiner Apple Watch einen Kurzbefehl (Shortcut)
+            einrichten, der Gesprochenes direkt in den aktuellen Einsatzbericht deiner Wache einträgt.
+            Behandle den Code wie ein Passwort und teile ihn nicht mit anderen.
+          </div>
+        </div>
+
+        {watchToken ? (
+          <div className="form-group">
+            <label>Dein Zugriffscode</label>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input readOnly value={watchToken} style={{ fontFamily: 'var(--mono)', letterSpacing: 0.5 }} />
+              <button type="button" className="btn btn-secondary" onClick={handleWatchTokenKopieren} style={{ flexShrink: 0 }}>
+                {watchKopiert ? '✓ Kopiert' : 'Kopieren'}
+              </button>
+            </div>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => { if (confirm('Neuen Code erzeugen? Der alte Code funktioniert danach nicht mehr, bestehende Shortcuts müssen angepasst werden.')) handleWatchTokenErzeugen() }}
+              disabled={watchSaving}
+              style={{ marginTop: 10 }}
+            >
+              Neuen Code erzeugen
+            </button>
+          </div>
+        ) : (
+          <button type="button" className="btn btn-primary" onClick={handleWatchTokenErzeugen} disabled={watchSaving}>
+            {watchSaving ? 'Wird erzeugt...' : 'Zugriffscode erzeugen'}
+          </button>
+        )}
       </div>
 
       {/* Passwort aendern */}
